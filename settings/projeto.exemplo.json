@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(git restore *)",
+      "Bash(git stash *)",
+      "Bash(git checkout -- *)",
+      "Bash(git checkout .)",
+      "PowerShell(git restore *)",
+      "PowerShell(git stash *)",
+      "PowerShell(git checkout -- *)",
+      "PowerShell(git checkout .)"
+    ],
+    "ask": [
+      "Bash(git checkout *)",
+      "PowerShell(git checkout *)"
+    ]
+  }
+}
