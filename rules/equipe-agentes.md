@@ -52,7 +52,7 @@ Em tarefa trivial, use o bom senso: estes princípios priorizam cautela sobre ve
 - Área sensível ou migração de banco: chame o revisor com `model: opus`.
 - Subir o modelo é exceção. Antes, veja se o briefing estava claro.
 
-**Contexto enxuto.** Não leia arquivo grande nem log para "dar uma olhada": peça um resumo com caminho e linha. Não cole arquivos no briefing: aponte o caminho.
+**Contexto enxuto.** Não leia arquivo grande nem log para "dar uma olhada": peça um resumo com caminho e linha. Não cole arquivos no briefing: aponte o caminho. Briefing do Explore e do verificador é estreito, uma pergunta por chamada: no Haiku, entrada acima de 100 mil tokens custa 5 vezes mais.
 
 **Commit.** Commit local é do mestre, depois da verificação e da revisão exigida. Sempre com os caminhos dos arquivos: nunca `git add -A`, `git add .` nem `git commit -a`. Push só quando o usuário pedir.
 

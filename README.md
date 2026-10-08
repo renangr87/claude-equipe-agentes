@@ -47,6 +47,7 @@ flowchart TD
 | `exemplos/flutter-supabase/` | exemplo preenchido de `CLAUDE.md` e da lista do verificador | referência |
 | `instalar.ps1` | instalador para Windows | executar |
 | `docs/como-funciona.md` | explicação detalhada | leitura |
+| `docs/modelos.md` | preços e benchmarks oficiais dos modelos 5.5 e o motivo de cada escolha | leitura |
 
 No Windows, `~/.claude` é a pasta `%USERPROFILE%\.claude`.
 
@@ -134,7 +135,8 @@ Abra uma sessão nova e faça três testes:
 Quando mudar o ajuste da sessão:
 
 - **Esforço alto**: só em planejamento difícil, como decisão de arquitetura ou bug que resistiu a duas tentativas. Depois volte para médio.
-- **Sonnet no lugar do Opus**: se o limite de uso estiver apertando. Cai um pouco a qualidade do planejamento; o resto da equipe funciona igual.
+- **Sonnet no lugar do Opus**: se o limite de uso estiver apertando. Nos testes oficiais o Sonnet 5.5 quase empata com o Opus 5.5 pela metade do preço; a perda fica no julgamento de casos difíceis. O resto da equipe funciona igual.
+- **Fable**: não compensa nesta equipe. Custa 2,5 vezes o Opus 5.5 e fica abaixo dele nos testes oficiais. Os números estão em [`docs/modelos.md`](docs/modelos.md).
 
 ## Configurar um projeto
 
