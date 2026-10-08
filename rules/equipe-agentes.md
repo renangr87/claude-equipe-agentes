@@ -23,22 +23,22 @@ Em tarefa trivial, use o bom senso: estes princípios priorizam cautela sobre ve
 | Agente | Modelo | Esforço | Faz | Não faz |
 |---|---|---|---|---|
 | mestre (sessão principal) | opus | medium | entende o pedido, planeja, delega, integra, faz o commit, fala com o usuário | leitura em massa, rodar suíte de testes, implementação longa |
-| Explore (explorador) | haiku | low | localiza arquivos, símbolos e usos; resume como algo funciona | editar, rodar comandos |
+| Explore (explorador) | haiku | low | localiza arquivos, símbolos e usos; resume como algo funciona; consulta o histórico do git | editar; no terminal, só `git log`, `blame`, `show`, `diff`, `status` e `ls-files` |
 | implementador | sonnet | medium | escreve código dentro do escopo do briefing e testa o que mudou | sair do escopo, commit, criar outros agentes |
-| verificador | haiku | low | roda testes, lint, tipos e build; resume só as falhas | corrigir, editar, instalar |
+| verificador | haiku | low | roda testes, lint, tipos e build; resume só as falhas | corrigir, editar, instalar; rodar comando fora de `.claude/verificador-comandos.txt` |
 | revisor | sonnet (opus em área sensível e em migração de banco) | high | revisa o diff sem ter visto a implementação: correção, segurança, escopo | editar, rodar comandos, opinar sobre estilo |
 
 ## Orquestração (regras do mestre)
 
-**Projeto sem configuração.** Se o `CLAUDE.md` do projeto não tiver stack e comandos de teste, lint e build, mande o Explore levantar isso, mostre a proposta ao usuário e grave no `CLAUDE.md` do projeto depois do OK. Só então delegue.
+**Projeto sem configuração.** Se o `CLAUDE.md` do projeto não tiver stack e comandos de teste, lint e build, mande o Explore levantar isso, mostre a proposta ao usuário e, depois do OK, grave no `CLAUDE.md` do projeto, e liste os comandos de verificação, um por linha, em `.claude/verificador-comandos.txt`. Só então delegue. Sem essa lista, a guarda bloqueia todo comando do verificador.
 
 **Quando não delegar.** Faça direto se a mudança cabe em até 2 arquivos que você já conhece ou se a resposta sai com poucas leituras. Delegar tarefa pequena custa mais do que fazer.
 
 **Quando delegar.**
-- `Explore`: localizar algo exige varrer pastas ou ler mais de 3 arquivos. Ele não recebe o `CLAUDE.md` do projeto, então diga no briefing por onde começar.
+- `Explore`: localizar algo exige varrer pastas ou ler mais de 3 arquivos, ou é preciso consultar o histórico do git. Ele não recebe o `CLAUDE.md` do projeto, então diga no briefing por onde começar.
 - `implementador`: a tarefa tem critério de aceite claro. Uma tarefa por agente.
 - `verificador`: sempre que for rodar testes, lint, tipos ou build. A saída longa fica fora do seu contexto.
-- `revisor`: obrigatório se a mudança toca área sensível, passa de 50 linhas ou atinge mais de 3 arquivos. Dispensado em mudança trivial (texto, renomear, formatação). Ele não tem terminal: grave o resultado de `git diff HEAD` em um arquivo temporário fora do controle do git, passe no briefing o caminho dele e a lista de arquivos novos, e apague o arquivo depois.
+- `revisor`: obrigatório se a mudança toca área sensível, passa de 50 linhas ou atinge mais de 3 arquivos. Dispensado em mudança trivial (texto, renomear, formatação). Ele não tem terminal: grave o diff com `git diff HEAD --output=.revisao/diff.patch` e passe no briefing esse caminho e a lista de arquivos novos. Se a pasta `.revisao/` não existir (projeto novo ou worktree novo), crie-a com um arquivo `.revisao/.gitignore` contendo `*`: o git não cria a pasta, e esse arquivo faz ela se ignorar sozinha. Na próxima revisão, sobrescreva o diff. Não use `.claude/` para isso: escrita lá sempre pede aprovação.
 
 **Ordem padrão.** Entender → explorar (se preciso) → planejar em passos verificáveis → implementar → verificar → revisar (se exigido) → conferir os critérios → commit local → responder ao usuário.
 

@@ -19,10 +19,12 @@ Exemplo ilustrativo de um projeto Flutter com Supabase. Troque os comandos e cam
 - Formatar (só arquivos tocados): `dart format <arquivo>`
 - Build: `flutter build apk --dart-define-from-file=<arquivo de configuração>`
 
+Os comandos do verificador estão em `.claude/verificador-comandos.txt` (veja `verificador-comandos.txt` ao lado deste exemplo).
+
 ## Regras deste projeto
 
 - Produção: o projeto Supabase ligado ao app publicado. Qualquer comando ou script que use a URL ou a chave dele é escrita em produção.
-- Não entram em commit: rascunhos em `docs/` que ainda não foram aprovados.
+- Não entram em commit: rascunhos em `docs/` que ainda não foram aprovados, nem a pasta `.revisao/` (ela se ignora sozinha).
 - Instalar no aparelho: só com `adb install -r <apk>`, para não apagar os dados do app.
 - Áreas sensíveis além das globais: `supabase/migrations/` e as políticas de acesso às tabelas.
 

@@ -23,10 +23,8 @@
       "PowerShell(git add --all*)",
       "PowerShell(git add .)",
       "PowerShell(git commit -a*)",
-      "Read(.env)",
-      "Read(.env.*)",
-      "Read(!.env.example)",
-      "Read(//**/.env)"
+      "Read(//**/.env)",
+      "Read(//**/.env.*)"
     ],
     "ask": [
       "Bash(git push *)",

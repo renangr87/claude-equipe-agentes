@@ -13,10 +13,10 @@ Um modelo caro é bom em decidir e ruim de desperdiçar. Buscar um arquivo, roda
 | Agente | Por que esse modelo e esse esforço |
 |---|---|
 | mestre: Opus, médio | um planejamento ruim gera briefing ruim, e todo o resto herda o erro. É onde a capacidade rende mais. O custo fica controlado porque ele não lê em massa. |
-| Explore: Haiku, baixo | localizar e resumir é tarefa de volume. Não tem ferramenta de edição nem terminal. Leva o nome do subagente embutido do Claude Code para substituí-lo: o embutido roda no modelo da sessão principal, que aqui é o Opus. |
+| Explore: Haiku, baixo | localizar e resumir é tarefa de volume. Não tem ferramenta de edição. O terminal serve só para o histórico do git, e uma guarda recusa o resto. Leva o nome do subagente embutido do Claude Code para substituí-lo: o embutido roda no modelo da sessão principal, que aqui é o Opus. |
 | implementador: Sonnet, médio | escrever código com escopo e critério definidos é o trabalho típico do Sonnet. Não pode criar outros agentes. |
-| verificador: Haiku, baixo | rodar comandos e resumir falhas. A saída longa morre no contexto dele. |
-| revisor: Sonnet, alto | erro que passa pela revisão sai caro, então o esforço sobe aqui. Em área sensível e em migração de banco, o mestre chama em Opus. Não tem terminal: lê o diff de um arquivo que o mestre grava. |
+| verificador: Haiku, baixo | rodar comandos e resumir falhas. A saída longa morre no contexto dele. A guarda só deixa passar os comandos da lista do projeto. |
+| revisor: Sonnet, alto | erro que passa pela revisão sai caro, então o esforço sobe aqui. Em área sensível e em migração de banco, o mestre chama em Opus. Não tem terminal: lê o diff que o mestre grava em `.revisao/diff.patch`. |
 
 O mestre pode subir o modelo de uma chamada específica. Isso é exceção e tem gatilho definido nas regras.
 
@@ -29,7 +29,7 @@ Pedido: "o cupom de desconto não está sendo aplicado no total do carrinho".
 3. **Mestre** escreve o briefing do implementador, com objetivo, contexto, escopo e critério.
 4. **Implementador** escreve o teste que falha, corrige, roda os testes afetados e devolve o relatório.
 5. **Verificador** roda a suíte completa, o lint e os tipos. Devolve "passou" ou a lista de falhas.
-6. **Mestre** grava o diff em um arquivo temporário. **Revisor** lê esse arquivo e o código ao redor, sem ter visto a implementação. Devolve o veredito e os achados.
+6. **Mestre** grava o diff com `git diff HEAD --output=.revisao/diff.patch`. **Revisor** lê esse arquivo e o código ao redor, sem ter visto a implementação. Devolve o veredito e os achados.
 7. **Mestre** confere os critérios, faz o commit local com os caminhos dos arquivos e responde a você.
 
 Uma mudança trivial, como corrigir um texto, pula tudo isso: o mestre faz direto.
@@ -107,6 +107,12 @@ Não. Pedido de opinião não é pedido de execução: a regra manda responder e
 
 **O mestre pode fazer push?**
 Só quando você pedir, e o comando ainda pede a sua confirmação por causa do bloqueio `ask`.
+
+**O verificador pode rodar qualquer comando?**
+Não. Uma guarda confere cada comando contra `.claude/verificador-comandos.txt` do projeto e recusa o resto. Mudar essa lista pede a sua aprovação, porque `.claude/` é pasta protegida.
+
+**Por que o diff do revisor fica em `.revisao/` e não numa pasta temporária?**
+Ler fora da pasta do projeto pede permissão, e escrever em `.claude/` também. `.revisao/` fica dentro do projeto e tem um `.gitignore` próprio com `*`, então não pede nada e não entra em commit.
 
 **Por que o revisor não roda os testes?**
 Porque o papel dele é ler com contexto limpo. Quem executa é o verificador, e os dois relatórios chegam separados ao mestre.

@@ -19,10 +19,12 @@ Só o que é deste projeto. As regras de trabalho da equipe são globais e já e
 - Formatar (só arquivos tocados): `<comando> <arquivo>`
 - Build: `<comando>`
 
+Os comandos de teste, lint, tipos e build também ficam em `.claude/verificador-comandos.txt`, um por linha. O verificador só roda o que está lá.
+
 ## Regras deste projeto
 
 - Produção: <qual é o banco ou serviço de produção e como reconhecer que um comando aponta para ele>
-- Não entram em commit: <arquivos e pastas>
+- Não entram em commit: <arquivos e pastas>. A pasta `.revisao/`, onde o mestre grava o diff para o revisor, se ignora sozinha.
 - Áreas sensíveis além das globais: <pastas ou arquivos>
 - <outras regras próprias deste projeto>
 

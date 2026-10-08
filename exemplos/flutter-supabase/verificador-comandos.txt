@@ -1,0 +1,7 @@
+# Exemplo para o projeto Flutter com Supabase. Vai em .claude/verificador-comandos.txt.
+# O app fica em app/, por isso cada comando entra nas duas formas:
+# com && para o Bash e com ; para o PowerShell.
+cd app && flutter test
+cd app; flutter test
+cd app && flutter analyze
+cd app; flutter analyze

@@ -1,0 +1,9 @@
+# Comandos que o verificador pode rodar neste projeto. Vai em .claude/verificador-comandos.txt.
+# Uma linha por comando. Cada linha libera o comando exato e o mesmo comando com
+# argumentos a mais (por exemplo, um arquivo de teste), sem pipe nem redirecionamento.
+# Linhas com # e linhas vazias sao ignoradas.
+# Liste so comandos que nao alteram nada fora da pasta de build.
+<comando de teste>
+<comando de lint>
+<comando de tipos>
+<comando de build>
