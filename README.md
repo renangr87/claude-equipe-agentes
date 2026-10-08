@@ -1,6 +1,6 @@
 # Equipe de agentes para o Claude Code
 
-Uma sessão principal, o **mestre**, coordena quatro subagentes. Cada um roda no modelo mais barato que dá conta do papel. As regras ficam em camadas, o briefing e o relatório são padronizados, os comandos mais perigosos ficam bloqueados nas configurações e uma guarda limita o terminal dos agentes que só deveriam ler ou verificar.
+Uma sessão principal, o **mestre**, coordena quatro subagentes. Cada um roda no modelo mais barato que dá conta do papel. As regras ficam em camadas, o briefing e o relatório são padronizados, os comandos mais perigosos ficam bloqueados nas configurações e uma guarda limita o terminal dos subagentes: o Explore e o verificador só rodam o que precisam, e o implementador não consegue formatar a pasta inteira.
 
 O objetivo é gastar menos tokens sem abrir mão da qualidade e da segurança do código.
 
@@ -38,7 +38,7 @@ flowchart TD
 |---|---|---|
 | `rules/equipe-agentes.md` | regras de trabalho: princípios, orquestração, briefing, relatório, segurança | `~/.claude/rules/` |
 | `agents/*.md` | os 4 subagentes, com modelo, esforço e ferramentas de cada um | `~/.claude/agents/` |
-| `hooks/guarda-comandos.ps1` | guarda de terminal do Explore e do verificador | `~/.claude/hooks/` |
+| `hooks/guarda-comandos.ps1` | guarda de terminal do Explore, do verificador e do implementador | `~/.claude/hooks/` |
 | `settings/global.json` | bloqueios que valem em todo projeto | mesclar em `~/.claude/settings.json` |
 | `projeto/CLAUDE.md` | modelo do arquivo de cada projeto | raiz do projeto |
 | `projeto/nota-de-area.md` | modelo de nota por pasta | `CLAUDE.md` dentro da pasta |
@@ -114,7 +114,7 @@ cp hooks/guarda-comandos.ps1 ~/.claude/hooks/
 cp rules/equipe-agentes.md ~/.claude/rules/
 ```
 
-Fora do Windows, a guarda precisa do PowerShell 7 (`pwsh`) instalado. Sem ele, o hook não roda e o terminal desses dois agentes fica sem a trava.
+Fora do Windows, a guarda precisa do PowerShell 7 (`pwsh`) instalado. Sem ele, o hook não roda e o terminal desses três agentes fica sem a trava.
 
 ### Conferir a instalação
 
@@ -125,6 +125,7 @@ Abra uma sessão nova e faça três testes:
 3. Em um repositório git qualquer, peça: **"Rode `git clean -n`."** O comando deve ser recusado pelo bloqueio. O `-n` só simula, então o teste é seguro mesmo que o bloqueio não esteja ativo.
 4. No mesmo repositório, peça: **"Use o Explore para rodar `git log -3 --oneline` e depois `git log -1 | sort`."** O primeiro deve funcionar e o segundo deve voltar com a mensagem "Bloqueado pela guarda (explore)". Se o segundo passar, a guarda não está rodando: confira o caminho em `~/.claude/agents/Explore.md`. Um caminho errado desliga a guarda sem aviso.
 5. Peça: **"Use o verificador para rodar `git status`."** Deve voltar bloqueado pela guarda (verificador), porque `git status` não está na lista do projeto.
+6. Peça: **"Use o implementador para rodar `dart format pasta-que-nao-existe/`."** Deve voltar bloqueado pela guarda (implementador), porque o formatador recebeu uma pasta. O teste é seguro mesmo sem a guarda: a pasta não existe.
 
 ## Uso
 
@@ -163,32 +164,39 @@ Limites que você precisa conhecer:
 - **O `.env.example` também fica bloqueado.** A exceção com `!` só vale para regras relativas à pasta da sessão, e a regra `//**/.env.*` precisa ser absoluta para alcançar worktrees e projetos vizinhos. Se você precisa que o agente leia o `.env.example`, troque `Read(//**/.env.*)` pelos nomes que você usa, por exemplo `Read(//**/.env.web.json)`.
 - **Instalações anteriores deixaram `Read(.env)`, `Read(.env.*)` e `Read(!.env.example)` no `settings.json`.** O instalador só acrescenta regras e não remove essas. Elas não atrapalham, porque as novas cobrem mais, mas você pode apagá-las.
 - **Escrita em banco de produção não se bloqueia por lista de comandos.** Nenhum padrão de texto distingue produção de teste. A proteção de verdade é o agente não ter a credencial de escrita: use chave só de leitura no ambiente dele, ou teste em banco local ou em um branch.
-- **Quando uma regra precisa valer sem falha**, o passo seguinte é um [hook PreToolUse](https://code.claude.com/docs/en/hooks), que inspeciona o comando inteiro antes de rodar. A guarda do Explore e do verificador é um hook desse tipo (veja abaixo). O [sandbox](https://code.claude.com/docs/en/sandboxing) não roda no Windows nativo.
+- **Quando uma regra precisa valer sem falha**, o passo seguinte é um [hook PreToolUse](https://code.claude.com/docs/en/hooks), que inspeciona o comando inteiro antes de rodar. A guarda dos subagentes é um hook desse tipo (veja abaixo). O [sandbox](https://code.claude.com/docs/en/sandboxing) não roda no Windows nativo.
 
 ## A guarda de terminal
 
-`hooks/guarda-comandos.ps1` roda antes de cada comando de terminal do Explore e do verificador. Ela é declarada no próprio arquivo de cada agente, então só vale para eles: o mestre e o implementador não passam por ela.
+`hooks/guarda-comandos.ps1` roda antes de cada comando de terminal do Explore, do verificador e do implementador, no Bash e no PowerShell. Ela é declarada no próprio arquivo de cada agente, então só vale para eles: o mestre e o revisor não passam por ela.
 
 | Agente | O que passa |
 |---|---|
 | Explore | `git log`, `git blame`, `git show`, `git diff`, `git status` e `git ls-files`, sem `--output`, `--ext-diff` nem `--no-index` |
 | verificador | as linhas de `.claude/verificador-comandos.txt` do projeto, exatas ou com argumentos a mais |
+| implementador | tudo, menos formatador sem arquivos nomeados um a um |
 
-Para os dois, a guarda recusa:
+**Implementador.** Formatadores conhecidos (`dart format`, `flutter format`, `dart fix --apply`, `prettier --write`, `eslint --fix`, `black`, `ruff format`, `gofmt -w`, `go fmt`, `cargo fmt`, `dotnet format` e outros) só passam quando cada argumento é um arquivo. Pasta, `.`, curinga, variável, `$(...)` ou nenhum argumento são bloqueados, também dentro de comandos compostos (`cd app && dart format .`), em `xargs`, `find -exec`, `bash -c` e `ForEach-Object`. O modo só de conferir (`--check`, `--output=none`, `--dry-run`) passa. Scripts como `npm run format` e `make format` são bloqueados, porque escondem o comando real. A lista fica em `$formatadores` no script.
+
+O implementador também tira uma foto do `git status` no começo e no fim da tarefa e relata os arquivos que mudaram. O mestre compara essa lista com o escopo antes do commit. Isso cobre o que a guarda não pega, como um script próprio em Python que reformata arquivos.
+
+**Explore e verificador.** Para os dois, a guarda recusa:
 - mais de um comando por vez;
 - pipe, redirecionamento, `;`, `&&`, `$`, crase e parênteses fora do texto da lista;
 - qualquer comando que cite `.env`. Um build que lê `.env.web.json`, por exemplo, fica com o mestre.
 
 Limites:
 - **Um comando liberado pode fazer o que ele mesmo faz.** Se um teste escreve no banco, a guarda deixa passar. Liste só comandos que não alteram nada fora da pasta de build.
-- **A guarda só bloqueia quando roda.** Se o `powershell.exe` não for encontrado, se o caminho do script estiver errado ou se ela passar de 30 segundos, o Claude Code deixa o comando seguir. Os testes 4 e 5 da instalação servem para confirmar que ela está ativa.
-- **Ela foi testada no PowerShell 7.4**, com 31 casos (comandos liberados, encadeamento, redirecionamento, subcomando, `.env`, lista ausente, JSON inválido). O formato do hook no arquivo do agente segue a documentação, mas ainda não foi executado no app do Windows nem no Windows PowerShell 5.1.
+- **A guarda só bloqueia quando roda.** Se o `powershell.exe` não for encontrado, se o caminho do script estiver errado ou se ela passar de 30 segundos, o Claude Code deixa o comando seguir. Os testes 4, 5 e 6 da instalação servem para confirmar que ela está ativa.
+- **A guarda do implementador pega formatadores conhecidos, não toda forma de reformatar.** Um script próprio que reescreve arquivos passa. Quem cobre isso é a comparação de `git status` antes do commit.
+- **Ela foi testada no PowerShell 7.4**, com 85 casos: 31 do Explore e do verificador (comandos liberados, encadeamento, redirecionamento, subcomando, `.env`, lista ausente, JSON inválido) e 54 do implementador (formatadores em pasta, em comando composto, por `xargs`, `find -exec`, `bash -c`, `ForEach-Object` e script, além de comandos comuns que precisam passar). O formato do hook no arquivo do agente segue a documentação, mas ainda não foi executado no app do Windows nem no Windows PowerShell 5.1.
 
 ## Personalizar
 
 - **Modelo e esforço de um subagente**: mude `model` e `effort` no início do arquivo dele em `~/.claude/agents/`.
 - **Comandos do verificador**: edite `.claude/verificador-comandos.txt` do projeto.
 - **Comandos do Explore**: a lista fica no perfil `explore` de `hooks/guarda-comandos.ps1`.
+- **Formatadores barrados no implementador**: a lista `$formatadores` em `hooks/guarda-comandos.ps1`.
 - **Quando a revisão é obrigatória**: mude os limites (50 linhas, 3 arquivos) em `rules/equipe-agentes.md` e na descrição de `agents/revisor.md`.
 - **Idioma e tom**: seção "Comunicação" de `rules/equipe-agentes.md`.
 - **Um subagente diferente só em um projeto**: crie `.claude/agents/<nome>.md` no projeto. Ele tem prioridade sobre o global de mesmo nome.
@@ -204,7 +212,7 @@ Depois de editar os arquivos do repositório, rode o instalador de novo.
 
 ## Limitações conhecidas
 
-- **Regra escrita é orientação.** O agente pode esquecer ou interpretar errado. O que trava de fato são as ferramentas de cada subagente e os bloqueios do `settings.json`, com os limites descritos acima. O revisor não tem terminal nem ferramenta de edição. O Explore e o verificador têm terminal, limitado pela guarda, e nenhum dos dois tem ferramenta de edição.
+- **Regra escrita é orientação.** O agente pode esquecer ou interpretar errado. O que trava de fato são as ferramentas de cada subagente e os bloqueios do `settings.json`, com os limites descritos acima. O revisor não tem terminal nem ferramenta de edição. O Explore e o verificador têm terminal, limitado pela guarda, e nenhum dos dois tem ferramenta de edição. O implementador tem tudo, menos formatador em pasta.
 - **Multiagente não reduz tokens por si só.** Cada subagente começa do zero e relê o que precisa. A economia vem do trabalho volumoso em modelo barato, do contexto enxuto do mestre e de não delegar tarefa pequena.
 - **Tudo passa pelo mestre.** Em sessões muito longas o contexto dele enche. Feche a rodada, deixe o estado anotado e abra uma sessão nova.
 - **Ainda não foi medido em uso real.** Os limites de revisão e a divisão de modelos são um ponto de partida. Compare custo e qualidade em uma tarefa antes de adotar em tudo.

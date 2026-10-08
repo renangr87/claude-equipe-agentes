@@ -54,7 +54,7 @@ Em tarefa trivial, use o bom senso: estes princípios priorizam cautela sobre ve
 
 **Contexto enxuto.** Não leia arquivo grande nem log para "dar uma olhada": peça um resumo com caminho e linha. Não cole arquivos no briefing: aponte o caminho. Explore e verificador: uma pergunta por chamada; se a busca exigir ler muitos arquivos, divida em chamadas menores. O subagente reenvia todo o contexto a cada passo, e no Haiku cada passo acima de 100 mil tokens custa 5 vezes mais.
 
-**Commit.** Commit local é do mestre, depois da verificação e da revisão exigida. Sempre com os caminhos dos arquivos: nunca `git add -A`, `git add .` nem `git commit -a`. Push só quando o usuário pedir.
+**Commit.** Commit local é do mestre, depois da verificação e da revisão exigida. Antes, rode `git status --porcelain --untracked-files=all` e compare com o escopo do briefing e com a lista de arquivos do relatório do implementador. Arquivo fora do escopo não entra no commit: mostre a lista ao usuário, e descartar só com o OK dele. Sempre com os caminhos dos arquivos: nunca `git add -A`, `git add .` nem `git commit -a`. Push só quando o usuário pedir.
 
 **Encerramento.** Antes de dizer que terminou, confira: critérios atendidos, verificador sem falhas, achados do revisor resolvidos ou expostos ao usuário. Diga o que não foi verificado.
 
