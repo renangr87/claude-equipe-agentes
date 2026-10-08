@@ -9,20 +9,22 @@ O objetivo é gastar menos tokens sem abrir mão da qualidade e da segurança do
 | Agente | Modelo | Esforço | Papel |
 |---|---|---|---|
 | mestre (a sessão que você abre) | Opus | médio | entende o pedido, planeja, delega, integra, faz o commit e fala com você |
-| explorador | Haiku | baixo | localiza e resume código, só leitura |
+| Explore (explorador) | Haiku | baixo | localiza e resume código, só leitura |
 | implementador | Sonnet | médio | escreve o código dentro do escopo do briefing |
 | verificador | Haiku | baixo | roda testes, lint, tipos e build e resume as falhas |
-| revisor | Sonnet (Opus em área sensível) | alto | revisa o diff com contexto limpo, só leitura |
+| revisor | Sonnet (Opus em área sensível) | alto | revisa o diff com contexto limpo, só leitura, sem terminal |
 
 Você abre **uma sessão só**. O mestre cria os subagentes quando precisa.
+
+O explorador se chama `Explore` de propósito. O Claude Code já traz um subagente com esse nome, que roda no modelo da sessão principal, ou seja, em Opus. Um subagente seu com o mesmo nome substitui o embutido, e assim toda busca passa a rodar em Haiku, inclusive as que o mestre faz por hábito.
 
 ```mermaid
 flowchart TD
     U["Você"] -->|pedido| M["mestre (Opus, médio)"]
-    M -->|busca| E["explorador (Haiku, baixo)"]
+    M -->|busca| E["Explore (Haiku, baixo)"]
     M -->|briefing| I["implementador (Sonnet, médio)"]
     M -->|testes| V["verificador (Haiku, baixo)"]
-    M -->|diff| R["revisor (Sonnet alto ou Opus)"]
+    M -->|arquivo com o diff| R["revisor (Sonnet alto ou Opus)"]
     E -->|resumo| M
     I -->|relatório| M
     V -->|falhas| M
@@ -108,7 +110,7 @@ cp rules/equipe-agentes.md ~/.claude/rules/
 
 Abra uma sessão nova e faça três testes:
 
-1. Pergunte: **"Quais subagentes você tem disponíveis?"** Devem aparecer explorador, implementador, verificador e revisor.
+1. Pergunte: **"Quais subagentes você tem disponíveis?"** Devem aparecer implementador, verificador e revisor. O Explore aparece de qualquer forma, porque já existe no Claude Code; o seu o substitui.
 2. Pergunte: **"Qual é a regra de commit da equipe?"** A resposta deve citar commit local pelo mestre, com os caminhos dos arquivos, e push só com o seu pedido.
 3. Em um repositório git qualquer, peça: **"Rode `git clean -n`."** O comando deve ser recusado pelo bloqueio. O `-n` só simula, então o teste é seguro mesmo que o bloqueio não esteja ativo.
 
@@ -116,7 +118,7 @@ Abra uma sessão nova e faça três testes:
 
 1. Abra uma sessão na pasta do projeto, com **Opus** e esforço **médio**.
 2. Peça o trabalho normalmente. Não precisa citar os agentes: o mestre decide quando delegar.
-3. Na primeira vez em um projeto sem `CLAUDE.md`, o mestre manda o explorador levantar a stack e os comandos, mostra a proposta e grava o arquivo depois do seu OK.
+3. Na primeira vez em um projeto sem `CLAUDE.md`, o mestre manda o Explore levantar a stack e os comandos, mostra a proposta e grava o arquivo depois do seu OK.
 
 Quando mudar o ajuste da sessão:
 
@@ -134,7 +136,8 @@ Quando mudar o ajuste da sessão:
 | Tipo | Comandos | Efeito |
 |---|---|---|
 | Proibido (`deny`) | `git reset --hard`, `git push --force` e `-f`, `git clean`, `git add -A`, `git add --all`, `git add .`, `git commit -a` | o Claude Code recusa |
-| Proibido (`deny`) | leitura e edição de `.env` e `.env.*`, menos `.env.example` | o Claude Code recusa |
+| Proibido (`deny`) | leitura e edição de `.env` em qualquer pasta do computador | o Claude Code recusa |
+| Proibido (`deny`) | leitura e edição de `.env.*` dentro da pasta da sessão, menos `.env.example` | o Claude Code recusa |
 | Pede confirmação (`ask`) | `git push`, `rm -r`, `Remove-Item -Recurse` | aparece um pedido de aprovação para você |
 
 Cada regra de comando existe duas vezes, uma para Bash e outra para PowerShell, porque no Windows o agente pode usar qualquer um dos dois.
@@ -143,6 +146,7 @@ Limites que você precisa conhecer:
 
 - **O bloqueio compara o texto do comando.** Ele pega a forma usual, não todas. `git push` é barrado, `git -C . push` não é. A documentação do Claude Code diz que essas regras não são uma fronteira de segurança.
 - **O bloqueio de `.env` vale para as ferramentas de arquivo e para comandos como `cat`.** Um script que abre o arquivo por conta própria não é barrado.
+- **Arquivos como `.env.local` em pasta vizinha não estão cobertos.** A regra de `.env.*` só alcança a pasta da sessão e as subpastas dela. Se você trabalha com um worktree ou projeto ao lado, acrescente o caminho dele ao bloqueio do projeto, no formato `Read(//c/caminho/da/pasta/.env.*)`. No Windows, `C:\` vira `//c/`.
 - **Escrita em banco de produção não se bloqueia por lista de comandos.** Nenhum padrão de texto distingue produção de teste. A proteção de verdade é o agente não ter a credencial de escrita: use chave só de leitura no ambiente dele, ou teste em banco local ou em um branch.
 - **Quando uma regra precisa valer sem falha**, o passo seguinte é um [hook PreToolUse](https://code.claude.com/docs/en/hooks), que inspeciona o comando inteiro antes de rodar, ou o [sandbox](https://code.claude.com/docs/en/sandboxing).
 
@@ -152,23 +156,25 @@ Limites que você precisa conhecer:
 - **Quando a revisão é obrigatória**: mude os limites (50 linhas, 3 arquivos) em `rules/equipe-agentes.md` e na descrição de `agents/revisor.md`.
 - **Idioma e tom**: seção "Comunicação" de `rules/equipe-agentes.md`.
 - **Um subagente diferente só em um projeto**: crie `.claude/agents/<nome>.md` no projeto. Ele tem prioridade sobre o global de mesmo nome.
+- **Um especialista que guarda o assunto**: para uma parte difícil do sistema, crie no projeto um subagente próprio com o campo `memory: project`. Ele mantém anotações entre conversas em `.claude/agent-memory/<nome>/`. Custa mais do que a nota de área, porque as anotações são carregadas a cada chamada, então use só onde o assunto justifica.
 
 Depois de editar os arquivos do repositório, rode o instalador de novo.
 
 ## Desinstalar
 
-1. Apague `explorador.md`, `implementador.md`, `verificador.md` e `revisor.md` de `~/.claude/agents/`.
+1. Apague `Explore.md`, `implementador.md`, `verificador.md` e `revisor.md` de `~/.claude/agents/`.
 2. Apague `equipe-agentes.md` de `~/.claude/rules/`.
 3. Em `~/.claude/settings.json`, remova as entradas listadas em `settings/global.json`, ou restaure a cópia `.bak` criada pelo instalador.
 
 ## Limitações conhecidas
 
-- **Regra escrita é orientação.** O agente pode esquecer ou interpretar errado. O que trava de fato são as ferramentas de cada subagente e os bloqueios do `settings.json`, com os limites descritos acima. O revisor e o verificador têm terminal, então neles "não alterar nada" é instrução, não trava.
+- **Regra escrita é orientação.** O agente pode esquecer ou interpretar errado. O que trava de fato são as ferramentas de cada subagente e os bloqueios do `settings.json`, com os limites descritos acima. O Explore e o revisor não têm terminal nem ferramenta de edição. O verificador tem terminal, então nele "não alterar nada" é instrução, não trava.
 - **Multiagente não reduz tokens por si só.** Cada subagente começa do zero e relê o que precisa. A economia vem do trabalho volumoso em modelo barato, do contexto enxuto do mestre e de não delegar tarefa pequena.
 - **Tudo passa pelo mestre.** Em sessões muito longas o contexto dele enche. Feche a rodada, deixe o estado anotado e abra uma sessão nova.
 - **Ainda não foi medido em uso real.** Os limites de revisão e a divisão de modelos são um ponto de partida. Compare custo e qualidade em uma tarefa antes de adotar em tudo.
 - **O instalador foi testado no PowerShell 7.4 em Linux**, com seis cenários (instalação limpa, repetição, mescla com `settings.json` existente, JSON inválido, `-SemBloqueios` e `CLAUDE_CONFIG_DIR`). Ele foi escrito para funcionar no Windows PowerShell 5.1, mas não foi executado nele.
-- **A documentação diz que os subagentes carregam as mesmas instruções da sessão principal**, mas não cita `~/.claude/rules/` nem as notas de área pelo nome. Por isso cada subagente traz no próprio arquivo o essencial do papel e dos limites, e o mestre informa no briefing o caminho da nota de área. O teste 2 de "Conferir a instalação" cobre só a sessão principal.
+- **Os subagentes carregam as mesmas instruções da sessão principal**, segundo a documentação. Isso inclui a regra global, com a parte de orquestração que só serve ao mestre: são cerca de 2 mil tokens por chamada. O Explore usa `omitClaudeMd: true` para não carregar. A documentação diz que esse campo pula os `CLAUDE.md` de usuário, de projeto e local, mas não diz se pula `~/.claude/rules/`, então pode ser que ele ainda receba a regra global. Para saber, peça ao Explore que diga qual é a regra de commit da equipe: se ele souber, a regra chegou.
+- **`isolation: worktree` não é o padrão para tarefas paralelas.** O worktree nasce do branch padrão, não do trabalho em andamento, e o resultado precisa ser trazido de volta depois.
 
 ## Créditos
 

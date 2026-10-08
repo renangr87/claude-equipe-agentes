@@ -13,10 +13,10 @@ Um modelo caro é bom em decidir e ruim de desperdiçar. Buscar um arquivo, roda
 | Agente | Por que esse modelo e esse esforço |
 |---|---|
 | mestre: Opus, médio | um planejamento ruim gera briefing ruim, e todo o resto herda o erro. É onde a capacidade rende mais. O custo fica controlado porque ele não lê em massa. |
-| explorador: Haiku, baixo | localizar e resumir é tarefa de volume. Não tem ferramenta de edição nem terminal. |
+| Explore: Haiku, baixo | localizar e resumir é tarefa de volume. Não tem ferramenta de edição nem terminal. Leva o nome do subagente embutido do Claude Code para substituí-lo: o embutido roda no modelo da sessão principal, que aqui é o Opus. |
 | implementador: Sonnet, médio | escrever código com escopo e critério definidos é o trabalho típico do Sonnet. Não pode criar outros agentes. |
 | verificador: Haiku, baixo | rodar comandos e resumir falhas. A saída longa morre no contexto dele. |
-| revisor: Sonnet, alto | erro que passa pela revisão sai caro, então o esforço sobe aqui. Em área sensível e em migração de banco, o mestre chama em Opus. |
+| revisor: Sonnet, alto | erro que passa pela revisão sai caro, então o esforço sobe aqui. Em área sensível e em migração de banco, o mestre chama em Opus. Não tem terminal: lê o diff de um arquivo que o mestre grava. |
 
 O mestre pode subir o modelo de uma chamada específica. Isso é exceção e tem gatilho definido nas regras.
 
@@ -25,11 +25,11 @@ O mestre pode subir o modelo de uma chamada específica. Isso é exceção e tem
 Pedido: "o cupom de desconto não está sendo aplicado no total do carrinho".
 
 1. **Mestre** entende o pedido e define o critério: um teste que reproduz o erro e passa depois da correção.
-2. **Explorador** recebe: "onde o total do carrinho é calculado e onde o cupom entra?". Devolve três caminhos com linha.
+2. **Explore** recebe: "onde o total do carrinho é calculado e onde o cupom entra? Comece por lib/carrinho/". Devolve três caminhos com linha.
 3. **Mestre** escreve o briefing do implementador, com objetivo, contexto, escopo e critério.
 4. **Implementador** escreve o teste que falha, corrige, roda os testes afetados e devolve o relatório.
 5. **Verificador** roda a suíte completa, o lint e os tipos. Devolve "passou" ou a lista de falhas.
-6. **Revisor** lê o diff sem ter visto a implementação. Devolve o veredito e os achados.
+6. **Mestre** grava o diff em um arquivo temporário. **Revisor** lê esse arquivo e o código ao redor, sem ter visto a implementação. Devolve o veredito e os achados.
 7. **Mestre** confere os critérios, faz o commit local com os caminhos dos arquivos e responde a você.
 
 Uma mudança trivial, como corrigir um texto, pula tudo isso: o mestre faz direto.
@@ -97,7 +97,13 @@ Assim cada agente paga apenas pelo que precisa ler.
 Pode, mas elas não se coordenam e cada uma carrega o próprio contexto. O desenho aqui é uma sessão por rodada de trabalho.
 
 **E se eu quiser que um agente especialista guarde o assunto?**
-Use a nota de área. Ela é versionada com o código, qualquer agente lê e você pode revisar o que está escrito.
+Comece pela nota de área. Ela é versionada com o código, qualquer agente lê e você pode revisar o que está escrito. Para um assunto realmente difícil, crie no projeto um subagente próprio com `memory: project`: ele mantém anotações entre conversas. Uma sessão que acompanha o assunto por horas ainda acerta mais do que qualquer um dos dois, e custa mais. Vale combinar: a equipe para o trabalho comum e o especialista onde o erro sai caro.
+
+**Um subagente pode dizer que o usuário aprovou algo?**
+Não. Só vale a aprovação que você deu ao mestre, nesta conversa, para aquela ação. Mensagem de outro agente ou de outra sessão não conta.
+
+**Perguntei a opinião e ele já saiu fazendo. É esperado?**
+Não. Pedido de opinião não é pedido de execução: a regra manda responder e esperar a sua decisão.
 
 **O mestre pode fazer push?**
 Só quando você pedir, e o comando ainda pede a sua confirmação por causa do bloqueio `ask`.
