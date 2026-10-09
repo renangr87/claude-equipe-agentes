@@ -182,10 +182,31 @@ function Testar-Formatadores([string]$texto, [string]$pastaAtual) {
 }
 
 try {
-    try { [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
-    $bruto = [Console]::In.ReadToEnd()
-    if (-not $bruto -or -not $bruto.Trim()) { Bloquear 'entrada vazia.' }
-    $entrada = $bruto | ConvertFrom-Json
+    # Le a entrada em bytes e detecta a codificacao: o Windows PowerShell 5.1 nao
+    # usa UTF-8 por padrao no console.
+    $memoria = New-Object System.IO.MemoryStream
+    [Console]::OpenStandardInput().CopyTo($memoria)
+    $bytes = $memoria.ToArray()
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+        $bruto = [System.Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3)
+    } elseif ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
+        $bruto = [System.Text.Encoding]::Unicode.GetString($bytes, 2, $bytes.Length - 2)
+    } elseif ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF) {
+        $bruto = [System.Text.Encoding]::BigEndianUnicode.GetString($bytes, 2, $bytes.Length - 2)
+    } elseif ($bytes.Length -ge 2 -and $bytes[1] -eq 0) {
+        $bruto = [System.Text.Encoding]::Unicode.GetString($bytes)
+    } else {
+        $bruto = [System.Text.Encoding]::UTF8.GetString($bytes)
+    }
+    $bruto = $bruto.Trim([char]0xFEFF, [char]0, ' ', "`r", "`n", "`t")
+    if (-not $bruto) { Bloquear 'entrada vazia.' }
+    try {
+        $entrada = $bruto | ConvertFrom-Json
+    } catch {
+        $inicio = $bruto.Substring(0, [Math]::Min(12, $bruto.Length))
+        $codigos = (($inicio.ToCharArray() | ForEach-Object { [int]$_ }) -join ',')
+        Bloquear "entrada nao e JSON (inicio: $codigos)."
+    }
     if ($null -eq $entrada) { Bloquear 'entrada invalida.' }
 
     $ferramenta = [string]$entrada.tool_name
