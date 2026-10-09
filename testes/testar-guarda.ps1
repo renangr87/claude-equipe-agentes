@@ -33,8 +33,10 @@ $lista = Join-Path $proj '.claude\verificador-comandos.txt'
 function Rodar([string]$perfil, [string]$json, [string]$script = $guarda) {
     $cmd = "try { & '$script' -Perfil $perfil; exit `$LASTEXITCODE } catch { exit 2 }"
     $env:CLAUDE_PROJECT_DIR = $proj
-    $null = $json | & $exe -NoProfile -ExecutionPolicy Bypass -Command $cmd 2>&1
-    return $LASTEXITCODE
+    $saida = $json | & $exe -NoProfile -ExecutionPolicy Bypass -Command $cmd 2>&1
+    $codigo = $LASTEXITCODE
+    $script:mensagem = (($saida | ForEach-Object { "$_" }) -join ' ').Trim()
+    return $codigo
 }
 
 function Json([string]$ferramenta, [string]$comando) {
@@ -51,7 +53,7 @@ function Conferir([string]$nome, [int]$esperado, [int]$obtido) {
     $script:total++
     if ($esperado -ne $obtido) {
         $script:falhas++
-        Avisar "FALHOU (esperado $esperado, veio $obtido): $nome"
+        Avisar "FALHOU (esperado $esperado, veio $obtido): $nome :: $script:mensagem"
     }
 }
 
