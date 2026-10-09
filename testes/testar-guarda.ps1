@@ -43,11 +43,15 @@ function Json([string]$ferramenta, [string]$comando) {
 
 $falhas = 0
 $total  = 0
+# No GitHub Actions, cada falha vira uma anotacao visivel na pagina da execucao.
+function Avisar([string]$texto) {
+    if ($env:GITHUB_ACTIONS) { Write-Host "::error::PowerShell $($PSVersionTable.PSVersion) - $texto" } else { Write-Host $texto }
+}
 function Conferir([string]$nome, [int]$esperado, [int]$obtido) {
     $script:total++
     if ($esperado -ne $obtido) {
         $script:falhas++
-        Write-Host "FALHOU (esperado $esperado, veio $obtido): $nome"
+        Avisar "FALHOU (esperado $esperado, veio $obtido): $nome"
     }
 }
 
@@ -59,7 +63,7 @@ foreach ($linha in [System.IO.File]::ReadAllLines($casos, $utf8)) {
     $saida = Rodar $p[0] (Json $p[2] $comando)
     $segundos = ((Get-Date) - $inicio).TotalSeconds
     Conferir "[$($p[0])] $($p[3])" ([int]$p[1]) $saida
-    if ($segundos -gt 10) { $script:falhas++; Write-Host "LENTO ($([int]$segundos) s): $($p[3])" }
+    if ($segundos -gt 10) { $script:falhas++; Avisar "LENTO ($([int]$segundos) s): $($p[3])" }
 }
 
 # Cenarios que nao cabem na tabela.

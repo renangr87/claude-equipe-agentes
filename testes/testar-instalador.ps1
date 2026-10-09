@@ -23,7 +23,10 @@ $falhas = 0
 $total  = 0
 function Conferir([string]$nome, [bool]$ok) {
     $script:total++
-    if (-not $ok) { $script:falhas++; Write-Host "FALHOU: $nome" }
+    if (-not $ok) {
+        $script:falhas++
+        if ($env:GITHUB_ACTIONS) { Write-Host "::error::PowerShell $($PSVersionTable.PSVersion) - FALHOU: $nome" } else { Write-Host "FALHOU: $nome" }
+    }
 }
 
 function Instalar([string]$destino, [string[]]$extra = @()) {

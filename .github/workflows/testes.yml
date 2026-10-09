@@ -9,16 +9,19 @@ jobs:
     name: Windows, PowerShell 5.1 e 7
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Guarda (Windows PowerShell 5.1)
         shell: powershell
         run: ./testes/testar-guarda.ps1
       - name: Guarda (PowerShell 7)
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: ./testes/testar-guarda.ps1
       - name: Instalador (Windows PowerShell 5.1)
+        if: ${{ !cancelled() }}
         shell: powershell
         run: ./testes/testar-instalador.ps1
       - name: Instalador (PowerShell 7)
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: ./testes/testar-instalador.ps1
