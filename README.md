@@ -46,6 +46,8 @@ flowchart TD
 | `settings/projeto.exemplo.json` | exemplo de bloqueios mais rígidos para um projeto | `.claude/settings.json` do projeto |
 | `exemplos/flutter-supabase/` | exemplo preenchido de `CLAUDE.md` e da lista do verificador | referência |
 | `instalar.ps1` | instalador para Windows | executar |
+| `testes/` | casos da guarda e teste do instalador, que rodam no Windows PowerShell 5.1 e no PowerShell 7 | executar |
+| `.github/workflows/testes.yml` | roda os testes no Windows a cada mudança no GitHub | automático |
 | `docs/como-funciona.md` | explicação detalhada | leitura |
 | `docs/modelos.md` | preços e benchmarks oficiais dos modelos 5.5 e o motivo de cada escolha | leitura |
 
@@ -98,7 +100,7 @@ powershell -ExecutionPolicy Bypass -File .\instalar.ps1 -SemBloqueios
 
 ### Opção 2: manual (qualquer sistema)
 
-1. Copie `agents/*.md` para `~/.claude/agents/`. Em `Explore.md` e `verificador.md`, troque `__PASTA_CLAUDE__` pelo caminho absoluto da pasta, com barras `/` (no Windows, algo como `C:/Users/voce/.claude`).
+1. Copie `agents/*.md` para `~/.claude/agents/`. Em `Explore.md`, `verificador.md` e `implementador.md`, troque `__PASTA_CLAUDE__` pelo caminho absoluto da pasta, com barras `/` (no Windows, algo como `C:/Users/voce/.claude`).
 2. Copie `hooks/guarda-comandos.ps1` para `~/.claude/hooks/`.
 3. Copie `rules/equipe-agentes.md` para `~/.claude/rules/`.
 4. Abra `~/.claude/settings.json` (crie se não existir) e acrescente as entradas de `settings/global.json` às listas `permissions.deny` e `permissions.ask`. Se o arquivo não existir, basta copiar `settings/global.json` com o nome `settings.json`.
@@ -142,10 +144,10 @@ Quando mudar o ajuste da sessão:
 ## Configurar um projeto
 
 1. Copie `projeto/CLAUDE.md` para a raiz do projeto e preencha. Deixe só o que é daquele projeto: stack, comandos, pastas, qual é o banco de produção, o que não entra em commit. Veja o exemplo em `exemplos/flutter-supabase/CLAUDE.md`.
-2. Copie `projeto/verificador-comandos.txt` para `.claude/verificador-comandos.txt` no projeto e liste os comandos de teste, lint, tipos e build, um por linha. Sem essa lista, a guarda bloqueia todo comando do verificador. Se o mestre for criar ou mudar a lista, o Claude Code pede a sua aprovação, porque `.claude/` é pasta protegida: é isso que impede um agente de liberar comandos para si mesmo.
+2. Copie `projeto/verificador-comandos.txt` para `.claude/verificador-comandos.txt` no projeto e liste os comandos de teste, lint, tipos e build, um por linha. Sem essa lista, a guarda bloqueia todo comando do verificador. Faça o commit da lista: a guarda recusa a lista enquanto ela tiver mudança fora de commit, então nenhum agente libera comandos para si mesmo sem que a mudança apareça no git. Quando o mestre cria ou muda a lista pelas ferramentas de arquivo, o Claude Code também pede a sua aprovação, porque `.claude/` é pasta protegida; isso não vale para um script que grave o arquivo por conta própria.
 3. Nada a fazer para o diff do revisor: na primeira revisão, o mestre cria a pasta `.revisao/` com um `.gitignore` interno contendo `*`, e ela nunca entra em commit.
 4. Se o projeto precisa de bloqueios mais rígidos, crie `.claude/settings.json` na raiz dele a partir de `settings/projeto.exemplo.json`. As listas do projeto se somam às globais.
-5. Para as partes do código que exigem conhecimento acumulado, crie uma **nota de área**: copie `projeto/nota-de-area.md` como `CLAUDE.md` dentro da pasta. Ela é carregada quando um agente abre arquivos daquela pasta. É o que substitui o "desenvolvedor que já conhece o assunto".
+5. Para as partes do código que exigem conhecimento acumulado, crie uma **nota de área**: copie `projeto/nota-de-area.md` como `CLAUDE.md` dentro da pasta. Ela é carregada quando o mestre ou o implementador abrem arquivos daquela pasta. O Explore, o verificador e o revisor não carregam arquivos `CLAUDE.md`, então o mestre aponta a nota no briefing quando ela importa. É o que substitui o "desenvolvedor que já conhece o assunto".
 
 ## Bloqueios: o que fazem e o que não fazem
 
@@ -153,7 +155,9 @@ Quando mudar o ajuste da sessão:
 |---|---|---|
 | Proibido (`deny`) | `git reset --hard`, `git push --force` e `-f`, `git clean`, `git add -A`, `git add --all`, `git add .`, `git commit -a` | o Claude Code recusa |
 | Proibido (`deny`) | leitura, edição e criação de `.env` e `.env.*` em qualquer pasta do computador, inclusive `.env.example` | o Claude Code recusa |
-| Pede confirmação (`ask`) | `git push`, `rm -r`, `Remove-Item -Recurse` | aparece um pedido de aprovação para você |
+| Pede confirmação (`ask`) | `git push`, `rm -r`, `Remove-Item -r` | aparece um pedido de aprovação para você |
+| Pede confirmação (`ask`) | descarte de trabalho: `git restore`, `git checkout -- arquivo`, `git checkout .`, `git checkout -f`, `git stash drop`, `clear` e `pop`, `git reset --merge` e `--keep`, `git switch -f` | aparece um pedido de aprovação para você |
+| Pede confirmação (`ask`) | ferramentas de escrita de conectores, como as do Supabase: `execute_sql`, `apply_migration`, `deploy_edge_function`, operações de branch e de projeto | aparece um pedido de aprovação para você. `execute_sql` pede também para consultas só de leitura, porque a ferramenta é a mesma |
 
 Cada regra de comando existe duas vezes, uma para Bash e outra para PowerShell, porque no Windows o agente pode usar qualquer um dos dois.
 
@@ -168,28 +172,33 @@ Limites que você precisa conhecer:
 
 ## A guarda de terminal
 
-`hooks/guarda-comandos.ps1` roda antes de cada comando de terminal do Explore, do verificador e do implementador, no Bash e no PowerShell. Ela é declarada no próprio arquivo de cada agente, então só vale para eles: o mestre e o revisor não passam por ela.
+`hooks/guarda-comandos.ps1` roda antes de cada comando de terminal do Explore, do verificador e do implementador, no Bash e no PowerShell. Ela é declarada no próprio arquivo de cada agente, então só vale para eles: o mestre e o revisor não passam por ela. O agente chama o script por dentro de um `try/catch` que bloqueia se o script não rodar (arquivo ausente, política de execução da empresa, erro de sintaxe).
 
 | Agente | O que passa |
 |---|---|
-| Explore | `git log`, `git blame`, `git show`, `git diff`, `git status` e `git ls-files`, sem `--output`, `--ext-diff` nem `--no-index` |
-| verificador | as linhas de `.claude/verificador-comandos.txt` do projeto, exatas ou com argumentos a mais |
+| Explore | `git log`, `git blame`, `git show`, `git diff`, `git status` e `git ls-files`, sem `--output`, `--ext-diff`, `--no-index` nem `--contents` |
+| verificador | as linhas de `.claude/verificador-comandos.txt` do projeto, exatas ou com argumentos a mais, desde que a lista esteja em commit |
 | implementador | tudo, menos formatador sem arquivos nomeados um a um |
 
-**Implementador.** Formatadores conhecidos (`dart format`, `flutter format`, `dart fix --apply`, `prettier --write`, `eslint --fix`, `black`, `ruff format`, `gofmt -w`, `go fmt`, `cargo fmt`, `dotnet format` e outros) só passam quando cada argumento é um arquivo. Pasta, `.`, curinga, variável, `$(...)` ou nenhum argumento são bloqueados, também dentro de comandos compostos (`cd app && dart format .`), em `xargs`, `find -exec`, `bash -c` e `ForEach-Object`. O modo só de conferir (`--check`, `--output=none`, `--dry-run`) passa. Scripts como `npm run format` e `make format` são bloqueados, porque escondem o comando real. A lista fica em `$formatadores` no script.
+**Implementador.** Formatadores conhecidos (`dart format`, `flutter format`, `dart fix --apply`, `prettier --write`, `eslint --fix`, `black`, `ruff format`, `gofmt -w`, `go fmt`, `cargo fmt`, `dotnet format` e outros) só passam quando cada argumento é um arquivo. Pasta, `.`, curinga, variável, `$(...)` ou nenhum argumento são bloqueados em qualquer parte do comando: em comandos compostos (`cd app && dart format .`), em `xargs`, `find -exec`, `cmd /c`, `bash -c "..."`, `ForEach-Object`, `Start-Process` e `Invoke-Expression`. Redirecionamento (`2>&1`, `> saida.txt`) e nome de arquivo entre aspas com espaço funcionam. O modo só de conferir (`--check`, `--output=none`, `--dry-run`) passa, a não ser que venha junto com a opção de gravar. O texto de `git commit -m`, `grep` e `echo` não é examinado. Scripts como `npm run format` e `make format` são bloqueados, porque escondem o comando real. A lista fica em `$formatadores` no script.
 
 O implementador também tira uma foto do `git status` no começo e no fim da tarefa e relata os arquivos que mudaram. O mestre compara essa lista com o escopo antes do commit. Isso cobre o que a guarda não pega, como um script próprio em Python que reformata arquivos.
 
 **Explore e verificador.** Para os dois, a guarda recusa:
 - mais de um comando por vez;
 - pipe, redirecionamento, `;`, `&&`, `$`, crase e parênteses fora do texto da lista;
-- qualquer comando que cite `.env`. Um build que lê `.env.web.json`, por exemplo, fica com o mestre.
+- qualquer comando que cite `.env`, mesmo escondido com aspas ou caractere de escape (`.e""nv`, ``.e`nv``). Um build que lê `.env.web.json`, por exemplo, fica com o mestre.
 
 Limites:
 - **Um comando liberado pode fazer o que ele mesmo faz.** Se um teste escreve no banco, a guarda deixa passar. Liste só comandos que não alteram nada fora da pasta de build.
-- **A guarda só bloqueia quando roda.** Se o `powershell.exe` não for encontrado, se o caminho do script estiver errado ou se ela passar de 30 segundos, o Claude Code deixa o comando seguir. Os testes 4, 5 e 6 da instalação servem para confirmar que ela está ativa.
+- **O hook depende do `powershell.exe`.** Se ele não for encontrado ou se a guarda passar de 30 segundos, o Claude Code deixa o comando seguir. Os outros casos de falha (script ausente, caminho errado, política de execução) bloqueiam. Os testes 4, 5 e 6 da instalação confirmam que a guarda está ativa.
 - **A guarda do implementador pega formatadores conhecidos, não toda forma de reformatar.** Um script próprio que reescreve arquivos passa. Quem cobre isso é a comparação de `git status` antes do commit.
-- **Ela foi testada no PowerShell 7.4**, com 85 casos: 31 do Explore e do verificador (comandos liberados, encadeamento, redirecionamento, subcomando, `.env`, lista ausente, JSON inválido) e 54 do implementador (formatadores em pasta, em comando composto, por `xargs`, `find -exec`, `bash -c`, `ForEach-Object` e script, além de comandos comuns que precisam passar). O formato do hook no arquivo do agente segue a documentação, mas ainda não foi executado no app do Windows nem no Windows PowerShell 5.1.
+- **A lista do verificador depende do git.** Se a pasta `.claude/` estiver no `.gitignore` do projeto, a checagem de commit não enxerga mudanças.
+- **Testes.** `testes/casos-guarda.txt` tem 114 casos e `testes/testar-guarda.ps1` roda todos do mesmo jeito que o hook, mais 5 cenários (entrada vazia, JSON inválido, script ausente, lista fora de commit, lista ausente). `testes/testar-instalador.ps1` faz 25 verificações em pastas temporárias. A cada mudança no GitHub, os dois rodam no Windows com o PowerShell 5.1 e com o PowerShell 7. Para rodar na sua máquina: `powershell -ExecutionPolicy Bypass -File .\testes\testar-guarda.ps1`. O app do Windows em si não é testado: os testes 4, 5 e 6 da instalação cobrem essa parte.
+
+## Ferramentas de conectores
+
+O implementador não usa ferramentas de conectores (MCP): o arquivo dele tem `disallowedTools: Agent, mcp__*`. Assim ele não alcança, por exemplo, o banco de produção pelo conector do Supabase. Nos outros agentes e no mestre, as ferramentas de escrita mais comuns pedem confirmação (veja os bloqueios). Se você quiser que o implementador use um conector, troque `mcp__*` pelo nome do servidor que ele não deve usar, por exemplo `mcp__claude_ai_Supabase`.
 
 ## Personalizar
 
@@ -217,7 +226,7 @@ Depois de editar os arquivos do repositório, rode o instalador de novo.
 - **Tudo passa pelo mestre.** Em sessões muito longas o contexto dele enche. Feche a rodada, deixe o estado anotado e abra uma sessão nova.
 - **Ainda não foi medido em uso real.** Os limites de revisão e a divisão de modelos são um ponto de partida. Compare custo e qualidade em uma tarefa antes de adotar em tudo.
 - **O instalador foi testado no PowerShell 7.4 em Linux**, com seis cenários (instalação limpa, repetição, mescla com `settings.json` existente, JSON inválido, `-SemBloqueios` e `CLAUDE_CONFIG_DIR`). Ele foi escrito para funcionar no Windows PowerShell 5.1, mas não foi executado nele.
-- **Os subagentes carregam as mesmas instruções da sessão principal**, segundo a documentação. Isso inclui a regra global, com cerca de 2 mil tokens; a parte de orquestração, que só serve ao mestre, é uns 800 deles. Num teste, cada subagente já começou com dezenas de milhares de tokens de instruções do próprio Claude Code, então tirar essa parte rende pouco. Fica para medir antes de mexer. O Explore usa `omitClaudeMd: true` para não carregar. A documentação diz que esse campo pula os `CLAUDE.md` de usuário, de projeto e local, mas não diz se pula `~/.claude/rules/`, então pode ser que ele ainda receba a regra global. Para saber, peça ao Explore que diga qual é a regra de commit da equipe: se ele souber, a regra chegou.
+- **O que cada subagente carrega.** Pela documentação, o subagente recebe o próprio prompt, não o do Claude Code. O implementador carrega também a regra global (uns 2 mil tokens, 800 deles de orquestração, que só serve ao mestre) e o `CLAUDE.md` do projeto. O Explore, o verificador e o revisor usam `omitClaudeMd: true` e, segundo a documentação, carregam só arquivos de política gerenciada: tudo o que precisam vem no briefing. Para conferir, peça ao Explore qual é a regra de commit da equipe: ele não deve saber.
 - **`isolation: worktree` não é o padrão para tarefas paralelas.** O worktree nasce do branch padrão, não do trabalho em andamento, e o resultado precisa ser trazido de volta depois.
 
 ## Licença

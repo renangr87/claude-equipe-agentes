@@ -1,0 +1,22 @@
+name: testes
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]
+    name: Windows (${{ matrix.shell }})
+    steps:
+      - uses: actions/checkout@v4
+      - name: Guarda
+        shell: ${{ matrix.shell }}
+        run: ./testes/testar-guarda.ps1
+      - name: Instalador
+        shell: ${{ matrix.shell }}
+        run: ./testes/testar-instalador.ps1

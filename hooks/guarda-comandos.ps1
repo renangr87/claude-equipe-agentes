@@ -9,17 +9,22 @@
   Saida 0: o comando segue o fluxo normal de permissoes.
   Saida 2: o comando e bloqueado e a mensagem vai para o subagente.
 
-  Qualquer erro inesperado tambem sai com 2. Com saida 1 o Claude Code
-  deixaria o comando passar.
+  Qualquer erro, inclusive entrada vazia ou invalida, tambem sai com 2. Com saida 1
+  o Claude Code deixaria o comando passar. Os agentes chamam este script por dentro
+  de um try/catch que sai com 2 se o script nem chegar a rodar.
 
   Perfis:
     explore        so historico e estado do git: log, blame, show, diff, status, ls-files.
-    verificador    so os comandos listados em .claude/verificador-comandos.txt do projeto.
+    verificador    so os comandos listados em .claude/verificador-comandos.txt do projeto,
+                   e so se essa lista nao tiver mudanca fora de commit.
                    Cada linha libera o comando exato e o mesmo comando com argumentos a mais.
     implementador  terminal livre, menos formatadores: so passam com arquivos nomeados um
-                   a um. Pasta, '.', curinga, variavel ou nenhum arquivo sao bloqueados.
-                   Scripts de formatacao (npm run format e parecidos) sao bloqueados.
-                   Vale para cada parte de um comando composto (&&, ;, |, &).
+                   a um. Pasta, '.', curinga, variavel ou nenhum arquivo sao bloqueados,
+                   em qualquer parte de um comando composto. Scripts de formatacao
+                   (npm run format e parecidos) sao bloqueados.
+
+  Compativel com Windows PowerShell 5.1 e PowerShell 7. Os casos de teste ficam em
+  testes/casos-guarda.txt.
 
 .PARAMETER Perfil
   explore, verificador ou implementador.
@@ -31,73 +36,146 @@ function Bloquear([string]$motivo) {
     exit 2
 }
 
-# Encadeamento, redirecionamento, subcomando e variavel: nada disso e permitido
-# fora do texto que uma linha da lista ja traz.
+# Explore e verificador: encadeamento, redirecionamento, subcomando e variavel nao
+# sao permitidos fora do texto que uma linha da lista ja traz.
 $operadores = '[;&|<>`$(){}]'
 
-# Formatadores: nome do programa, o que vem depois dele e, quando o padrao e so
-# conferir, a opcao que faz gravar ($null = grava sempre).
+# Formatadores. nome: o programa. sub: o subcomando que precisa vir logo depois ($null:
+# nenhum). escrita: a opcao que faz gravar, quando o padrao do programa e so conferir
+# ($null: grava sempre).
 $formatadores = @(
-    @{ nome = 'dart';         resto = ' format';             escrita = $null },
-    @{ nome = 'flutter';      resto = ' format';             escrita = $null },
-    @{ nome = 'dart';         resto = ' fix';                escrita = '--apply' },
-    @{ nome = 'prettier';     resto = '';                    escrita = '(--write|-w)' },
-    @{ nome = 'eslint';       resto = '';                    escrita = '--fix' },
-    @{ nome = 'stylelint';    resto = '';                    escrita = '--fix' },
-    @{ nome = 'biome';        resto = ' (format|check|lint)'; escrita = '--(write|apply|apply-unsafe|fix)' },
-    @{ nome = 'black';        resto = '';                    escrita = $null },
-    @{ nome = 'ruff';         resto = ' format';             escrita = $null },
-    @{ nome = 'ruff';         resto = ' check';              escrita = '--fix' },
-    @{ nome = 'isort';        resto = '';                    escrita = $null },
-    @{ nome = 'autopep8';     resto = '';                    escrita = '(-i|--in-place)' },
-    @{ nome = 'yapf';         resto = '';                    escrita = '(-i|--in-place)' },
-    @{ nome = 'gofmt';        resto = '';                    escrita = '-w' },
-    @{ nome = 'goimports';    resto = '';                    escrita = '-w' },
-    @{ nome = 'go';           resto = ' fmt';                escrita = $null },
-    @{ nome = 'cargo';        resto = ' fmt';                escrita = $null },
-    @{ nome = 'rustfmt';      resto = '';                    escrita = $null },
-    @{ nome = 'dotnet';       resto = ' format';             escrita = $null },
-    @{ nome = 'clang-format'; resto = '';                    escrita = '-i' },
-    @{ nome = 'swiftformat';  resto = '';                    escrita = $null },
-    @{ nome = 'ktlint';       resto = '';                    escrita = '(-F|--format)' },
-    @{ nome = 'rubocop';      resto = '';                    escrita = '(-a|-A|-x|--autocorrect|--autocorrect-all|--fix-layout)' },
-    @{ nome = 'php-cs-fixer'; resto = ' fix';                escrita = $null },
-    @{ nome = 'terraform';    resto = ' fmt';                escrita = $null },
-    @{ nome = 'shfmt';        resto = '';                    escrita = '-w' }
+    @{ nome = 'dart';         sub = '^format$';               escrita = $null },
+    @{ nome = 'flutter';      sub = '^format$';               escrita = $null },
+    @{ nome = 'dart';         sub = '^fix$';                  escrita = '^--apply$' },
+    @{ nome = 'prettier';     sub = $null;                    escrita = '^(--write|-w)$' },
+    @{ nome = 'eslint';       sub = $null;                    escrita = '^--fix$' },
+    @{ nome = 'stylelint';    sub = $null;                    escrita = '^--fix$' },
+    @{ nome = 'biome';        sub = '^(format|check|lint)$';  escrita = '^--(write|apply|apply-unsafe|fix)$' },
+    @{ nome = 'black';        sub = $null;                    escrita = $null },
+    @{ nome = 'ruff';         sub = '^format$';               escrita = $null },
+    @{ nome = 'ruff';         sub = '^check$';                escrita = '^--fix$' },
+    @{ nome = 'isort';        sub = $null;                    escrita = $null },
+    @{ nome = 'autopep8';     sub = $null;                    escrita = '^(-i|--in-place)$' },
+    @{ nome = 'yapf';         sub = $null;                    escrita = '^(-i|--in-place)$' },
+    @{ nome = 'gofmt';        sub = $null;                    escrita = '^-w$' },
+    @{ nome = 'goimports';    sub = $null;                    escrita = '^-w$' },
+    @{ nome = 'go';           sub = '^fmt$';                  escrita = $null },
+    @{ nome = 'cargo';        sub = '^fmt$';                  escrita = $null },
+    @{ nome = 'rustfmt';      sub = $null;                    escrita = $null },
+    @{ nome = 'dotnet';       sub = '^format$';               escrita = $null },
+    @{ nome = 'clang-format'; sub = $null;                    escrita = '^-i$' },
+    @{ nome = 'swiftformat';  sub = $null;                    escrita = $null },
+    @{ nome = 'ktlint';       sub = $null;                    escrita = '^(-F|--format)$' },
+    @{ nome = 'rubocop';      sub = $null;                    escrita = '^(-a|-A|-x|--autocorrect|--autocorrect-all|--fix-layout)$' },
+    @{ nome = 'php-cs-fixer'; sub = '^fix$';                  escrita = $null },
+    @{ nome = 'terraform';    sub = '^fmt$';                  escrita = $null },
+    @{ nome = 'shfmt';        sub = $null;                    escrita = '^-w$' }
 )
-# O que pode vir antes do formatador e ainda executa-lo.
-$prefixos = '(xargs|-exec|-c|-command|npx|bunx|uvx|fvm|env|sudo|time|nice|%|foreach-object|foreach|pnpm exec|pnpm dlx|yarn dlx|uv run|poetry run|pipx run|python3? -m|py -m|dart run|flutter pub run)'
-$soConferencia = '(^| )(--check|-check|--diff|--dry-run|--verify-no-changes|--list-different|(-o|--output)[= ]none)( |$)'
+$nomesFormatadores = @($formatadores | ForEach-Object { $_.nome } | Select-Object -Unique)
+
+# Opcoes que deixam o formatador so conferindo, sem gravar.
+$soConferencia = '^(--check|-check|--diff|--dry-run|--verify-no-changes|--list-different|--output=none|-o=none)$'
+
+# Scripts que rodam o formatador do projeto inteiro.
 $scriptsFormatacao = '(^| )((npm|pnpm|yarn|bun)( run)? (format|fmt|prettier|lint:fix|fix)|make (format|fmt)|melos (run )?format|just (format|fmt))( |$)'
 
+# Comandos cujo texto e dado, nao execucao (mensagem de commit, busca, eco).
+$comandosDeTexto = '^(git|grep|egrep|fgrep|rg|ag|findstr|select-string|sls|echo|printf|write-output|write-host|cat|type|get-content|gc|head|tail|less|more|wc|ls|dir|gci|get-childitem)$'
+
+# Comandos que executam outro programa a partir de texto.
+$executores = '^(start-process|saps|start|iex|invoke-expression)$'
+
+# Valores de opcao que nao sao caminho: numero, codigo em maiusculas, chave=valor.
+$valorDeOpcao = '^(\d+|[A-Z][A-Z0-9,]*|[^\\/=]+=[^\\/]*)$'
+
+function Nome-Programa([string]$token) {
+    $base = ($token -split '[\\/]')[-1].ToLowerInvariant()
+    return ($base -replace '\.(exe|bat|cmd|ps1)$', '')
+}
+
+function Separar-Tokens([string]$texto) {
+    $limpo = $texto -replace '[{}(),]', ' '
+    $lista = @()
+    foreach ($m in [regex]::Matches($limpo, '"[^"]*"|''[^'']*''|\S+')) {
+        $t = $m.Value -replace '["'']', ''
+        if ($t) { $lista += $t }
+    }
+    return ,$lista
+}
+
 function Testar-Formatadores([string]$texto, [string]$pastaAtual) {
-    foreach ($parte in ($texto -split '[;&|\r\n]+')) {
-        $seg = ($parte -replace '[''"(){}]', ' ' -replace '\s+', ' ').Trim()
+    # Tira redirecionamentos (2>&1, > arquivo, < arquivo) antes de separar as partes.
+    $semRedir = $texto -replace '(\*|\d)?>&\d+', ' '
+    $semRedir = $semRedir -replace '(\*|\d)?>>?\s*("[^"]*"|''[^'']*''|[^\s;&|]+)', ' '
+    $semRedir = $semRedir -replace '<\s*("[^"]*"|''[^'']*''|[^\s;&|]+)', ' '
+
+    foreach ($parte in ($semRedir -split '&&|\|\||[;&|\r\n]')) {
+        $seg = ($parte -replace '\s+', ' ').Trim()
         if (-not $seg) { continue }
         if ($seg -match $scriptsFormatacao) {
             Bloquear "script de formatacao ('$seg') formata o projeto inteiro. Rode o formatador direto, so com os arquivos que voce alterou."
         }
-        foreach ($f in $formatadores) {
-            $padrao = '(?i)(^|(^| )' + $prefixos + '( (-\S+|\d+|\S+=\S*))* )(\S*[\\/])?' + [regex]::Escape($f.nome) + '(\.(exe|bat|cmd))?' + $f.resto + '( |$)'
-            $m = [regex]::Match($seg, $padrao)
-            if (-not $m.Success) { continue }
-            if ($seg -match $soConferencia) { continue }
-            if ($f.escrita -and ($seg -notmatch ('(?i)(^| )' + $f.escrita + '( |$|=)'))) { continue }
-            $resto = $seg.Substring($m.Index + $m.Length)
-            $arquivos = 0
-            foreach ($t in ($resto -split ' ')) {
-                if (-not $t -or $t.StartsWith('-') -or $t -match '^\d+$') { continue }
-                $ehArquivo = ($t -notmatch '[*?$\[\]]') -and ($t -match '\.[A-Za-z0-9_]+$') -and ($t -notmatch '(^|[\\/])\.\.?$')
-                if ($ehArquivo -and $pastaAtual) {
-                    try { if (Test-Path -LiteralPath (Join-Path $pastaAtual $t) -PathType Container) { $ehArquivo = $false } } catch { }
-                }
-                if (-not $ehArquivo) {
-                    Bloquear "o formatador so pode receber arquivos, um a um. '$t' nao e um arquivo. Formate so os arquivos que voce alterou."
-                }
-                $arquivos++
+        $tokens = Separar-Tokens $seg
+        if ($tokens.Count -eq 0) { continue }
+        $nomes = @($tokens | ForEach-Object { Nome-Programa $_ })
+
+        if (@($nomes | Where-Object { $_ -match $executores }).Count -gt 0 -and
+            @($nomes | Where-Object { $nomesFormatadores -contains $_ }).Count -gt 0) {
+            Bloquear "formatador chamado por Start-Process ou Invoke-Expression. Rode o formatador direto, so com os arquivos que voce alterou."
+        }
+
+        $primeiroEhTexto = $nomes[0] -match $comandosDeTexto
+        if (-not $primeiroEhTexto) {
+            # Texto entre aspas pode ser outro comando (bash -c "...", iex '...').
+            foreach ($t in $tokens) {
+                if ($t -match '\s') { Testar-Formatadores $t $pastaAtual }
             }
-            if ($arquivos -eq 0) {
-                Bloquear "formatador sem arquivo formata a pasta inteira. Passe so os arquivos que voce alterou."
+        }
+        for ($i = 0; $i -lt $tokens.Count; $i++) {
+            if ($i -gt 0 -and $primeiroEhTexto) { break }
+            foreach ($f in $formatadores) {
+                if ($nomes[$i] -ne $f.nome) { continue }
+                $inicio = $i + 1
+                if ($f.sub) {
+                    if ($inicio -ge $tokens.Count -or $tokens[$inicio] -notmatch $f.sub) { continue }
+                    $inicio++
+                }
+                $args_ = @()
+                if ($inicio -lt $tokens.Count) { $args_ = @($tokens[$inicio..($tokens.Count - 1)]) }
+
+                if ($f.escrita) {
+                    if (@($args_ | Where-Object { $_ -cmatch $f.escrita }).Count -eq 0) { continue }
+                } else {
+                    $conferindo = @($args_ | Where-Object { $_ -match $soConferencia }).Count -gt 0
+                    for ($k = 0; $k -lt $args_.Count - 1; $k++) {
+                        if ($args_[$k] -match '^(-o|--output)$' -and $args_[$k + 1] -eq 'none') { $conferindo = $true }
+                    }
+                    if ($conferindo) { continue }
+                }
+
+                $arquivos = 0
+                foreach ($t in $args_) {
+                    if ($t.StartsWith('-')) { continue }
+                    if ($t -cmatch $valorDeOpcao) { continue }
+                    $ehArquivo = ($t -notmatch '[*?$\[\]]') -and
+                                 ($t -match '\.[A-Za-z0-9_]+$') -and
+                                 ($t -notmatch '(^|[\\/])\.\.?$') -and
+                                 ($t -notmatch '[\\/]$')
+                    if ($ehArquivo) {
+                        try {
+                            $alvo = $t
+                            if ($pastaAtual -and -not [System.IO.Path]::IsPathRooted($t)) { $alvo = Join-Path $pastaAtual $t }
+                            if (Test-Path -LiteralPath $alvo -PathType Container) { $ehArquivo = $false }
+                        } catch { }
+                    }
+                    if (-not $ehArquivo) {
+                        Bloquear "o formatador so pode receber arquivos, um a um. '$t' nao e um arquivo. Formate so os arquivos que voce alterou."
+                    }
+                    $arquivos++
+                }
+                if ($arquivos -eq 0) {
+                    Bloquear "formatador sem arquivo formata a pasta inteira. Passe so os arquivos que voce alterou."
+                }
             }
         }
     }
@@ -106,7 +184,9 @@ function Testar-Formatadores([string]$texto, [string]$pastaAtual) {
 try {
     try { [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
     $bruto = [Console]::In.ReadToEnd()
+    if (-not $bruto -or -not $bruto.Trim()) { Bloquear 'entrada vazia.' }
     $entrada = $bruto | ConvertFrom-Json
+    if ($null -eq $entrada) { Bloquear 'entrada invalida.' }
 
     $ferramenta = [string]$entrada.tool_name
     if ($ferramenta -ne 'Bash' -and $ferramenta -ne 'PowerShell') { exit 0 }
@@ -120,7 +200,9 @@ try {
     }
 
     if ($comando -match '[\r\n]') { Bloquear 'um comando por vez, em uma linha so.' }
-    if ($comando -match '\.env') { Bloquear 'comando que cita .env nao e permitido.' }
+    # Aspas, crase, circunflexo e barra invertida podem esconder o nome (.e""nv, .e`nv).
+    $semEscapes = $comando -replace '["''`^\\]', ''
+    if ($semEscapes -match '(?i)\.env') { Bloquear 'comando que cita .env nao e permitido.' }
     $comando = $comando -replace '\s+', ' '
 
     switch ($Perfil) {
@@ -131,8 +213,8 @@ try {
             if ($comando -notmatch '^git (log|blame|show|diff|status|ls-files)( |$)') {
                 Bloquear 'o Explore so pode rodar git log, blame, show, diff, status e ls-files.'
             }
-            if ($comando -match '(^| )--(output|ext-diff|no-index)') {
-                Bloquear 'as opcoes --output, --ext-diff e --no-index nao sao permitidas.'
+            if ($comando -match '(^| )--(output|ext-diff|no-index|contents)') {
+                Bloquear 'as opcoes --output, --ext-diff, --no-index e --contents nao sao permitidas.'
             }
             exit 0
         }
@@ -142,6 +224,16 @@ try {
             $arquivoLista = Join-Path (Join-Path $pasta '.claude') 'verificador-comandos.txt'
             if (-not (Test-Path -LiteralPath $arquivoLista)) {
                 Bloquear "nao existe $arquivoLista. Reporte ao mestre: a lista de comandos do projeto precisa ser criada."
+            }
+            # A lista so vale depois de entrar em commit: assim uma mudanca feita por
+            # outro agente aparece no git antes de liberar comandos.
+            $mudou = $null
+            try {
+                $mudou = & git -C $pasta status --porcelain -- .claude/verificador-comandos.txt 2>$null
+                if ($LASTEXITCODE -ne 0) { $mudou = $null }
+            } catch { $mudou = $null }
+            if ($mudou) {
+                Bloquear "a lista .claude/verificador-comandos.txt tem mudanca fora de commit. Reporte ao mestre: ele mostra a mudanca ao usuario e faz o commit."
             }
             $permitidos = @(
                 Get-Content -LiteralPath $arquivoLista -Encoding UTF8 |

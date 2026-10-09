@@ -139,6 +139,8 @@ New-Item -ItemType Directory -Force -Path $pastaHooks   | Out-Null
 
 # Caminho absoluto da pasta de configuracao, com barras normais, para o hook dos agentes.
 $pastaClaude = (Resolve-Path -LiteralPath $Destino).ProviderPath -replace '\\', '/'
+# O caminho vai entre aspas simples no comando do hook: aspa simples vira duas.
+$pastaClaude = $pastaClaude -replace "'", "''"
 
 Write-Host "Guarda de terminal:"
 Copy-ComBackup (Join-Path (Join-Path $origem 'hooks') 'guarda-comandos.ps1') (Join-Path $pastaHooks 'guarda-comandos.ps1')

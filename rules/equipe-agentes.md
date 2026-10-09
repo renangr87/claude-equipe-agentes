@@ -30,15 +30,15 @@ Em tarefa trivial, use o bom senso: estes princípios priorizam cautela sobre ve
 
 ## Orquestração (regras do mestre)
 
-**Projeto sem configuração.** Se o `CLAUDE.md` do projeto não tiver stack e comandos de teste, lint e build, mande o Explore levantar isso, mostre a proposta ao usuário e, depois do OK, grave no `CLAUDE.md` do projeto, e liste os comandos de verificação, um por linha, em `.claude/verificador-comandos.txt`. Só então delegue. Sem essa lista, a guarda bloqueia todo comando do verificador.
+**Projeto sem configuração.** Se o `CLAUDE.md` do projeto não tiver stack e comandos de teste, lint e build, mande o Explore levantar isso, mostre a proposta ao usuário e, depois do OK, grave no `CLAUDE.md` do projeto, e liste os comandos de verificação, um por linha, em `.claude/verificador-comandos.txt`, com commit próprio. Só então delegue. A guarda bloqueia o verificador se a lista não existir ou tiver mudança fora de commit.
 
 **Quando não delegar.** Faça direto se a mudança cabe em até 2 arquivos que você já conhece ou se a resposta sai com poucas leituras. Delegar tarefa pequena custa mais do que fazer.
 
 **Quando delegar.**
 - `Explore`: localizar algo exige varrer pastas ou ler mais de 3 arquivos, ou é preciso consultar o histórico do git. Ele não recebe o `CLAUDE.md` do projeto, então diga no briefing por onde começar.
 - `implementador`: a tarefa tem critério de aceite claro. Uma tarefa por agente.
-- `verificador`: sempre que for rodar testes, lint, tipos ou build. A saída longa fica fora do seu contexto.
-- `revisor`: obrigatório se a mudança toca área sensível, passa de 50 linhas ou atinge mais de 3 arquivos. Dispensado em mudança trivial (texto, renomear, formatação). Ele não tem terminal: grave o diff com `git diff HEAD --output=.revisao/diff.patch` e passe no briefing esse caminho e a lista de arquivos novos. Se a pasta `.revisao/` não existir (projeto novo ou worktree novo), crie-a com um arquivo `.revisao/.gitignore` contendo `*`: o git não cria a pasta, e esse arquivo faz ela se ignorar sozinha. Na próxima revisão, sobrescreva o diff. Não use `.claude/` para isso: escrita lá sempre pede aprovação.
+- `verificador`: sempre que for rodar testes, lint, tipos ou build. A saída longa fica fora do seu contexto. Ele não recebe o `CLAUDE.md`: diga no briefing qual comando rodar.
+- `revisor`: obrigatório se a mudança toca área sensível, passa de 50 linhas ou atinge mais de 3 arquivos. Dispensado em mudança trivial (texto, renomear, formatação). Ele não tem terminal: grave o diff com `git diff HEAD --output=.revisao/diff.patch` e passe no briefing esse caminho e a lista de arquivos novos. Se a pasta `.revisao/` não existir (projeto novo ou worktree novo), crie-a com um arquivo `.revisao/.gitignore` contendo `*`: o git não cria a pasta, e esse arquivo faz ela se ignorar sozinha. Na próxima revisão, sobrescreva o diff. Não use `.claude/` para isso: escrita lá pede aprovação. O revisor não recebe o `CLAUDE.md` nem estas regras: ponha no briefing as regras do projeto que a mudança toca, qual é o banco de produção e o caminho da nota de área.
 
 **Ordem padrão.** Entender → explorar (se preciso) → planejar em passos verificáveis → implementar → verificar → revisar (se exigido) → conferir os critérios → commit local → responder ao usuário.
 

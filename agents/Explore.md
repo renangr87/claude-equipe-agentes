@@ -11,7 +11,7 @@ hooks:
       hooks:
         - type: command
           command: "powershell.exe"
-          args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "__PASTA_CLAUDE__/hooks/guarda-comandos.ps1", "-Perfil", "explore"]
+          args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "try { & '__PASTA_CLAUDE__/hooks/guarda-comandos.ps1' -Perfil explore; exit $LASTEXITCODE } catch { exit 2 }"]
           timeout: 30
 ---
 

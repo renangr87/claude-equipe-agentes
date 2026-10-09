@@ -1,0 +1,125 @@
+# Casos da guarda: perfil<TAB>saida esperada<TAB>ferramenta<TAB>comando
+# Saida 0 = passa; 2 = bloqueado. \n no comando vira quebra de linha.
+# O teste roda numa pasta temporaria com git, lib/a.dart, lib/b.dart, lib/src/ e app/,
+# e com .claude/verificador-comandos.txt em commit.
+
+# --- explore: passa
+explore	0	Bash	git log -5 --oneline
+explore	0	Bash	git blame lib/a.dart
+explore	0	Bash	git  status
+explore	0	Bash	git diff HEAD~1 -- lib/a.dart
+explore	0	Bash	git ls-files
+explore	0	PowerShell	git show HEAD~1:lib/a.dart
+explore	0	Read	qualquer coisa
+# --- explore: bloqueia
+explore	2	Bash	git log | head
+explore	2	Bash	git log > x.txt
+explore	2	Bash	git diff --output=x.patch
+explore	2	Bash	git -C .. log
+explore	2	Bash	git push
+explore	2	Bash	rm -rf .
+explore	2	Bash	git log $(rm a)
+explore	2	Bash	git show HEAD:.env
+explore	2	Bash	git log\nrm a
+explore	2	Bash	git log; rm a
+explore	2	Bash	git logx
+explore	2	Bash	git blame --contents .e""nv a.txt
+explore	2	Bash	git show HEAD:.e''nv
+explore	2	Bash	git blame --contents /etc/passwd lib/a.dart
+explore	2	Bash	git diff --no-index /tmp/a /tmp/b
+explore	2	Bash	git show HEAD:.e^nv
+explore	2	Bash	git show HEAD:.e\nv
+explore	2	PowerShell	git log (Remove-Item a)
+explore	2	PowerShell	git show HEAD:.e`nv
+# --- verificador: passa
+verificador	0	Bash	flutter test
+verificador	0	Bash	flutter test test/carrinho/total_test.dart
+verificador	0	Bash	FLUTTER analyze
+verificador	0	Bash	cd app && flutter test
+verificador	0	PowerShell	cd app; flutter test test/x_test.dart
+# --- verificador: bloqueia
+verificador	2	Bash	flutter test && rm -rf build
+verificador	2	Bash	flutter testx
+verificador	2	Bash	flutter pub add http
+verificador	2	Bash	git status
+verificador	2	Bash	flutter test --dart-define-from-file=.env.prod
+verificador	2	Bash	flutter test --dart-define-from-file=.e""nv.prod
+verificador	2	Bash	flutter test > out.txt
+desconhecido	2	Bash	git log
+# --- implementador: bloqueia formatador em pasta, por qualquer caminho
+implementador	2	Bash	dart format .
+implementador	2	Bash	dart format lib
+implementador	2	Bash	dart format lib/
+implementador	2	Bash	cd app && dart format .
+implementador	2	Bash	flutter format .
+implementador	2	Bash	dart fix --apply
+implementador	2	Bash	dart fix --apply lib
+implementador	2	Bash	dart format
+implementador	2	Bash	find . -name "*.dart" | xargs dart format
+implementador	2	Bash	find lib -name "*.dart" -exec dart format {} \;
+implementador	2	Bash	bash -c "dart format ."
+implementador	2	Bash	dart format lib/*.dart
+implementador	2	Bash	dart format $(git ls-files)
+implementador	2	Bash	C:/flutter/bin/dart.bat format .
+implementador	2	Bash	fvm dart format .
+implementador	2	Bash	npm run format
+implementador	2	Bash	yarn format
+implementador	2	Bash	npx prettier --write .
+implementador	2	Bash	prettier -w src
+implementador	2	Bash	black .
+implementador	2	Bash	python -m black src
+implementador	2	Bash	ruff format
+implementador	2	Bash	ruff check --fix .
+implementador	2	Bash	eslint --fix src
+implementador	2	Bash	gofmt -w .
+implementador	2	Bash	go fmt ./...
+implementador	2	Bash	cargo fmt
+implementador	2	Bash	dotnet format
+implementador	2	Bash	flutter test && dart format .
+implementador	2	Bash	flutter test\ndart format .
+implementador	2	Bash	xargs -n 1 dart format < lista.txt
+implementador	2	Bash	cmd /c dart format .
+implementador	2	Bash	command dart format .
+implementador	2	Bash	timeout 60 dart format .
+implementador	2	Bash	nohup dart format .
+implementador	2	Bash	/usr/bin/env dart format .
+implementador	2	Bash	prettier --write --list-different .
+implementador	2	Bash	black -q src lib/a.dart
+implementador	2	Bash	dart format lib/a.dart lib/src
+implementador	2	Bash	dart format "lib/my dir/"
+implementador	2	Bash	sudo env FOO=1 dart format .
+implementador	2	PowerShell	Set-Location app; dart format lib
+implementador	2	PowerShell	& dart format .
+implementador	2	PowerShell	Get-ChildItem lib -Recurse -Filter *.dart | ForEach-Object { dart format $_.FullName }
+implementador	2	PowerShell	gci lib | % { dart format $_ }
+implementador	2	PowerShell	Start-Process dart -ArgumentList 'format','.'
+implementador	2	PowerShell	Invoke-Expression 'dart format .'
+implementador	2	PowerShell	powershell -Command "dart format ."
+implementador	2	Bash	env -a0=v -a1=v -a2=v -a3=v -a4=v -a5=v -a6=v -a7=v -a8=v -a9=v -a10=v -a11=v -a12=v -a13=v -a14=v -a15=v -a16=v -a17=v -a18=v -a19=v -a20=v -a21=v -a22=v -a23=v -a24=v -a25=v -a26=v -a27=v -a28=v -a29=v dart format .
+# --- implementador: passa
+implementador	0	Bash	dart format lib/a.dart
+implementador	0	Bash	dart format lib/a.dart lib/b.dart
+implementador	0	Bash	cd app && dart format lib/a.dart
+implementador	0	Bash	dart format --output=none --set-exit-if-changed .
+implementador	0	Bash	dart format -o none .
+implementador	0	Bash	dart fix --dry-run
+implementador	0	Bash	dart analyze
+implementador	0	Bash	flutter test test/a_test.dart
+implementador	0	Bash	prettier --check .
+implementador	0	Bash	eslint src
+implementador	0	Bash	black --check .
+implementador	0	Bash	black -l 100 lib/x.py
+implementador	0	Bash	gofmt -l .
+implementador	0	Bash	git commit -m "fix black screen and dart format issue"
+implementador	0	Bash	git -c core.autocrlf=false status
+implementador	0	Bash	npm test
+implementador	0	Bash	grep -rn "dart format" docs
+implementador	0	Bash	echo ok
+implementador	0	Bash	dart format lib/a.dart 2>&1
+implementador	0	Bash	dart format lib/a.dart > out.txt
+implementador	0	Bash	dart format "lib/my file.dart"
+implementador	0	Bash	ruff check --fix --select I a.py
+implementador	0	Bash	grep -c black src/
+implementador	0	Bash	env -a0=v -a1=v -a2=v -a3=v -a4=v -a5=v -a6=v -a7=v -a8=v -a9=v -a10=v -a11=v -a12=v -a13=v -a14=v -a15=v -a16=v -a17=v -a18=v -a19=v -a20=v -a21=v -a22=v -a23=v -a24=v -a25=v -a26=v -a27=v -a28=v -a29=v echo ok
+implementador	0	PowerShell	dart format lib\a.dart
+implementador	0	Read	qualquer coisa

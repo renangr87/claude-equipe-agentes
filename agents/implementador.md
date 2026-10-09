@@ -3,14 +3,14 @@ name: implementador
 description: Escreve ou altera código a partir de um briefing com escopo e critério de aceite definidos. Use para funcionalidades, correções e refatorações já planejadas. Uma tarefa por chamada.
 model: sonnet
 effort: medium
-disallowedTools: Agent
+disallowedTools: Agent, mcp__*
 hooks:
   PreToolUse:
     - matcher: "Bash|PowerShell"
       hooks:
         - type: command
           command: "powershell.exe"
-          args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "__PASTA_CLAUDE__/hooks/guarda-comandos.ps1", "-Perfil", "implementador"]
+          args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "try { & '__PASTA_CLAUDE__/hooks/guarda-comandos.ps1' -Perfil implementador; exit $LASTEXITCODE } catch { exit 2 }"]
           timeout: 30
 ---
 
