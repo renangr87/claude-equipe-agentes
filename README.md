@@ -220,6 +220,10 @@ Depois de editar os arquivos do repositório, rode o instalador de novo.
 - **Os subagentes carregam as mesmas instruções da sessão principal**, segundo a documentação. Isso inclui a regra global, com cerca de 2 mil tokens; a parte de orquestração, que só serve ao mestre, é uns 800 deles. Num teste, cada subagente já começou com dezenas de milhares de tokens de instruções do próprio Claude Code, então tirar essa parte rende pouco. Fica para medir antes de mexer. O Explore usa `omitClaudeMd: true` para não carregar. A documentação diz que esse campo pula os `CLAUDE.md` de usuário, de projeto e local, mas não diz se pula `~/.claude/rules/`, então pode ser que ele ainda receba a regra global. Para saber, peça ao Explore que diga qual é a regra de commit da equipe: se ele souber, a regra chegou.
 - **`isolation: worktree` não é o padrão para tarefas paralelas.** O worktree nasce do branch padrão, não do trabalho em andamento, e o resultado precisa ser trazido de volta depois.
 
+## Licença
+
+[MIT](LICENSE). Use, copie e adapte à vontade, mantendo o aviso de licença.
+
 ## Créditos
 
 Os quatro princípios de trabalho são uma adaptação de [karpathy-guidelines](https://github.com/multica-ai/andrej-karpathy-skills), da multica-ai (licença MIT), que por sua vez se baseia em observações de Andrej Karpathy sobre erros comuns de modelos ao programar.
