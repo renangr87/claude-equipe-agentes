@@ -104,6 +104,54 @@ $json = '{"tool_name":"Bash","tool_input":{"command":"rm -rf ."},"cwd":"."}'
 $null = $json | & $exe -NoProfile -ExecutionPolicy Bypass -Command $comando 2>&1
 Conferir 'aspa: hook roda a guarda e bloqueia rm' ($LASTEXITCODE -eq 2)
 
+# 7 a 9. -ComNavegador: registra o chrome-devtools no .claude.json (precisa do Node)
+if (Get-Command node -ErrorAction SilentlyContinue) {
+    $d7 = Join-Path $base 'navegador'
+    New-Item -ItemType Directory -Force -Path $d7 | Out-Null
+    $usuario = Join-Path $d7 '.claude.json'
+    [System.IO.File]::WriteAllText($usuario, '{"numStartups":5,"projects":{"C:/x":{"allowedTools":[]}},"mcpServers":{"outro":{"command":"x"}}}', $utf8)
+    $r = Instalar $d7 @('-ComNavegador')
+    $u = Ler-Json $usuario
+    Conferir 'navegador: saiu com 0' ($r.codigo -eq 0)
+    Conferir 'navegador: manteve o servidor que existia' ($u.mcpServers.outro.command -eq 'x')
+    Conferir 'navegador: manteve o resto do arquivo' ($u.numStartups -eq 5 -and $null -ne $u.projects)
+    $args7 = @($u.mcpServers.'chrome-devtools'.args)
+    Conferir 'navegador: versao fixa e perfil isolado' (($args7 -contains 'chrome-devtools-mcp@1.10.1') -and ($args7 -contains '--isolated'))
+    Conferir 'navegador: fez backup' (@(Get-ChildItem -LiteralPath $d7 -Filter '.claude.json.bak-*' -Force).Count -eq 1)
+    $r = Instalar $d7 @('-ComNavegador')
+    Conferir 'navegador: repeticao sai com 0' ($r.codigo -eq 0)
+    Conferir 'navegador: repeticao nao faz backup novo' (@(Get-ChildItem -LiteralPath $d7 -Filter '.claude.json.bak-*' -Force).Count -eq 1)
+
+    # .claude.json grande (o Windows PowerShell 5.1 nao le JSON acima de ~2 MB)
+    $d8 = Join-Path $base 'navegador-grande'
+    New-Item -ItemType Directory -Force -Path $d8 | Out-Null
+    $usuario = Join-Path $d8 '.claude.json'
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append('{"projects":{')
+    for ($i = 0; $i -lt 20000; $i++) {
+        if ($i -gt 0) { [void]$sb.Append(',') }
+        [void]$sb.Append('"C:/projeto/' + $i + '":{"historico":"' + ('x' * 200) + '"}')
+    }
+    [void]$sb.Append('}}')
+    [System.IO.File]::WriteAllText($usuario, $sb.ToString(), $utf8)
+    $r = Instalar $d8 @('-ComNavegador')
+    $texto = [System.IO.File]::ReadAllText($usuario, $utf8)
+    Conferir 'navegador grande: saiu com 0' ($r.codigo -eq 0)
+    Conferir 'navegador grande: registrou' ($texto.Contains('"chrome-devtools"'))
+    Conferir 'navegador grande: manteve os projetos' ($texto.Contains('"C:/projeto/19999"'))
+
+    # .claude.json invalido: falha sem alterar
+    $d9 = Join-Path $base 'navegador-invalido'
+    New-Item -ItemType Directory -Force -Path $d9 | Out-Null
+    $usuario = Join-Path $d9 '.claude.json'
+    [System.IO.File]::WriteAllText($usuario, '{ quebrado', $utf8)
+    $r = Instalar $d9 @('-ComNavegador')
+    Conferir 'navegador invalido: saiu com erro' ($r.codigo -ne 0)
+    Conferir 'navegador invalido: arquivo intacto' ([System.IO.File]::ReadAllText($usuario, $utf8) -eq '{ quebrado')
+} else {
+    Write-Host "Sem Node.js: cenarios do -ComNavegador pulados."
+}
+
 Remove-Item -LiteralPath $base -Recurse -Force
 Write-Host "PowerShell $($PSVersionTable.PSVersion): $($total - $falhas) de $total verificacoes certas."
 if ($falhas -gt 0) { exit 1 }

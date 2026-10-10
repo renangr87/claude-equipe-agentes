@@ -43,7 +43,8 @@ flowchart TD
 | `settings/global.json` | bloqueios que valem em todo projeto | mesclar em `~/.claude/settings.json` |
 | `projeto/CLAUDE.md` | modelo do arquivo de cada projeto | raiz do projeto |
 | `projeto/nota-de-area.md` | modelo de nota por pasta | `CLAUDE.md` dentro da pasta |
-| `projeto/mcp.chrome-devtools.json` | configuração segura do servidor Chrome DevTools, para o navegador | `.mcp.json` na raiz do projeto |
+| `projeto/mcp.chrome-devtools.json` | configuração segura do servidor Chrome DevTools, para o navegador | registrado pelo instalador com `-ComNavegador`, ou copiado como `.mcp.json` num projeto |
+| `ferramentas/registrar-mcp.mjs` | script em Node que o instalador usa para registrar o servidor no `.claude.json` | usado pelo instalador |
 | `projeto/verificador-comandos.txt` | modelo da lista de comandos que o verificador pode rodar | `.claude/` do projeto |
 | `settings/projeto.exemplo.json` | exemplo de bloqueios mais rígidos para um projeto | `.claude/settings.json` do projeto |
 | `exemplos/flutter-supabase/` | exemplo preenchido de `CLAUDE.md` e da lista do verificador | referência |
@@ -93,6 +94,12 @@ O instalador:
 - acrescenta os bloqueios ao `%USERPROFILE%\.claude\settings.json`, sem remover nada do que já existe.
 
 Ele não apaga nada. Antes de alterar um arquivo que já existe, grava uma cópia ao lado com o sufixo `.bak-<data>-<hora>`. Pode ser rodado de novo depois de atualizar o repositório: o que já está igual é mantido.
+
+Para ativar também o navegador em todos os projetos, feche o app do Claude e rode com `-ComNavegador` (veja [Navegador e Chrome DevTools](#navegador-e-chrome-devtools-opcional)):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\instalar.ps1 -ComNavegador
+```
 
 Para instalar sem mexer no `settings.json`:
 
@@ -206,12 +213,13 @@ O implementador não usa ferramentas de conectores (MCP): o arquivo dele tem `di
 
 O subagente `navegador` usa o [Chrome DevTools MCP](https://github.com/ChromeDevTools/chrome-devtools-mcp), servidor oficial da equipe do Chrome (licença Apache-2.0). Ele abre o app web num Chrome e lê console, requisições de rede, desempenho, Lighthouse e capturas de tela, coisas que o painel de navegador do app desktop não mostra. O navegador investiga e devolve um resumo, para que as capturas e as listas de rede não ocupem o contexto do mestre.
 
-Para ativar num projeto:
+Precisa do Node 20.19 ou mais novo (ou 22.12 ou mais novo) e do Google Chrome atualizado. O nosso repositório não traz o código do Google: ele só registra a configuração. Na primeira sessão que ligar o servidor, o `npx` baixa sozinho a versão fixada (1.10.1) do pacote oficial.
 
-1. Tenha Node 20.19 ou mais novo (ou 22.12 ou mais novo) e o Google Chrome atualizado.
-2. Copie `projeto/mcp.chrome-devtools.json` para a raiz do projeto com o nome `.mcp.json`. Se o projeto já tem um `.mcp.json`, junte a entrada `chrome-devtools` às que já existem.
-3. Abra uma sessão nova no projeto e aprove o servidor quando o Claude Code perguntar.
-4. Teste: **"Use o navegador para abrir http://localhost:<porta> e listar os erros do console."**
+**Em todos os projetos (recomendado):** feche o app do Claude e rode o instalador com `-ComNavegador`. Ele registra o servidor no `.claude.json` do seu usuário (`%USERPROFILE%\.claude.json`), com backup antes e sem mexer num servidor `chrome-devtools` que já exista. O app precisa estar fechado porque reescreve esse arquivo enquanto está aberto; se estiver aberto, o instalador avisa e pula essa parte. O registro é feito por um script em Node, porque o `.claude.json` costuma ser grande e o Windows PowerShell 5.1 não lê JSON de vários MB. Custo: o servidor sobe em toda sessão e as ferramentas dele aparecem em todos os projetos, mesmo nos que não têm nada de web.
+
+**Só em um projeto:** copie `projeto/mcp.chrome-devtools.json` para a raiz do projeto com o nome `.mcp.json` (se já existir, junte a entrada `chrome-devtools` às outras). O Claude Code pede a sua aprovação na primeira sessão.
+
+Teste: **"Use o navegador para abrir http://localhost:<porta> e listar os erros do console."**
 
 O que a configuração já faz por você:
 
@@ -246,6 +254,7 @@ Depois de editar os arquivos do repositório, rode o instalador de novo.
 1. Apague `Explore.md`, `implementador.md`, `verificador.md`, `revisor.md` e `navegador.md` de `~/.claude/agents/`.
 2. Apague `equipe-agentes.md` de `~/.claude/rules/` e `guarda-comandos.ps1` de `~/.claude/hooks/`.
 3. Em `~/.claude/settings.json`, remova as entradas listadas em `settings/global.json`, ou restaure a cópia `.bak` criada pelo instalador.
+4. Se usou `-ComNavegador`, remova a entrada `chrome-devtools` de `mcpServers` em `%USERPROFILE%\.claude.json`, com o app fechado, ou restaure a cópia `.bak` dele.
 
 ## Limitações conhecidas
 

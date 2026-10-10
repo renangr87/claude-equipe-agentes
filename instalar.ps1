@@ -7,6 +7,8 @@
   2. Copia a guarda de terminal (guarda-comandos.ps1) para <Destino>\hooks
   3. Copia a regra global para <Destino>\rules
   4. Acrescenta os bloqueios ao <Destino>\settings.json, sem remover o que ja existe
+  5. Com -ComNavegador: registra o servidor Chrome DevTools na configuracao do
+     usuario (.claude.json), para o subagente navegador funcionar em todos os projetos
 
   Nada e apagado. Antes de alterar um arquivo que ja existe, o script grava
   uma copia ao lado dele com o sufixo .bak-<data>-<hora>.
@@ -19,8 +21,17 @@
 .PARAMETER SemBloqueios
   Nao altera o settings.json. Instala so os subagentes, a guarda e a regra global.
 
+.PARAMETER ComNavegador
+  Registra o servidor chrome-devtools (projeto/mcp.chrome-devtools.json) no .claude.json
+  do usuario, que vale para todos os projetos. Precisa do Node.js e do app do Claude
+  fechado, porque o app reescreve esse arquivo enquanto esta aberto. Nao altera um
+  servidor chrome-devtools que ja exista.
+
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\instalar.ps1
+
+.EXAMPLE
+  powershell -ExecutionPolicy Bypass -File .\instalar.ps1 -ComNavegador
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\instalar.ps1 -SemBloqueios
@@ -28,18 +39,24 @@
 [CmdletBinding()]
 param(
     [string]$Destino = '',
-    [switch]$SemBloqueios
+    [switch]$SemBloqueios,
+    [switch]$ComNavegador
 )
 
 $ErrorActionPreference = 'Stop'
 
+# O .claude.json do usuario fica ao lado da pasta .claude no caso padrao, e dentro
+# da pasta de configuracao quando ela e outra (CLAUDE_CONFIG_DIR ou -Destino).
+$arquivoUsuario = ''
 if (-not $Destino) {
     if ($env:CLAUDE_CONFIG_DIR) {
         $Destino = $env:CLAUDE_CONFIG_DIR
     } else {
         $Destino = Join-Path $HOME '.claude'
+        $arquivoUsuario = Join-Path $HOME '.claude.json'
     }
 }
+if (-not $arquivoUsuario) { $arquivoUsuario = Join-Path $Destino '.claude.json' }
 
 $origem  = $PSScriptRoot
 $utf8    = New-Object System.Text.UTF8Encoding($false)
@@ -162,6 +179,28 @@ if ($SemBloqueios) {
     Write-Host "Bloqueios:"
     $origemBloqueios = Join-Path (Join-Path $origem 'settings') 'global.json'
     Merge-Bloqueios $origemBloqueios (Join-Path $Destino 'settings.json')
+}
+
+if ($ComNavegador) {
+    Write-Host "Navegador (Chrome DevTools):"
+    $node = Get-Command node -ErrorAction SilentlyContinue
+    $appAberto = $false
+    if ($env:OS -eq 'Windows_NT') {
+        $appAberto = [bool](Get-Process -Name 'Claude' -ErrorAction SilentlyContinue)
+    }
+    if (-not $node) {
+        Write-Host "  nao registrado: o Node.js nao foi encontrado. Instale o Node 20.19 ou mais novo e rode de novo com -ComNavegador."
+    } elseif ($appAberto) {
+        Write-Host "  nao registrado: o app do Claude esta aberto e reescreve o .claude.json. Feche o app e rode de novo com -ComNavegador."
+    } else {
+        $script = Join-Path (Join-Path $origem 'ferramentas') 'registrar-mcp.mjs'
+        $modelo = Join-Path (Join-Path $origem 'projeto') 'mcp.chrome-devtools.json'
+        & $node.Source $script $arquivoUsuario $modelo $carimbo
+        if ($LASTEXITCODE -ne 0) {
+            throw "O servidor chrome-devtools nao foi registrado. Veja a mensagem acima."
+        }
+        Write-Host "  O Google Chrome DevTools MCP e baixado pelo npx na primeira sessao que usar o servidor."
+    }
 }
 
 Write-Host ""
