@@ -3,7 +3,7 @@
   Instala a equipe de agentes na pasta de configuracao do Claude Code.
 
 .DESCRIPTION
-  1. Copia os 4 subagentes para <Destino>\agents, com o caminho da guarda ajustado
+  1. Copia os subagentes para <Destino>\agents, com o caminho da guarda ajustado
   2. Copia a guarda de terminal (guarda-comandos.ps1) para <Destino>\hooks
   3. Copia a regra global para <Destino>\rules
   4. Acrescenta os bloqueios ao <Destino>\settings.json, sem remover o que ja existe

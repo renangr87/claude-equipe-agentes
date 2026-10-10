@@ -41,6 +41,7 @@ Sobre o esforço, a Anthropic afirma que o Opus 5.5 em esforço médio supera o 
 | mestre, se o limite apertar | Sonnet 5.5, médio | quase empata com o Opus pela metade do preço, e no terminal é melhor. |
 | Explore e verificador | Haiku 5.5, baixo | 1/20 do preço do Sonnet, feito para trabalho repetitivo. O limite de 100 mil vale para cada passo, e o subagente reenvia todo o contexto a cada passo: é o volume lido ao longo da busca que estoura, não o briefing. Uma pergunta por chamada; busca grande, dividida em chamadas menores. |
 | implementador | Sonnet 5.5, médio | o Haiku fica em 39% no terminal, contra 70% do Sonnet; o Opus custa o dobro para ganho pequeno. |
+| navegador (opcional) | Sonnet 5.5, médio | ler console, rede e desempenho e decidir qual é a causa pede julgamento; o Haiku cai no uso de ferramentas mais longo. |
 | revisor | Sonnet 5.5, alto; Opus 5.5 em área sensível | o Opus leva a pequena vantagem justamente em julgamento. |
 | — | Fable 5.1 | não usar: custa 2,5 vezes o Opus e fica abaixo dele em todos os testes acima. |
 

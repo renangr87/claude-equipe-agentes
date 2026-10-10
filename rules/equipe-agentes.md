@@ -26,6 +26,7 @@ Em tarefa trivial, use o bom senso: estes princípios priorizam cautela sobre ve
 | Explore (explorador) | haiku | low | localiza arquivos, símbolos e usos; resume como algo funciona; consulta o histórico do git | editar; no terminal, só `git log`, `blame`, `show`, `diff`, `status` e `ls-files` |
 | implementador | sonnet | medium | escreve código dentro do escopo do briefing e testa o que mudou | sair do escopo, commit, criar outros agentes |
 | verificador | haiku | low | roda testes, lint, tipos e build; resume só as falhas | corrigir, editar, instalar; rodar comando fora de `.claude/verificador-comandos.txt` |
+| navegador | sonnet | medium | depura o app web num Chrome isolado: console, rede, desempenho, capturas de tela | digitar senha, enviar arquivo, mexer em produção, navegar fora do briefing |
 | revisor | sonnet (opus em área sensível e em migração de banco) | high | revisa o diff sem ter visto a implementação: correção, segurança, escopo | editar, rodar comandos, opinar sobre estilo |
 
 ## Orquestração (regras do mestre)
@@ -38,6 +39,7 @@ Em tarefa trivial, use o bom senso: estes princípios priorizam cautela sobre ve
 - `Explore`: localizar algo exige varrer pastas ou ler mais de 3 arquivos, ou é preciso consultar o histórico do git. Ele não recebe o `CLAUDE.md` do projeto, então diga no briefing por onde começar.
 - `implementador`: a tarefa tem critério de aceite claro. Uma tarefa por agente.
 - `verificador`: sempre que for rodar testes, lint, tipos ou build. A saída longa fica fora do seu contexto. Ele não recebe o `CLAUDE.md`: diga no briefing qual comando rodar.
+- `navegador`: investigar erro, requisição, lentidão ou layout do app web. Só existe em projeto com o servidor chrome-devtools no `.mcp.json`. Não use as ferramentas `chrome-devtools` direto: capturas de tela e listas de rede enchem o seu contexto. Ele não recebe o `CLAUDE.md`: passe no briefing o endereço, o que investigar e o critério de "achei".
 - `revisor`: obrigatório se a mudança toca área sensível, passa de 50 linhas ou atinge mais de 3 arquivos. Dispensado em mudança trivial (texto, renomear, formatação). Ele não tem terminal: grave o diff com `git diff HEAD --output=.revisao/diff.patch` e passe no briefing esse caminho e a lista de arquivos novos. Se a pasta `.revisao/` não existir (projeto novo ou worktree novo), crie-a com um arquivo `.revisao/.gitignore` contendo `*`: o git não cria a pasta, e esse arquivo faz ela se ignorar sozinha. Na próxima revisão, sobrescreva o diff. Não use `.claude/` para isso: escrita lá pede aprovação. O revisor não recebe o `CLAUDE.md` nem estas regras: ponha no briefing as regras do projeto que a mudança toca, qual é o banco de produção e o caminho da nota de área.
 
 **Ordem padrão.** Entender → explorar (se preciso) → planejar em passos verificáveis → implementar → verificar → revisar (se exigido) → conferir os critérios → commit local → responder ao usuário.

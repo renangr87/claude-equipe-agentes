@@ -1,6 +1,6 @@
 # Equipe de agentes para o Claude Code
 
-Uma sessão principal, o **mestre**, coordena quatro subagentes. Cada um roda no modelo mais barato que dá conta do papel. As regras ficam em camadas, o briefing e o relatório são padronizados, os comandos mais perigosos ficam bloqueados nas configurações e uma guarda limita o terminal dos subagentes: o Explore e o verificador só rodam o que precisam, e o implementador não consegue formatar a pasta inteira.
+Uma sessão principal, o **mestre**, coordena cinco subagentes. Cada um roda no modelo mais barato que dá conta do papel. As regras ficam em camadas, o briefing e o relatório são padronizados, os comandos mais perigosos ficam bloqueados nas configurações e uma guarda limita o terminal dos subagentes: o Explore e o verificador só rodam o que precisam, e o implementador não consegue formatar a pasta inteira.
 
 O objetivo é gastar menos tokens sem abrir mão da qualidade e da segurança do código.
 
@@ -12,6 +12,7 @@ O objetivo é gastar menos tokens sem abrir mão da qualidade e da segurança do
 | Explore (explorador) | Haiku | baixo | localiza e resume código; no terminal, só lê o histórico do git |
 | implementador | Sonnet | médio | escreve o código dentro do escopo do briefing |
 | verificador | Haiku | baixo | roda os comandos de teste, lint, tipos e build listados no projeto e resume as falhas |
+| navegador (opcional) | Sonnet | médio | depura o app web num Chrome isolado, com as ferramentas do Chrome DevTools |
 | revisor | Sonnet (Opus em área sensível) | alto | revisa o diff com contexto limpo, só leitura, sem terminal |
 
 Você abre **uma sessão só**. O mestre cria os subagentes quando precisa.
@@ -37,11 +38,12 @@ flowchart TD
 | Caminho | O que é | Vai para |
 |---|---|---|
 | `rules/equipe-agentes.md` | regras de trabalho: princípios, orquestração, briefing, relatório, segurança | `~/.claude/rules/` |
-| `agents/*.md` | os 4 subagentes, com modelo, esforço e ferramentas de cada um | `~/.claude/agents/` |
+| `agents/*.md` | os 5 subagentes, com modelo, esforço e ferramentas de cada um | `~/.claude/agents/` |
 | `hooks/guarda-comandos.ps1` | guarda de terminal do Explore, do verificador e do implementador | `~/.claude/hooks/` |
 | `settings/global.json` | bloqueios que valem em todo projeto | mesclar em `~/.claude/settings.json` |
 | `projeto/CLAUDE.md` | modelo do arquivo de cada projeto | raiz do projeto |
 | `projeto/nota-de-area.md` | modelo de nota por pasta | `CLAUDE.md` dentro da pasta |
+| `projeto/mcp.chrome-devtools.json` | configuração segura do servidor Chrome DevTools, para o navegador | `.mcp.json` na raiz do projeto |
 | `projeto/verificador-comandos.txt` | modelo da lista de comandos que o verificador pode rodar | `.claude/` do projeto |
 | `settings/projeto.exemplo.json` | exemplo de bloqueios mais rígidos para um projeto | `.claude/settings.json` do projeto |
 | `exemplos/flutter-supabase/` | exemplo preenchido de `CLAUDE.md` e da lista do verificador | referência |
@@ -85,7 +87,7 @@ Regra prática: instrução que precisa chegar aos subagentes vai nos arquivos d
 
 O instalador:
 
-- copia os 4 subagentes para `%USERPROFILE%\.claude\agents`, trocando o marcador `__PASTA_CLAUDE__` pelo caminho real da pasta;
+- copia os 5 subagentes para `%USERPROFILE%\.claude\agents`, trocando o marcador `__PASTA_CLAUDE__` pelo caminho real da pasta;
 - copia a guarda de terminal para `%USERPROFILE%\.claude\hooks`;
 - copia a regra global para `%USERPROFILE%\.claude\rules`;
 - acrescenta os bloqueios ao `%USERPROFILE%\.claude\settings.json`, sem remover nada do que já existe.
@@ -200,6 +202,32 @@ Limites:
 
 O implementador não usa ferramentas de conectores (MCP): o arquivo dele tem `disallowedTools: Agent, mcp__*`. Assim ele não alcança, por exemplo, o banco de produção pelo conector do Supabase. Nos outros agentes e no mestre, as ferramentas de escrita mais comuns pedem confirmação (veja os bloqueios). Se você quiser que o implementador use um conector, troque `mcp__*` pelo nome do servidor que ele não deve usar, por exemplo `mcp__claude_ai_Supabase`.
 
+## Navegador e Chrome DevTools (opcional)
+
+O subagente `navegador` usa o [Chrome DevTools MCP](https://github.com/ChromeDevTools/chrome-devtools-mcp), servidor oficial da equipe do Chrome (licença Apache-2.0). Ele abre o app web num Chrome e lê console, requisições de rede, desempenho, Lighthouse e capturas de tela, coisas que o painel de navegador do app desktop não mostra. O navegador investiga e devolve um resumo, para que as capturas e as listas de rede não ocupem o contexto do mestre.
+
+Para ativar num projeto:
+
+1. Tenha Node 20.19 ou mais novo (ou 22.12 ou mais novo) e o Google Chrome atualizado.
+2. Copie `projeto/mcp.chrome-devtools.json` para a raiz do projeto com o nome `.mcp.json`. Se o projeto já tem um `.mcp.json`, junte a entrada `chrome-devtools` às que já existem.
+3. Abra uma sessão nova no projeto e aprove o servidor quando o Claude Code perguntar.
+4. Teste: **"Use o navegador para abrir http://localhost:<porta> e listar os erros do console."**
+
+O que a configuração já faz por você:
+
+| Opção | Por quê |
+|---|---|
+| `chrome-devtools-mcp@1.10.1` | versão fixa: uma versão nova só entra quando você trocar o número |
+| `--isolated` | perfil temporário do Chrome, sem as suas contas logadas |
+| `--no-usage-statistics` e `CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS` | sem estatísticas de uso para o Google e sem consulta de atualização |
+| `--no-performance-crux` | as análises de desempenho não mandam as URLs do seu app ao Google |
+| `cmd /c` e as variáveis `SystemRoot` e `PROGRAMFILES` | o jeito indicado pelo projeto para rodar no Windows |
+
+Limites:
+- **O navegador vê tudo o que estiver na página** e pode rodar JavaScript nela. Por isso o perfil é isolado e as regras dele proíbem digitar senha, enviar arquivo e mexer em produção. Enviar arquivo (`upload_file`) também pede a sua confirmação em `global.json`.
+- **Flutter Web desenha a tela num canvas.** O navegador pode não enxergar os botões como elementos e precisar clicar por coordenada. Console, rede e desempenho funcionam normalmente.
+- **Só o navegador deveria usar essas ferramentas.** O implementador não tem acesso a conectores. O mestre tem, mas a regra manda delegar.
+
 ## Personalizar
 
 - **Modelo e esforço de um subagente**: mude `model` e `effort` no início do arquivo dele em `~/.claude/agents/`.
@@ -215,7 +243,7 @@ Depois de editar os arquivos do repositório, rode o instalador de novo.
 
 ## Desinstalar
 
-1. Apague `Explore.md`, `implementador.md`, `verificador.md` e `revisor.md` de `~/.claude/agents/`.
+1. Apague `Explore.md`, `implementador.md`, `verificador.md`, `revisor.md` e `navegador.md` de `~/.claude/agents/`.
 2. Apague `equipe-agentes.md` de `~/.claude/rules/` e `guarda-comandos.ps1` de `~/.claude/hooks/`.
 3. Em `~/.claude/settings.json`, remova as entradas listadas em `settings/global.json`, ou restaure a cópia `.bak` criada pelo instalador.
 

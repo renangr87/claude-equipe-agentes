@@ -50,6 +50,7 @@ foreach ($a in 'Explore', 'implementador', 'revisor', 'verificador') {
     $texto = [System.IO.File]::ReadAllText((Join-Path $d1 "agents\$a.md"), $utf8)
     Conferir "limpa: $a.md sem marcador" (-not $texto.Contains('__PASTA_CLAUDE__'))
 }
+Conferir 'limpa: navegador copiado' (Test-Path (Join-Path $d1 'agents\navegador.md'))
 Conferir 'limpa: guarda copiada' (Test-Path (Join-Path $d1 'hooks\guarda-comandos.ps1'))
 Conferir 'limpa: regra copiada' (Test-Path (Join-Path $d1 'rules\equipe-agentes.md'))
 $s = Ler-Json (Join-Path $d1 'settings.json')

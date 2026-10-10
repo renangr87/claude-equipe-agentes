@@ -66,7 +66,8 @@
       "mcp__*__delete_branch",
       "mcp__*__pause_project",
       "mcp__*__restore_project",
-      "mcp__*__create_project"
+      "mcp__*__create_project",
+      "mcp__*__upload_file"
     ]
   }
 }
