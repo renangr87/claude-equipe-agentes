@@ -1,6 +1,6 @@
 # Equipe de agentes para o Claude Code
 
-Uma sessão principal, o **mestre**, coordena cinco subagentes. Cada um roda no modelo mais barato que dá conta do papel. As regras ficam em camadas, o briefing e o relatório são padronizados, os comandos mais perigosos ficam bloqueados nas configurações e uma guarda limita o terminal dos subagentes: o Explore e o verificador só rodam o que precisam, e o implementador não consegue formatar a pasta inteira.
+Uma sessão principal, o **mestre**, coordena quatro subagentes. Cada um roda no modelo mais barato que dá conta do papel. As regras ficam em camadas, o briefing e o relatório são padronizados, os comandos mais perigosos ficam bloqueados nas configurações e uma guarda limita o terminal dos subagentes: o Explore e o verificador só rodam o que precisam, e o implementador não consegue formatar a pasta inteira.
 
 O objetivo é gastar menos tokens sem abrir mão da qualidade e da segurança do código.
 
@@ -9,10 +9,9 @@ O objetivo é gastar menos tokens sem abrir mão da qualidade e da segurança do
 | Agente | Modelo | Esforço | Papel |
 |---|---|---|---|
 | mestre (a sessão que você abre) | Opus | médio | entende o pedido, planeja, delega, integra, faz o commit e fala com você |
-| Explore (explorador) | Haiku | baixo | localiza e resume código; no terminal, só lê o histórico do git |
+| Explore (explorador) | Haiku | baixo | localiza e resume código; no terminal, só lê o histórico do git; consulta o mapa do código, se instalado |
 | implementador | Sonnet | médio | escreve o código dentro do escopo do briefing |
 | verificador | Haiku | baixo | roda os comandos de teste, lint, tipos e build listados no projeto e resume as falhas |
-| navegador (opcional) | Sonnet | médio | depura o app web num Chrome isolado, com as ferramentas do Chrome DevTools |
 | revisor | Sonnet (Opus em área sensível) | alto | revisa o diff com contexto limpo, só leitura, sem terminal |
 
 Você abre **uma sessão só**. O mestre cria os subagentes quando precisa.
@@ -38,12 +37,12 @@ flowchart TD
 | Caminho | O que é | Vai para |
 |---|---|---|
 | `rules/equipe-agentes.md` | regras de trabalho: princípios, orquestração, briefing, relatório, segurança | `~/.claude/rules/` |
-| `agents/*.md` | os 5 subagentes, com modelo, esforço e ferramentas de cada um | `~/.claude/agents/` |
+| `agents/*.md` | os 4 subagentes, com modelo, esforço e ferramentas de cada um | `~/.claude/agents/` |
 | `hooks/guarda-comandos.ps1` | guarda de terminal do Explore, do verificador e do implementador | `~/.claude/hooks/` |
 | `settings/global.json` | bloqueios que valem em todo projeto | mesclar em `~/.claude/settings.json` |
 | `projeto/CLAUDE.md` | modelo do arquivo de cada projeto | raiz do projeto |
 | `projeto/nota-de-area.md` | modelo de nota por pasta | `CLAUDE.md` dentro da pasta |
-| `projeto/mcp.chrome-devtools.json` | configuração segura do servidor Chrome DevTools, para o navegador | registrado pelo instalador com `-ComNavegador`, ou copiado como `.mcp.json` num projeto |
+| `projeto/mcp.codebase-memory.json` | registro do servidor do mapa do código (codebase-memory) | registrado pelo instalador com `-ComMapa`, ou copiado como `.mcp.json` num projeto |
 | `ferramentas/registrar-mcp.mjs` | script em Node que o instalador usa para registrar o servidor no `.claude.json` | usado pelo instalador |
 | `projeto/verificador-comandos.txt` | modelo da lista de comandos que o verificador pode rodar | `.claude/` do projeto |
 | `settings/projeto.exemplo.json` | exemplo de bloqueios mais rígidos para um projeto | `.claude/settings.json` do projeto |
@@ -88,17 +87,17 @@ Regra prática: instrução que precisa chegar aos subagentes vai nos arquivos d
 
 O instalador:
 
-- copia os 5 subagentes para `%USERPROFILE%\.claude\agents`, trocando o marcador `__PASTA_CLAUDE__` pelo caminho real da pasta;
+- copia os 4 subagentes para `%USERPROFILE%\.claude\agents`, trocando o marcador `__PASTA_CLAUDE__` pelo caminho real da pasta;
 - copia a guarda de terminal para `%USERPROFILE%\.claude\hooks`;
 - copia a regra global para `%USERPROFILE%\.claude\rules`;
 - acrescenta os bloqueios ao `%USERPROFILE%\.claude\settings.json`, sem remover nada do que já existe.
 
 Ele não apaga nada. Antes de alterar um arquivo que já existe, grava uma cópia ao lado com o sufixo `.bak-<data>-<hora>`. Pode ser rodado de novo depois de atualizar o repositório: o que já está igual é mantido.
 
-Para ativar também o navegador em todos os projetos, feche o app do Claude e rode com `-ComNavegador` (veja [Navegador e Chrome DevTools](#navegador-e-chrome-devtools-opcional)):
+Para ativar também o mapa do código, instale antes o programa (veja [Mapa do código](#mapa-do-código-opcional)), feche o app do Claude e rode com `-ComMapa`:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\instalar.ps1 -ComNavegador
+powershell -ExecutionPolicy Bypass -File .\instalar.ps1 -ComMapa
 ```
 
 Para instalar sem mexer no `settings.json`:
@@ -166,7 +165,7 @@ Quando mudar o ajuste da sessão:
 | Proibido (`deny`) | leitura, edição e criação de `.env` e `.env.*` em qualquer pasta do computador, inclusive `.env.example` | o Claude Code recusa |
 | Pede confirmação (`ask`) | `git push`, `rm -r`, `Remove-Item -r` | aparece um pedido de aprovação para você |
 | Pede confirmação (`ask`) | descarte de trabalho: `git restore`, `git checkout -- arquivo`, `git checkout .`, `git checkout -f`, `git stash drop`, `clear` e `pop`, `git reset --merge` e `--keep`, `git switch -f` | aparece um pedido de aprovação para você |
-| Pede confirmação (`ask`) | ferramentas de escrita de conectores, como as do Supabase: `execute_sql`, `apply_migration`, `deploy_edge_function`, operações de branch e de projeto | aparece um pedido de aprovação para você. `execute_sql` pede também para consultas só de leitura, porque a ferramenta é a mesma |
+| Pede confirmação (`ask`) | ferramentas de escrita de conectores, como as do Supabase: `execute_sql`, `apply_migration`, `deploy_edge_function`, operações de branch e de projeto, envio de arquivo (`upload_file`) | aparece um pedido de aprovação para você. `execute_sql` pede também para consultas só de leitura, porque a ferramenta é a mesma |
 
 Cada regra de comando existe duas vezes, uma para Bash e outra para PowerShell, porque no Windows o agente pode usar qualquer um dos dois.
 
@@ -209,32 +208,30 @@ Limites:
 
 O implementador não usa ferramentas de conectores (MCP): o arquivo dele tem `disallowedTools: Agent, mcp__*`. Assim ele não alcança, por exemplo, o banco de produção pelo conector do Supabase. Nos outros agentes e no mestre, as ferramentas de escrita mais comuns pedem confirmação (veja os bloqueios). Se você quiser que o implementador use um conector, troque `mcp__*` pelo nome do servidor que ele não deve usar, por exemplo `mcp__claude_ai_Supabase`.
 
-## Navegador e Chrome DevTools (opcional)
+## Mapa do código (opcional)
 
-O subagente `navegador` usa o [Chrome DevTools MCP](https://github.com/ChromeDevTools/chrome-devtools-mcp), servidor oficial da equipe do Chrome (licença Apache-2.0). Ele abre o app web num Chrome e lê console, requisições de rede, desempenho, Lighthouse e capturas de tela, coisas que o painel de navegador do app desktop não mostra. O navegador investiga e devolve um resumo, para que as capturas e as listas de rede não ocupem o contexto do mestre.
+O [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) (DeusData, licença MIT) lê o projeto e monta um mapa de funções, classes e de quem chama quem. Com ele, o Explore responde "onde está" e "quem chama" consultando o mapa em vez de abrir arquivo por arquivo, e o revisor vê o que depende do que mudou. O projeto publica cerca de 10 vezes menos tokens nesse tipo de pergunta, medido em 31 repositórios. Tudo fica no seu computador: o mapa é um banco local e o projeto diz que não envia código nem estatísticas. Dart é suportado com qualidade "boa" (75 a 89%), então chamadas indiretas podem escapar; em ponto crítico, o Explore confirma lendo o trecho.
 
-Precisa do Node 20.19 ou mais novo (ou 22.12 ou mais novo) e do Google Chrome atualizado. O nosso repositório não traz o código do Google: ele só registra a configuração. Na primeira sessão que ligar o servidor, o `npx` baixa sozinho a versão fixada (1.10.1) do pacote oficial.
+**1. Instale o programa, só o binário.** O instalador oficial dele também acrescenta skill, agentes e hooks próprios ao Claude Code; esses concorreriam com a equipe e poriam texto extra em todo subagente. Por isso use `--skip-config`:
 
-**Em todos os projetos (recomendado):** feche o app do Claude e rode o instalador com `-ComNavegador`. Ele registra o servidor no `.claude.json` do seu usuário (`%USERPROFILE%\.claude.json`), com backup antes e sem mexer num servidor `chrome-devtools` que já exista. O app precisa estar fechado porque reescreve esse arquivo enquanto está aberto; se estiver aberto, o instalador avisa e pula essa parte. O registro é feito por um script em Node, porque o `.claude.json` costuma ser grande e o Windows PowerShell 5.1 não lê JSON de vários MB. Custo: o servidor sobe em toda sessão e as ferramentas dele aparecem em todos os projetos, mesmo nos que não têm nada de web.
+```powershell
+Invoke-WebRequest -Uri https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.ps1 -OutFile install.ps1
+notepad install.ps1        # leia antes de rodar
+powershell -ExecutionPolicy Bypass -File .\install.ps1 --skip-config
+```
 
-**Só em um projeto:** copie `projeto/mcp.chrome-devtools.json` para a raiz do projeto com o nome `.mcp.json` (se já existir, junte a entrada `chrome-devtools` às outras). O Claude Code pede a sua aprovação na primeira sessão.
+O script confere o checksum do binário antes de instalar. O executável não é assinado: o Windows pode mostrar o aviso do SmartScreen, e o Defender pode acusar `Trojan:Script/Wacatac.B!ml`, que o projeto descreve como falso positivo.
 
-Teste: **"Use o navegador para abrir http://localhost:<porta> e listar os erros do console."**
+**2. Registre na equipe.** Feche o app do Claude e rode o nosso instalador com `-ComMapa`. Ele acha o `codebase-memory-mcp` no PATH e registra o caminho completo no `%USERPROFILE%\.claude.json`, com backup antes e sem mexer num registro que já exista. Precisa do Node.js, que faz a junção do arquivo (o `.claude.json` costuma ser grande demais para o Windows PowerShell 5.1). Para usar só num projeto, copie `projeto/mcp.codebase-memory.json` para a raiz dele como `.mcp.json`.
 
-O que a configuração já faz por você:
+**3. Teste.** Num projeto, peça: **"Use o Explore para dizer quem chama <uma função>."** Na primeira vez ele indexa o projeto.
 
-| Opção | Por quê |
-|---|---|
-| `chrome-devtools-mcp@1.10.1` | versão fixa: uma versão nova só entra quando você trocar o número |
-| `--isolated` | perfil temporário do Chrome, sem as suas contas logadas |
-| `--no-usage-statistics` e `CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS` | sem estatísticas de uso para o Google e sem consulta de atualização |
-| `--no-performance-crux` | as análises de desempenho não mandam as URLs do seu app ao Google |
-| `cmd /c` e as variáveis `SystemRoot` e `PROGRAMFILES` | o jeito indicado pelo projeto para rodar no Windows |
+Como o mapa se mantém atualizado: enquanto houver uma sessão aberta no projeto, o programa observa o git em segundo plano e reindexa só o que mudou. Ao abrir uma sessão nova, ele compara pelo git o que mudou nesse meio-tempo. Pasta sem git não é observada. O Explore e o revisor conferem `index_status` antes de confiar no mapa.
 
-Limites:
-- **O navegador vê tudo o que estiver na página** e pode rodar JavaScript nela. Por isso o perfil é isolado e as regras dele proíbem digitar senha, enviar arquivo e mexer em produção. Enviar arquivo (`upload_file`) também pede a sua confirmação em `global.json`.
-- **Flutter Web desenha a tela num canvas.** O navegador pode não enxergar os botões como elementos e precisar clicar por coordenada. Console, rede e desempenho funcionam normalmente.
-- **Só o navegador deveria usar essas ferramentas.** O implementador não tem acesso a conectores. O mestre tem, mas a regra manda delegar.
+O que fica de fora de propósito:
+- **Skill, agentes e hooks do projeto:** não instalados (`--skip-config`).
+- **Ferramentas de escrita:** o Explore e o revisor só recebem as de consulta. `delete_project`, `manage_adr` e `ingest_traces` pedem confirmação em `global.json`.
+- **Mapa salvo no git:** o projeto oferece gravar `.codebase-memory/graph.db.zst` no repositório, mas o arquivo é regravado a cada atualização e incha o histórico. Deixe desligado (é o padrão) e ponha `.codebase-memory/` no `.gitignore` do projeto.
 
 ## Personalizar
 
@@ -251,10 +248,10 @@ Depois de editar os arquivos do repositório, rode o instalador de novo.
 
 ## Desinstalar
 
-1. Apague `Explore.md`, `implementador.md`, `verificador.md`, `revisor.md` e `navegador.md` de `~/.claude/agents/`.
+1. Apague `Explore.md`, `implementador.md`, `verificador.md` e `revisor.md` de `~/.claude/agents/`.
 2. Apague `equipe-agentes.md` de `~/.claude/rules/` e `guarda-comandos.ps1` de `~/.claude/hooks/`.
 3. Em `~/.claude/settings.json`, remova as entradas listadas em `settings/global.json`, ou restaure a cópia `.bak` criada pelo instalador.
-4. Se usou `-ComNavegador`, remova a entrada `chrome-devtools` de `mcpServers` em `%USERPROFILE%\.claude.json`, com o app fechado, ou restaure a cópia `.bak` dele.
+4. Se usou `-ComMapa`, remova a entrada `codebase-memory` de `mcpServers` em `%USERPROFILE%\.claude.json`, com o app fechado, ou restaure a cópia `.bak` dele. O programa sai com `codebase-memory-mcp uninstall`.
 
 ## Limitações conhecidas
 

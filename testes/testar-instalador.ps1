@@ -50,7 +50,6 @@ foreach ($a in 'Explore', 'implementador', 'revisor', 'verificador') {
     $texto = [System.IO.File]::ReadAllText((Join-Path $d1 "agents\$a.md"), $utf8)
     Conferir "limpa: $a.md sem marcador" (-not $texto.Contains('__PASTA_CLAUDE__'))
 }
-Conferir 'limpa: navegador copiado' (Test-Path (Join-Path $d1 'agents\navegador.md'))
 Conferir 'limpa: guarda copiada' (Test-Path (Join-Path $d1 'hooks\guarda-comandos.ps1'))
 Conferir 'limpa: regra copiada' (Test-Path (Join-Path $d1 'rules\equipe-agentes.md'))
 $s = Ler-Json (Join-Path $d1 'settings.json')
@@ -104,26 +103,42 @@ $json = '{"tool_name":"Bash","tool_input":{"command":"rm -rf ."},"cwd":"."}'
 $null = $json | & $exe -NoProfile -ExecutionPolicy Bypass -Command $comando 2>&1
 Conferir 'aspa: hook roda a guarda e bloqueia rm' ($LASTEXITCODE -eq 2)
 
-# 7 a 9. -ComNavegador: registra o chrome-devtools no .claude.json (precisa do Node)
+# 7 a 11. -ComMapa: registra o codebase-memory no .claude.json (precisa do Node)
 if (Get-Command node -ErrorAction SilentlyContinue) {
-    $d7 = Join-Path $base 'navegador'
+    # Executavel falso do mapa, para o instalador achar no PATH
+    $falso = Join-Path $base 'bin-falso'
+    New-Item -ItemType Directory -Force -Path $falso | Out-Null
+    if ($env:OS -eq 'Windows_NT') {
+        $exeMapa = Join-Path $falso 'codebase-memory-mcp.cmd'
+        [System.IO.File]::WriteAllText($exeMapa, "@echo off`r`n", $utf8)
+    } else {
+        $exeMapa = Join-Path $falso 'codebase-memory-mcp'
+        [System.IO.File]::WriteAllText($exeMapa, "#!/bin/sh`n", $utf8)
+        & chmod +x $exeMapa
+    }
+    $pathOriginal = $env:PATH
+    $pathComMapa = $falso + [System.IO.Path]::PathSeparator + $env:PATH
+
+    # 7. Registro e repeticao, mantendo o resto do arquivo
+    $d7 = Join-Path $base 'mapa'
     New-Item -ItemType Directory -Force -Path $d7 | Out-Null
     $usuario = Join-Path $d7 '.claude.json'
     [System.IO.File]::WriteAllText($usuario, '{"numStartups":5,"projects":{"C:/x":{"allowedTools":[]}},"mcpServers":{"outro":{"command":"x"}}}', $utf8)
-    $r = Instalar $d7 @('-ComNavegador')
+    $env:PATH = $pathComMapa
+    $r = Instalar $d7 @('-ComMapa')
     $u = Ler-Json $usuario
-    Conferir 'navegador: saiu com 0' ($r.codigo -eq 0)
-    Conferir 'navegador: manteve o servidor que existia' ($u.mcpServers.outro.command -eq 'x')
-    Conferir 'navegador: manteve o resto do arquivo' ($u.numStartups -eq 5 -and $null -ne $u.projects)
-    $args7 = @($u.mcpServers.'chrome-devtools'.args)
-    Conferir 'navegador: versao fixa e perfil isolado' (($args7 -contains 'chrome-devtools-mcp@1.10.1') -and ($args7 -contains '--isolated'))
-    Conferir 'navegador: fez backup' (@(Get-ChildItem -LiteralPath $d7 -Filter '.claude.json.bak-*' -Force).Count -eq 1)
-    $r = Instalar $d7 @('-ComNavegador')
-    Conferir 'navegador: repeticao sai com 0' ($r.codigo -eq 0)
-    Conferir 'navegador: repeticao nao faz backup novo' (@(Get-ChildItem -LiteralPath $d7 -Filter '.claude.json.bak-*' -Force).Count -eq 1)
+    Conferir 'mapa: saiu com 0' ($r.codigo -eq 0)
+    Conferir 'mapa: registrou com o caminho completo' ($u.mcpServers.'codebase-memory'.command -eq $exeMapa)
+    Conferir 'mapa: manteve o servidor que existia' ($u.mcpServers.outro.command -eq 'x')
+    Conferir 'mapa: manteve o resto do arquivo' ($u.numStartups -eq 5 -and $null -ne $u.projects)
+    $baks = @(Get-ChildItem -LiteralPath $d7 -Filter '.claude.json.bak-*' -Force)
+    Conferir 'mapa: fez backup do original' ($baks.Count -eq 1 -and [System.IO.File]::ReadAllText($baks[0].FullName, $utf8).Contains('"outro"') -and -not [System.IO.File]::ReadAllText($baks[0].FullName, $utf8).Contains('codebase-memory'))
+    $r = Instalar $d7 @('-ComMapa')
+    Conferir 'mapa: repeticao sai com 0' ($r.codigo -eq 0)
+    Conferir 'mapa: repeticao nao faz backup novo' (@(Get-ChildItem -LiteralPath $d7 -Filter '.claude.json.bak-*' -Force).Count -eq 1)
 
-    # .claude.json grande (o Windows PowerShell 5.1 nao le JSON acima de ~2 MB)
-    $d8 = Join-Path $base 'navegador-grande'
+    # 8. .claude.json grande (o Windows PowerShell 5.1 nao le JSON acima de ~2 MB)
+    $d8 = Join-Path $base 'mapa-grande'
     New-Item -ItemType Directory -Force -Path $d8 | Out-Null
     $usuario = Join-Path $d8 '.claude.json'
     $sb = New-Object System.Text.StringBuilder
@@ -134,22 +149,31 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
     }
     [void]$sb.Append('}}')
     [System.IO.File]::WriteAllText($usuario, $sb.ToString(), $utf8)
-    $r = Instalar $d8 @('-ComNavegador')
+    $r = Instalar $d8 @('-ComMapa')
     $texto = [System.IO.File]::ReadAllText($usuario, $utf8)
-    Conferir 'navegador grande: saiu com 0' ($r.codigo -eq 0)
-    Conferir 'navegador grande: registrou' ($texto.Contains('"chrome-devtools"'))
-    Conferir 'navegador grande: manteve os projetos' ($texto.Contains('"C:/projeto/19999"'))
+    Conferir 'mapa grande: saiu com 0' ($r.codigo -eq 0)
+    Conferir 'mapa grande: registrou' ($texto.Contains('"codebase-memory"'))
+    Conferir 'mapa grande: manteve os projetos' ($texto.Contains('"C:/projeto/19999"'))
 
-    # .claude.json invalido: falha sem alterar
-    $d9 = Join-Path $base 'navegador-invalido'
+    # 9. .claude.json invalido: falha sem alterar
+    $d9 = Join-Path $base 'mapa-invalido'
     New-Item -ItemType Directory -Force -Path $d9 | Out-Null
     $usuario = Join-Path $d9 '.claude.json'
     [System.IO.File]::WriteAllText($usuario, '{ quebrado', $utf8)
-    $r = Instalar $d9 @('-ComNavegador')
-    Conferir 'navegador invalido: saiu com erro' ($r.codigo -ne 0)
-    Conferir 'navegador invalido: arquivo intacto' ([System.IO.File]::ReadAllText($usuario, $utf8) -eq '{ quebrado')
+    $r = Instalar $d9 @('-ComMapa')
+    Conferir 'mapa invalido: saiu com erro' ($r.codigo -ne 0)
+    Conferir 'mapa invalido: arquivo intacto' ([System.IO.File]::ReadAllText($usuario, $utf8) -eq '{ quebrado')
+    $env:PATH = $pathOriginal
+
+    # 10. Sem o programa instalado: avisa e nao registra
+    $d10 = Join-Path $base 'mapa-ausente'
+    New-Item -ItemType Directory -Force -Path $d10 | Out-Null
+    $r = Instalar $d10 @('-ComMapa')
+    Conferir 'mapa ausente: saiu com 0' ($r.codigo -eq 0)
+    Conferir 'mapa ausente: avisou' ($r.texto -match 'codebase-memory-mcp nao foi encontrado')
+    Conferir 'mapa ausente: nao registrou' (-not (Test-Path (Join-Path $d10 '.claude.json')))
 } else {
-    Write-Host "Sem Node.js: cenarios do -ComNavegador pulados."
+    Write-Host "Sem Node.js: cenarios do -ComMapa pulados."
 }
 
 Remove-Item -LiteralPath $base -Recurse -Force

@@ -67,7 +67,10 @@
       "mcp__*__pause_project",
       "mcp__*__restore_project",
       "mcp__*__create_project",
-      "mcp__*__upload_file"
+      "mcp__*__upload_file",
+      "mcp__codebase-memory__delete_project",
+      "mcp__codebase-memory__manage_adr",
+      "mcp__codebase-memory__ingest_traces"
     ]
   }
 }
