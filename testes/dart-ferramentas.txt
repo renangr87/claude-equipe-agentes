@@ -1,34 +1,38 @@
-# Ferramentas do servidor MCP do Dart (dart mcp-server) e o tratamento de cada uma.
-# Conferido no codigo-fonte (lib/src/utils/names.dart, ToolNames) da versao 1.2.x
-# e, a cada mudanca, pelo testes/conferir-dart.ps1 com o servidor rodando.
-# Uma ferramenta nova, que nao esteja aqui, faz o teste falhar: classifique antes de usar.
+# Ferramentas do servidor MCP do Dart (dart mcp-server), uma por linha: nome<TAB>classe.
 #
-# Classes:
-#   leitura    o Explore e o revisor podem usar (lista em agents/*.md)
-#   livre      sem risco, so le estado; fica com o mestre
-#   confirmar  muda o app rodando ou executa codigo; pede confirmacao (settings/global.json)
-#   desligada  muda arquivos ou dependencias; desligada no servidor com --disable (projeto/mcp.dart.json)
+# O servidor sobe com --disable all e um --enable para cada ferramenta das tres
+# primeiras classes (projeto/mcp.dart.json). Tudo o que nao estiver habilitado por
+# nome fica desligado, inclusive ferramentas que versoes futuras criarem.
+#
+#   leitura    habilitada; so le. As unicas que o Explore e o revisor recebem.
+#   livre      habilitada; so consulta o app rodando, sem pedir confirmacao.
+#   confirmar  habilitada; muda o app rodando ou o alcance do servidor. Tem regra
+#              "ask" em settings/global.json.
+#   desligada  nome conhecido, fica fora do --enable.
+#
+# Nomes conferidos no enum ToolNames (lib/src/utils/names.dart do dart-lang/ai) e
+# pelo teste testes/conferir-dart.ps1 contra o servidor rodando.
 analyze_files	leitura
 lsp	leitura
 pub_dev_search	leitura
 read_package_uris	leitura
 rip_grep_packages	leitura
 get_runtime_errors	livre
-roots	livre
 widget_inspector	livre
-get_active_location	livre
-list_devices	livre
-list_running_apps	livre
-get_app_logs	livre
 hot_reload	confirmar
 hot_restart	confirmar
 flutter_driver_command	confirmar
 vm_service	confirmar
 dtd	confirmar
-launch_app	confirmar
-stop_app	confirmar
-run_tests	confirmar
+roots	confirmar
 pub	desligada
 dart_fix	desligada
 dart_format	desligada
 create_project	desligada
+run_tests	desligada
+launch_app	desligada
+stop_app	desligada
+list_devices	desligada
+list_running_apps	desligada
+get_app_logs	desligada
+get_active_location	desligada

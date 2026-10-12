@@ -3,6 +3,10 @@ name: testes
 on:
   push:
   pull_request:
+  workflow_dispatch:
+  # Toda segunda: o "dart mcp-server" pode mudar sem mudanca neste repositorio.
+  schedule:
+    - cron: '17 9 * * 1'
 
 jobs:
   windows:
@@ -29,13 +33,46 @@ jobs:
         if: ${{ !cancelled() }}
         shell: powershell
         run: ./testes/conferir-dart.ps1
+
+  dart:
+    name: Dart ${{ matrix.sdk }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # aceita: o servidor tem as opcoes e os nomes da equipe; o instalador registra.
+          # recusa: o servidor e anterior; o teste de nomes falha e o instalador nao registra.
+          - { sdk: '3.11.3', espera: recusa }
+          - { sdk: '3.12.0', espera: recusa }
+          - { sdk: '3.13.0', espera: aceita }
+          - { sdk: stable, espera: aceita }
+    steps:
+      - uses: actions/checkout@v5
       - uses: dart-lang/setup-dart@v1
-        if: ${{ !cancelled() }}
         with:
-          sdk: stable
-      - name: Ferramentas do Dart MCP (servidor rodando)
-        if: ${{ !cancelled() }}
+          sdk: ${{ matrix.sdk }}
+      - name: Nomes das ferramentas no servidor rodando
         shell: pwsh
         run: |
           dart --disable-analytics
           ./testes/conferir-dart.ps1
+          $passou = ($LASTEXITCODE -eq 0)
+          if ($passou -ne ('${{ matrix.espera }}' -eq 'aceita')) {
+            Write-Host "::error::Dart ${{ matrix.sdk }}: esperado ${{ matrix.espera }}, mas o teste de nomes $(if ($passou) { 'passou' } else { 'falhou' })"
+            exit 1
+          }
+          exit 0
+      - name: Instalador com o servidor de verdade
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          $destino = Join-Path $env:RUNNER_TEMP 'cfg'
+          ./instalar.ps1 -Destino $destino -SemBloqueios -ComDart
+          $json = Join-Path $destino '.claude.json'
+          $registrou = (Test-Path $json) -and ((Get-Content -Raw $json | ConvertFrom-Json).mcpServers.dart)
+          if ([bool]$registrou -ne ('${{ matrix.espera }}' -eq 'aceita')) {
+            Write-Host "::error::Dart ${{ matrix.sdk }}: esperado ${{ matrix.espera }}, mas o instalador $(if ($registrou) { 'registrou' } else { 'nao registrou' })"
+            exit 1
+          }
+          exit 0

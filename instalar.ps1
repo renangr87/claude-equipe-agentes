@@ -34,7 +34,9 @@
 .PARAMETER ComDart
   Registra o servidor MCP oficial do Dart no .claude.json do usuario, com o caminho
   completo do dart encontrado no PATH (no Flutter, o dart.exe do SDK embutido). Precisa
-  do Dart 3.9 ou mais novo, do Node.js e do app do Claude fechado.
+  do Dart 3.13 ou mais novo, do Node.js e do app do Claude fechado. Antes de registrar,
+  sobe o servidor e confere a lista de ferramentas; se nao bater, nao registra. Se ja
+  houver uma entrada dart diferente da do modelo, ela e trocada (com backup).
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\instalar.ps1 -ComMapa
@@ -191,7 +193,7 @@ if ($SemBloqueios) {
     Merge-Bloqueios $origemBloqueios (Join-Path $Destino 'settings.json')
 }
 
-function Registrar-Servidor([string]$titulo, [string]$nome, [string]$modelo, [string]$comando) {
+function Registrar-Servidor([string]$titulo, [string]$nome, [string]$modelo, [string]$comando, [string]$modo = '') {
     Write-Host "$($titulo):"
     $node = Get-Command node -ErrorAction SilentlyContinue
     $appAberto = $false
@@ -208,7 +210,8 @@ function Registrar-Servidor([string]$titulo, [string]$nome, [string]$modelo, [st
     }
     $script = Join-Path (Join-Path $origem 'ferramentas') 'registrar-mcp.mjs'
     $argumentos = @($script, $arquivoUsuario, $modelo, $carimbo, $nome)
-    if ($comando) { $argumentos += $comando }
+    $argumentos += $comando
+    if ($modo) { $argumentos += $modo }
     & $node.Source @argumentos
     if ($LASTEXITCODE -ne 0) {
         throw "O servidor $nome nao foi registrado. Veja a mensagem acima."
@@ -226,25 +229,43 @@ if ($ComMapa) {
 }
 
 if ($ComDart) {
-    $dart = Get-Command 'dart' -ErrorAction SilentlyContinue
-    if (-not $dart) {
+    # Versao minima do Dart cujo servidor MCP aceita --disable all e --enable por nome
+    # e tem os nomes de ferramenta de projeto/mcp.dart.json (conferido no CI).
+    $dartMinimo = [version]'3.13.0'
+    . (Join-Path (Join-Path $origem 'ferramentas') 'servidor-dart.ps1')
+    $dartExe = Find-DartExe
+    if (-not $dartExe) {
         Write-Host "Servidor do Dart:"
         Write-Host "  nao registrado: o dart nao foi encontrado no PATH. Instale o Flutter ou o Dart SDK e rode de novo com -ComDart."
     } else {
-        $dartExe = $dart.Source
-        # No Flutter, bin\dart.bat e um atalho; o executavel de verdade fica no SDK embutido.
-        if ($dartExe -match '\.bat$') {
-            $embutido = Join-Path (Split-Path -Parent $dartExe) 'cache\dart-sdk\bin\dart.exe'
-            if (Test-Path -LiteralPath $embutido) { $dartExe = $embutido }
-        }
-        $versao = (& $dartExe --version 2>&1 | Out-String)
-        $m = [regex]::Match($versao, 'version: (\d+)\.(\d+)')
-        if (-not $m.Success -or [int]$m.Groups[1].Value -lt 3 -or ([int]$m.Groups[1].Value -eq 3 -and [int]$m.Groups[2].Value -lt 9)) {
+        $versao = (& $dartExe --version 2>&1 | Out-String).Trim()
+        $m = [regex]::Match($versao, 'version: (\d+)\.(\d+)\.(\d+)')
+        if (-not $m.Success -or [version]"$($m.Groups[1].Value).$($m.Groups[2].Value).$($m.Groups[3].Value)" -lt $dartMinimo) {
             Write-Host "Servidor do Dart:"
-            Write-Host "  nao registrado: o servidor MCP precisa do Dart 3.9 ou mais novo. Versao encontrada: $($versao.Trim())"
+            Write-Host "  nao registrado: a equipe precisa do Dart $dartMinimo ou mais novo (Flutter atualizado com 'flutter upgrade'). Versoes anteriores usam outros nomes de opcao e de ferramenta. Versao encontrada: $versao"
         } else {
-            Registrar-Servidor 'Servidor do Dart (dart mcp-server)' 'dart' (Join-Path (Join-Path $origem 'projeto') 'mcp.dart.json') $dartExe
-            Write-Host "  Para nao enviar estatisticas de uso ao Google, rode uma vez: dart --disable-analytics e flutter --disable-analytics"
+            # Confere com o servidor rodando: ele precisa subir com os argumentos do modelo
+            # e publicar exatamente as ferramentas habilitadas.
+            Write-Host "Servidor do Dart: conferindo o servidor (na primeira vez pode levar um minuto)..."
+            $argsDart = Get-ArgsServidorDart $origem
+            $habilitadasDart = Get-NomesHabilitados $argsDart
+            $teste = Get-FerramentasDart $dartExe $argsDart
+            $problema = ''
+            if ($null -eq $teste.Ferramentas) {
+                $problema = "o servidor nao subiu com os argumentos da equipe. Saida: $($teste.Erro)"
+            } else {
+                $sobrando = @($teste.Ferramentas | Where-Object { $habilitadasDart -notcontains $_ })
+                $faltando = @($habilitadasDart | Where-Object { $teste.Ferramentas -notcontains $_ })
+                if ($sobrando.Count -gt 0) { $problema = "o servidor publicou ferramentas que nao foram habilitadas: $($sobrando -join ', ')" }
+                elseif ($faltando.Count -gt 0) { $problema = "faltam ferramentas no servidor: $($faltando -join ', ')" }
+            }
+            if ($problema) {
+                Write-Host "  nao registrado: $problema"
+                Write-Host "  Atualize o Flutter (flutter upgrade) e rode de novo com -ComDart. Se continuar, avise no repositorio da equipe: os nomes das ferramentas mudaram."
+            } else {
+                Registrar-Servidor 'Servidor do Dart (dart mcp-server)' 'dart' (Join-Path (Join-Path $origem 'projeto') 'mcp.dart.json') $dartExe 'substituir'
+                Write-Host "  Para nao enviar estatisticas de uso ao Google, rode uma vez: dart --disable-analytics e flutter --disable-analytics"
+            }
         }
     }
 }

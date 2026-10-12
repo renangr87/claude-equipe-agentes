@@ -4,10 +4,20 @@
       "command": "dart",
       "args": [
         "mcp-server",
-        "--disable", "pub",
-        "--disable", "dart_fix",
-        "--disable", "dart_format",
-        "--disable", "create_project"
+        "--disable", "all",
+        "--enable", "analyze_files",
+        "--enable", "lsp",
+        "--enable", "pub_dev_search",
+        "--enable", "read_package_uris",
+        "--enable", "rip_grep_packages",
+        "--enable", "get_runtime_errors",
+        "--enable", "widget_inspector",
+        "--enable", "hot_reload",
+        "--enable", "hot_restart",
+        "--enable", "flutter_driver_command",
+        "--enable", "dtd",
+        "--enable", "vm_service",
+        "--enable", "roots"
       ]
     }
   }

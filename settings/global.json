@@ -78,6 +78,7 @@
       "mcp__dart__flutter_driver_command",
       "mcp__dart__vm_service",
       "mcp__dart__dtd",
+      "mcp__dart__roots",
       "mcp__dart__dart_fix",
       "mcp__dart__dart_format",
       "mcp__dart__launch_app",

@@ -172,44 +172,68 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
     Conferir 'mapa ausente: saiu com 0' ($r.codigo -eq 0)
     Conferir 'mapa ausente: avisou' ($r.texto -match 'codebase-memory-mcp nao foi encontrado')
     Conferir 'mapa ausente: nao registrou' (-not (Test-Path (Join-Path $d10 '.claude.json')))
-    # 11 e 12. -ComDart com um dart falso no PATH: registra se a versao for 3.9 ou mais
-    function Novo-DartFalso([string]$pasta, [string]$versao) {
+    # 11 a 15. -ComDart com um dart falso no PATH (testes/dart-falso.ps1)
+    $falso = Join-Path $PSScriptRoot 'dart-falso.ps1'
+    function Novo-DartFalso([string]$pasta, [string]$versao, [string]$modo) {
         New-Item -ItemType Directory -Force -Path $pasta | Out-Null
         if ($env:OS -eq 'Windows_NT') {
-            $exe = Join-Path $pasta 'dart.cmd'
-            [System.IO.File]::WriteAllText($exe, "@echo Dart SDK version: $versao (stable)`r`n", $utf8)
+            $exeDart = Join-Path $pasta 'dart.cmd'
+            $texto = "@set DART_FALSO_VERSAO=$versao`r`n@set DART_FALSO_MODO=$modo`r`n@`"$exe`" -NoProfile -ExecutionPolicy Bypass -File `"$falso`" %*`r`n"
         } else {
-            $exe = Join-Path $pasta 'dart'
-            [System.IO.File]::WriteAllText($exe, "#!/bin/sh`necho 'Dart SDK version: $versao (stable)'`n", $utf8)
-            & chmod +x $exe
+            $exeDart = Join-Path $pasta 'dart'
+            $texto = "#!/bin/sh`nDART_FALSO_VERSAO='$versao' DART_FALSO_MODO='$modo' exec '$exe' -NoProfile -File '$falso' `"`$@`"`n"
         }
-        return $exe
+        [System.IO.File]::WriteAllText($exeDart, $texto, $utf8)
+        if ($env:OS -ne 'Windows_NT') { & chmod +x $exeDart }
+        return $exeDart
     }
-    $dartNovo = Novo-DartFalso (Join-Path $base 'dart-novo') '3.9.2'
-    $d11 = Join-Path $base 'dart'
-    New-Item -ItemType Directory -Force -Path $d11 | Out-Null
-    $env:PATH = (Split-Path -Parent $dartNovo) + [System.IO.Path]::PathSeparator + $pathOriginal
-    $r = Instalar $d11 @('-ComDart')
-    $env:PATH = $pathOriginal
-    $u = Ler-Json (Join-Path $d11 '.claude.json')
-    Conferir 'dart: saiu com 0' ($r.codigo -eq 0)
-    Conferir 'dart: registrou com o caminho completo' ($u.mcpServers.dart.command -eq $dartNovo)
-    Conferir 'dart: argumento mcp-server' (@($u.mcpServers.dart.args) -contains 'mcp-server')
-    # Os --disable (pub, dart_fix, dart_format, create_project) chegam ao registro.
-    # Os nomes em si sao conferidos contra o servidor real por testes/conferir-dart.ps1.
+    function Instalar-ComDart([string]$nome, [string]$versao, [string]$modo) {
+        $dartFalso = Novo-DartFalso (Join-Path $base "dart-$nome") $versao $modo
+        $destino = Join-Path $base "cfg-$nome"
+        New-Item -ItemType Directory -Force -Path $destino | Out-Null
+        $env:PATH = (Split-Path -Parent $dartFalso) + [System.IO.Path]::PathSeparator + $pathOriginal
+        $r = Instalar $destino @('-ComDart')
+        $env:PATH = $pathOriginal
+        return @{ r = $r; destino = $destino; dart = $dartFalso; json = (Join-Path $destino '.claude.json') }
+    }
     $argsModelo = @((Get-Content -Raw -LiteralPath (Join-Path $raiz 'projeto\mcp.dart.json') | ConvertFrom-Json).mcpServers.dart.args)
-    Conferir 'dart: argumentos iguais aos de projeto/mcp.dart.json' ((@($u.mcpServers.dart.args) -join ' ') -eq ($argsModelo -join ' '))
-    Conferir 'dart: pub desligada no servidor' ((@($u.mcpServers.dart.args) -join ' ') -match '--disable pub( |$)')
 
-    $dartVelho = Novo-DartFalso (Join-Path $base 'dart-velho') '3.8.1'
-    $d12 = Join-Path $base 'dart-velho-cfg'
-    New-Item -ItemType Directory -Force -Path $d12 | Out-Null
-    $env:PATH = (Split-Path -Parent $dartVelho) + [System.IO.Path]::PathSeparator + $pathOriginal
-    $r = Instalar $d12 @('-ComDart')
+    # 11. Versao nova e servidor que publica so o habilitado: registra
+    $c = Instalar-ComDart 'ok' '3.13.1' 'ok'
+    Conferir 'dart: saiu com 0' ($c.r.codigo -eq 0)
+    $u = $null
+    if (Test-Path $c.json) { $u = Ler-Json $c.json }
+    Conferir 'dart: registrou com o caminho completo' ($null -ne $u -and $u.mcpServers.dart.command -eq $c.dart)
+    Conferir 'dart: argumentos iguais aos de projeto/mcp.dart.json' ($null -ne $u -and (@($u.mcpServers.dart.args) -join ' ') -eq ($argsModelo -join ' '))
+    Conferir 'dart: so ferramentas habilitadas por nome (--disable all)' (($argsModelo[0..2] -join ' ') -eq 'mcp-server --disable all')
+    if ($c.r.codigo -ne 0 -or $null -eq $u) { Write-Host $c.r.texto }
+
+    # 12. Entrada antiga diferente do modelo: e trocada, com backup
+    $velho = '{"mcpServers":{"dart":{"command":"dart","args":["mcp-server","--disable","pub"]}}}'
+    [System.IO.File]::WriteAllText($c.json, $velho, $utf8)
+    $env:PATH = (Split-Path -Parent $c.dart) + [System.IO.Path]::PathSeparator + $pathOriginal
+    $r = Instalar $c.destino @('-ComDart')
     $env:PATH = $pathOriginal
-    Conferir 'dart velho: saiu com 0' ($r.codigo -eq 0)
-    Conferir 'dart velho: avisou a versao' ($r.texto -match 'Dart 3.9 ou mais novo')
-    Conferir 'dart velho: nao registrou' (-not (Test-Path (Join-Path $d12 '.claude.json')))
+    $u = Ler-Json $c.json
+    Conferir 'dart antigo registrado: entrada trocada pela do modelo' ((@($u.mcpServers.dart.args) -join ' ') -eq ($argsModelo -join ' '))
+    Conferir 'dart antigo registrado: backup gravado' (@(Get-ChildItem -LiteralPath $c.destino -Filter '.claude.json.bak-*' -Force).Count -ge 1)
+
+    # 13. Versao anterior a minima: avisa e nao registra
+    $c = Instalar-ComDart 'velho' '3.11.3' 'ok'
+    Conferir 'dart velho: saiu com 0' ($c.r.codigo -eq 0)
+    Conferir 'dart velho: avisou a versao' ($c.r.texto -match 'Dart 3\.\d+\.\d+ ou mais novo')
+    Conferir 'dart velho: nao registrou' (-not (Test-Path $c.json))
+
+    # 14. Servidor que nao aceita os argumentos: avisa e nao registra
+    $c = Instalar-ComDart 'recusa' '3.13.1' 'antigo'
+    Conferir 'dart que recusa --disable: saiu com 0' ($c.r.codigo -eq 0)
+    Conferir 'dart que recusa --disable: avisou' ($c.r.texto -match 'nao subiu')
+    Conferir 'dart que recusa --disable: nao registrou' (-not (Test-Path $c.json))
+
+    # 15. Servidor que publica ferramenta nao habilitada: avisa e nao registra
+    $c = Instalar-ComDart 'extra' '3.13.1' 'extra'
+    Conferir 'dart com ferramenta a mais: avisou' ($c.r.texto -match 'ferramenta_nova')
+    Conferir 'dart com ferramenta a mais: nao registrou' (-not (Test-Path $c.json))
 } else {
     Write-Host "Sem Node.js: cenarios do -ComMapa e do -ComDart pulados."
 }

@@ -1,29 +1,30 @@
 <#
 .SYNOPSIS
-  Confere se os nomes das ferramentas do servidor MCP do Dart usados pela equipe
-  existem de verdade, e se toda ferramenta que o servidor publica foi classificada.
+  Confere se as ferramentas do servidor MCP do Dart usadas pela equipe existem com
+  esses nomes e se so elas ficam ligadas.
 
 .DESCRIPTION
   Parte fixa (sempre roda): compara testes/dart-ferramentas.txt com
+    - os argumentos de projeto/mcp.dart.json: "--disable all" e um --enable para cada
+      ferramenta leitura, livre ou confirmar, e nenhum para as desligadas;
     - as ferramentas mcp__dart__* do Explore e do revisor (so classe "leitura");
     - as regras de confirmacao mcp__dart__* de settings/global.json (toda "confirmar"
-      esta la, e so ha "confirmar" ou "desligada");
-    - os --disable de projeto/mcp.dart.json (toda "desligada" esta la).
+      tem regra, e so ha regra para "confirmar" ou "desligada").
 
-  Parte ao vivo (so se o dart estiver no PATH): sobe o servidor com os mesmos
-  argumentos do projeto/mcp.dart.json, pede a lista de ferramentas pelo protocolo MCP
-  e confere que:
-    - toda ferramenta publicada esta classificada no arquivo;
-    - nenhuma "desligada" aparece;
-    - as de "leitura" aparecem.
-  Depois sobe de novo com --enable para cada "confirmar" que nao veio por padrao: se
-  um nome nao existir mais, o servidor recusa o argumento e o teste falha.
+  Parte ao vivo (so se o dart estiver no PATH): sobe o servidor com os argumentos de
+  projeto/mcp.dart.json, pede a lista de ferramentas pelo protocolo MCP e confere que
+  ela e exatamente a lista habilitada. Se um nome nao existir na versao instalada, o
+  servidor recusa o argumento e nao sobe, e o teste falha. Depois sobe com
+  "--enable all" so para avisar (sem falhar) de ferramentas novas que ainda nao
+  estao classificadas.
 
+  Serve tambem para conferir a sua maquina: rode depois de atualizar o Flutter.
   Sai com 0 se tudo bater e com 1 se algo falhar.
 #>
 $ErrorActionPreference = 'Continue'
 $raiz = Split-Path -Parent $PSScriptRoot
 $utf8 = New-Object System.Text.UTF8Encoding($false)
+. (Join-Path (Join-Path $raiz 'ferramentas') 'servidor-dart.ps1')
 
 $falhas = 0
 $total  = 0
@@ -34,6 +35,9 @@ function Conferir([string]$nome, [bool]$ok) {
         if ($env:GITHUB_ACTIONS) { Write-Host "::error::Dart MCP - FALHOU: $nome" } else { Write-Host "FALHOU: $nome" }
     }
 }
+function Avisar([string]$texto) {
+    if ($env:GITHUB_ACTIONS) { Write-Host "::warning::Dart MCP - $texto" } else { Write-Host "AVISO: $texto" }
+}
 
 # Classificacao
 $classe = @{}
@@ -42,13 +46,22 @@ foreach ($linha in [System.IO.File]::ReadAllLines((Join-Path $PSScriptRoot 'dart
     $p = $linha -split "`t"
     $classe[$p[0].Trim()] = $p[1].Trim()
 }
-function NomesDaClasse([string]$c) { return @($classe.Keys | Where-Object { $classe[$_] -eq $c } | Sort-Object) }
+function NomesDaClasse([string[]]$classes) { return @($classe.Keys | Where-Object { $classes -contains $classe[$_] } | Sort-Object) }
+$esperadas = NomesDaClasse @('leitura', 'livre', 'confirmar')
 
 # Parte fixa
+$argsServidor = Get-ArgsServidorDart $raiz
+$habilitadas = Get-NomesHabilitados $argsServidor
+Conferir 'mcp.dart.json comeca com mcp-server --disable all' (($argsServidor[0..2] -join ' ') -eq 'mcp-server --disable all')
+$desligadosNoModelo = @(for ($i = 0; $i -lt $argsServidor.Count - 1; $i++) { if ($argsServidor[$i] -eq '--disable') { $argsServidor[$i + 1] } })
+Conferir 'mcp.dart.json so tem o --disable all' (($desligadosNoModelo -join ',') -eq 'all')
+foreach ($n in $esperadas) { Conferir "'$n' ($($classe[$n])) tem --enable em mcp.dart.json" ($habilitadas -contains $n) }
+foreach ($n in $habilitadas) { Conferir "--enable '$n' esta classificada como leitura, livre ou confirmar" ($esperadas -contains $n) }
+
 $ask = @((Get-Content -Raw -LiteralPath (Join-Path $raiz 'settings\global.json') | ConvertFrom-Json).permissions.ask |
     Where-Object { $_ -like 'mcp__dart__*' } | ForEach-Object { $_.Substring(11) })
 foreach ($n in $ask) { Conferir "regra de confirmacao '$n' esta classificada como confirmar ou desligada" ($classe[$n] -eq 'confirmar' -or $classe[$n] -eq 'desligada') }
-foreach ($n in (NomesDaClasse 'confirmar')) { Conferir "'$n' (confirmar) tem regra em global.json" ($ask -contains $n) }
+foreach ($n in (NomesDaClasse @('confirmar'))) { Conferir "'$n' (confirmar) tem regra em global.json" ($ask -contains $n) }
 
 foreach ($agente in 'Explore', 'revisor') {
     $texto = [System.IO.File]::ReadAllText((Join-Path $raiz "agents\$agente.md"), $utf8)
@@ -58,90 +71,26 @@ foreach ($agente in 'Explore', 'revisor') {
     foreach ($n in $nomes) { Conferir "$agente so recebe leitura: '$n'" ($classe[$n] -eq 'leitura') }
 }
 
-$modelo = (Get-Content -Raw -LiteralPath (Join-Path $raiz 'projeto\mcp.dart.json') | ConvertFrom-Json).mcpServers.dart
-$argsServidor = @($modelo.args)
-$desligadasNoModelo = @()
-for ($i = 0; $i -lt $argsServidor.Count - 1; $i++) {
-    if ($argsServidor[$i] -eq '--disable') { $desligadasNoModelo += $argsServidor[$i + 1] }
-}
-foreach ($n in (NomesDaClasse 'desligada')) { Conferir "'$n' (desligada) tem --disable em mcp.dart.json" ($desligadasNoModelo -contains $n) }
-foreach ($n in $desligadasNoModelo) { Conferir "--disable '$n' esta classificada como desligada" ($classe[$n] -eq 'desligada') }
-
 # Parte ao vivo
-function Listar-Ferramentas([string[]]$argumentos) {
-    $info = New-Object System.Diagnostics.ProcessStartInfo
-    $info.FileName = $script:dartExe
-    $info.Arguments = ($argumentos | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' '
-    $info.UseShellExecute = $false
-    $info.RedirectStandardInput = $true
-    $info.RedirectStandardOutput = $true
-    $info.RedirectStandardError = $true
-    $info.StandardOutputEncoding = $utf8
-    $p = [System.Diagnostics.Process]::Start($info)
-    $erro = $p.StandardError.ReadToEndAsync()
-    $p.StandardInput.AutoFlush = $true
-    $enviar = { param($obj) $p.StandardInput.Write(($obj | ConvertTo-Json -Compress -Depth 10) + "`n") }
-    & $enviar @{ jsonrpc = '2.0'; id = 1; method = 'initialize'; params = @{ protocolVersion = '2025-06-18'; capabilities = @{}; clientInfo = @{ name = 'teste-equipe'; version = '1' } } }
-    $ferramentas = $null
-    $limite = (Get-Date).AddSeconds(90)
-    $pediuLista = $false
-    while ((Get-Date) -lt $limite -and $null -eq $ferramentas) {
-        $tarefa = $p.StandardOutput.ReadLineAsync()
-        if (-not $tarefa.Wait(30000)) { break }
-        $linha = $tarefa.Result
-        if ($null -eq $linha) { break }
-        try { $msg = $linha | ConvertFrom-Json } catch { continue }
-        if ($msg.PSObject.Properties['method'] -and $msg.PSObject.Properties['id']) {
-            # Pedido do servidor (por exemplo roots/list): responde vazio.
-            & $enviar @{ jsonrpc = '2.0'; id = $msg.id; result = @{ roots = @() } }
-            continue
-        }
-        if ($msg.PSObject.Properties['id'] -and $msg.id -eq 1 -and -not $pediuLista) {
-            & $enviar @{ jsonrpc = '2.0'; method = 'notifications/initialized' }
-            & $enviar @{ jsonrpc = '2.0'; id = 2; method = 'tools/list'; params = @{} }
-            $pediuLista = $true
-            continue
-        }
-        if ($msg.PSObject.Properties['id'] -and $msg.id -eq 2) {
-            $ferramentas = @($msg.result.tools | ForEach-Object { $_.name })
-        }
-    }
-    try { $p.StandardInput.Close() } catch { }
-    if (-not $p.WaitForExit(10000)) { try { $p.Kill() } catch { } }
-    if ($null -eq $ferramentas) {
-        Write-Host "  servidor nao devolveu a lista. Saida de erro: $($erro.Result)"
-        return $null
-    }
-    return ,$ferramentas
-}
+$dartExe = Find-DartExe
+if ($dartExe) {
+    $versao = (& $dartExe --version 2>&1 | Out-String).Trim()
+    if ($env:GITHUB_ACTIONS) { Write-Host "::notice::Dart MCP - $versao" } else { Write-Host $versao }
 
-$dart = Get-Command 'dart' -ErrorAction SilentlyContinue
-if ($dart) {
-    $script:dartExe = $dart.Source
-    if ($script:dartExe -match '\.bat$') {
-        $embutido = Join-Path (Split-Path -Parent $script:dartExe) 'cache\dart-sdk\bin\dart.exe'
-        if (Test-Path -LiteralPath $embutido) { $script:dartExe = $embutido }
+    $r = Get-FerramentasDart $dartExe $argsServidor
+    Conferir 'servidor subiu com os argumentos de mcp.dart.json e listou as ferramentas' ($null -ne $r.Ferramentas)
+    if ($null -eq $r.Ferramentas) {
+        Write-Host "  saida de erro do servidor: $($r.Erro)"
+    } else {
+        Write-Host "  ferramentas publicadas: $($r.Ferramentas -join ', ')"
+        foreach ($n in $r.Ferramentas) { Conferir "ferramenta publicada '$n' foi habilitada por nome" ($habilitadas -contains $n) }
+        foreach ($n in $habilitadas) { Conferir "'$n' existe no servidor" ($r.Ferramentas -contains $n) }
     }
-    Write-Host "Dart: $((& $script:dartExe --version 2>&1 | Out-String).Trim())"
 
-    $publicadas = Listar-Ferramentas $argsServidor
-    Conferir 'servidor subiu com os argumentos de mcp.dart.json e listou as ferramentas' ($null -ne $publicadas)
-    if ($null -ne $publicadas) {
-        Write-Host "  ferramentas publicadas: $($publicadas -join ', ')"
-        foreach ($n in $publicadas) { Conferir "ferramenta publicada '$n' esta classificada" ($classe.ContainsKey($n)) }
-        foreach ($n in (NomesDaClasse 'desligada')) { Conferir "'$n' esta desligada no servidor" (-not ($publicadas -contains $n)) }
-        foreach ($n in (NomesDaClasse 'leitura')) { Conferir "'$n' (leitura) existe no servidor" ($publicadas -contains $n) }
-
-        $faltam = @((NomesDaClasse 'confirmar') + (NomesDaClasse 'livre') | Where-Object { -not ($publicadas -contains $_) })
-        if ($faltam.Count -gt 0) {
-            $argsHabilitar = @('mcp-server')
-            foreach ($n in $faltam) { $argsHabilitar += @('--enable', $n) }
-            $comTodas = Listar-Ferramentas $argsHabilitar
-            Conferir "servidor aceitou --enable para: $($faltam -join ', ')" ($null -ne $comTodas)
-            if ($null -ne $comTodas) {
-                foreach ($n in $faltam) { Conferir "'$n' existe no servidor quando habilitada" ($comTodas -contains $n) }
-            }
-        }
+    $todas = Get-FerramentasDart $dartExe @('mcp-server', '--enable', 'all')
+    if ($null -ne $todas.Ferramentas) {
+        $novas = @($todas.Ferramentas | Where-Object { -not $classe.ContainsKey($_) })
+        if ($novas.Count -gt 0) { Avisar "ferramentas sem classificacao (ficam desligadas): $($novas -join ', ')" }
     }
 } else {
     Write-Host "Sem dart no PATH: so a parte fixa foi conferida."
