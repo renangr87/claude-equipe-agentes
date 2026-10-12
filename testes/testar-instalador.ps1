@@ -172,8 +172,41 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
     Conferir 'mapa ausente: saiu com 0' ($r.codigo -eq 0)
     Conferir 'mapa ausente: avisou' ($r.texto -match 'codebase-memory-mcp nao foi encontrado')
     Conferir 'mapa ausente: nao registrou' (-not (Test-Path (Join-Path $d10 '.claude.json')))
+    # 11 e 12. -ComDart com um dart falso no PATH: registra se a versao for 3.9 ou mais
+    function Novo-DartFalso([string]$pasta, [string]$versao) {
+        New-Item -ItemType Directory -Force -Path $pasta | Out-Null
+        if ($env:OS -eq 'Windows_NT') {
+            $exe = Join-Path $pasta 'dart.cmd'
+            [System.IO.File]::WriteAllText($exe, "@echo Dart SDK version: $versao (stable)`r`n", $utf8)
+        } else {
+            $exe = Join-Path $pasta 'dart'
+            [System.IO.File]::WriteAllText($exe, "#!/bin/sh`necho 'Dart SDK version: $versao (stable)'`n", $utf8)
+            & chmod +x $exe
+        }
+        return $exe
+    }
+    $dartNovo = Novo-DartFalso (Join-Path $base 'dart-novo') '3.9.2'
+    $d11 = Join-Path $base 'dart'
+    New-Item -ItemType Directory -Force -Path $d11 | Out-Null
+    $env:PATH = (Split-Path -Parent $dartNovo) + [System.IO.Path]::PathSeparator + $pathOriginal
+    $r = Instalar $d11 @('-ComDart')
+    $env:PATH = $pathOriginal
+    $u = Ler-Json (Join-Path $d11 '.claude.json')
+    Conferir 'dart: saiu com 0' ($r.codigo -eq 0)
+    Conferir 'dart: registrou com o caminho completo' ($u.mcpServers.dart.command -eq $dartNovo)
+    Conferir 'dart: argumento mcp-server' (@($u.mcpServers.dart.args) -contains 'mcp-server')
+
+    $dartVelho = Novo-DartFalso (Join-Path $base 'dart-velho') '3.8.1'
+    $d12 = Join-Path $base 'dart-velho-cfg'
+    New-Item -ItemType Directory -Force -Path $d12 | Out-Null
+    $env:PATH = (Split-Path -Parent $dartVelho) + [System.IO.Path]::PathSeparator + $pathOriginal
+    $r = Instalar $d12 @('-ComDart')
+    $env:PATH = $pathOriginal
+    Conferir 'dart velho: saiu com 0' ($r.codigo -eq 0)
+    Conferir 'dart velho: avisou a versao' ($r.texto -match 'Dart 3.9 ou mais novo')
+    Conferir 'dart velho: nao registrou' (-not (Test-Path (Join-Path $d12 '.claude.json')))
 } else {
-    Write-Host "Sem Node.js: cenarios do -ComMapa pulados."
+    Write-Host "Sem Node.js: cenarios do -ComMapa e do -ComDart pulados."
 }
 
 Remove-Item -LiteralPath $base -Recurse -Force

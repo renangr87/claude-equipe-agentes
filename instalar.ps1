@@ -10,6 +10,8 @@
   5. Com -ComMapa: registra o servidor codebase-memory (mapa do codigo) na
      configuracao do usuario (.claude.json), para o Explore e o revisor consultarem
      o mapa em todos os projetos
+  6. Com -ComDart: registra o servidor MCP oficial do Dart (dart mcp-server) no mesmo
+     arquivo, para o Explore e o revisor usarem o analisador e a busca de simbolos
 
   Nada e apagado. Antes de alterar um arquivo que ja existe, o script grava
   uma copia ao lado dele com o sufixo .bak-<data>-<hora>.
@@ -29,8 +31,16 @@
   que faz a juncao do JSON (o .claude.json pode ser grande demais para o Windows
   PowerShell 5.1), e do app do Claude fechado, porque ele reescreve esse arquivo.
 
+.PARAMETER ComDart
+  Registra o servidor MCP oficial do Dart no .claude.json do usuario, com o caminho
+  completo do dart encontrado no PATH (no Flutter, o dart.exe do SDK embutido). Precisa
+  do Dart 3.9 ou mais novo, do Node.js e do app do Claude fechado.
+
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\instalar.ps1 -ComMapa
+
+.EXAMPLE
+  powershell -ExecutionPolicy Bypass -File .\instalar.ps1 -ComMapa -ComDart
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\instalar.ps1 -SemBloqueios
@@ -39,7 +49,8 @@
 param(
     [string]$Destino = '',
     [switch]$SemBloqueios,
-    [switch]$ComMapa
+    [switch]$ComMapa,
+    [switch]$ComDart
 )
 
 $ErrorActionPreference = 'Stop'
@@ -211,6 +222,30 @@ if ($ComMapa) {
         Write-Host "  nao registrado: o programa codebase-memory-mcp nao foi encontrado. Instale com o instalador oficial, so o binario (--skip-config), e rode de novo com -ComMapa."
     } else {
         Registrar-Servidor 'Mapa do codigo (codebase-memory)' 'codebase-memory' (Join-Path (Join-Path $origem 'projeto') 'mcp.codebase-memory.json') $mapa.Source
+    }
+}
+
+if ($ComDart) {
+    $dart = Get-Command 'dart' -ErrorAction SilentlyContinue
+    if (-not $dart) {
+        Write-Host "Servidor do Dart:"
+        Write-Host "  nao registrado: o dart nao foi encontrado no PATH. Instale o Flutter ou o Dart SDK e rode de novo com -ComDart."
+    } else {
+        $dartExe = $dart.Source
+        # No Flutter, bin\dart.bat e um atalho; o executavel de verdade fica no SDK embutido.
+        if ($dartExe -match '\.bat$') {
+            $embutido = Join-Path (Split-Path -Parent $dartExe) 'cache\dart-sdk\bin\dart.exe'
+            if (Test-Path -LiteralPath $embutido) { $dartExe = $embutido }
+        }
+        $versao = (& $dartExe --version 2>&1 | Out-String)
+        $m = [regex]::Match($versao, 'version: (\d+)\.(\d+)')
+        if (-not $m.Success -or [int]$m.Groups[1].Value -lt 3 -or ([int]$m.Groups[1].Value -eq 3 -and [int]$m.Groups[2].Value -lt 9)) {
+            Write-Host "Servidor do Dart:"
+            Write-Host "  nao registrado: o servidor MCP precisa do Dart 3.9 ou mais novo. Versao encontrada: $($versao.Trim())"
+        } else {
+            Registrar-Servidor 'Servidor do Dart (dart mcp-server)' 'dart' (Join-Path (Join-Path $origem 'projeto') 'mcp.dart.json') $dartExe
+            Write-Host "  Para nao enviar estatisticas de uso ao Google, rode uma vez: dart --disable-analytics e flutter --disable-analytics"
+        }
     }
 }
 

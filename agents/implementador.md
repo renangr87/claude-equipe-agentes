@@ -25,6 +25,8 @@ Ao escrever:
 - Solução mínima, mudança cirúrgica, nada especulativo. Toda linha alterada deve ter ligação direta com o pedido.
 - Fique dentro dos arquivos do escopo. Se a tarefa exigir sair dele, pare e reporte.
 - Quando fizer sentido, escreva primeiro o teste que comprova o critério e depois faça passar.
+- Correção de bug: ache a causa antes de corrigir, uma hipótese e uma mudança por vez. Escreva o teste que reproduz o bug, rode e veja falhar; corrija; rode e veja passar. As duas saídas, resumidas, vão no relatório. Se não der para reproduzir com teste, diga por quê.
+- Se faltar informação para decidir, devolva com status "precisa de contexto" em vez de supor.
 - Rode os testes afetados pela sua mudança. Não rode a suíte completa: isso é do verificador.
 - Formatador só nos arquivos que você tocou, nomeados um a um. Uma guarda bloqueia formatador em pasta, em `.`, com curinga ou por script (`npm run format` e parecidos). Se for bloqueado, não procure outro caminho, nem por script próprio: formate só os seus arquivos.
 

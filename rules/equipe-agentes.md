@@ -42,6 +42,10 @@ Em tarefa trivial, use o bom senso: estes princípios priorizam cautela sobre ve
 
 **Ordem padrão.** Entender → explorar (se preciso) → planejar em passos verificáveis → implementar → verificar → revisar (se exigido) → conferir os critérios → commit local → responder ao usuário.
 
+**Plano em arquivo (tarefa média ou maior).** Se a tarefa toca mais de 3 arquivos, o banco ou uma área sensível, grave `.revisao/plano.md` antes de implementar: objetivo, dúvidas já resolvidas, as opções quando houver escolha real (no máximo 2, com a recomendada), e os passos, cada um com os arquivos que toca e o critério de aceite. Marque os passos que podem tocar os mesmos arquivos: esses não rodam em paralelo. Mostre ao usuário e espere o OK. Durante o trabalho, marque cada passo concluído no arquivo; depois de uma compactação, releia o plano antes de continuar. Tarefa pequena não precisa de plano escrito.
+
+**Tarefas pequenas parecidas** (vários textos, vários testes do mesmo tipo) vão juntas para um só implementador, em vez de um agente para cada.
+
 **Paralelo.** Só para tarefas independentes. Nunca dois agentes editando o mesmo arquivo. Dois implementadores ao mesmo tempo, só com arquivos separados no escopo de cada um. Se houver risco de se cruzarem, rode um por vez. `isolation: worktree` isola de verdade, mas o worktree nasce do branch padrão e não enxerga o trabalho ainda não commitado.
 
 **Continuidade.** Se o trabalho é continuação, retome o agente que já tem o contexto em vez de criar outro.
@@ -49,6 +53,7 @@ Em tarefa trivial, use o bom senso: estes princípios priorizam cautela sobre ve
 **Escalonamento.**
 - Explore devolveu resposta inconsistente: repita a busca com `model: sonnet`.
 - Implementador falhou 2 vezes no mesmo critério: não tente a terceira igual. Replaneje ou chame com `model: opus`.
+- Bug: primeiro a causa, depois a correção. Uma hipótese e uma mudança por vez. Se a terceira correção do mesmo bug falhar, pare e discuta com o usuário: o problema provavelmente é de desenho, não de detalhe.
 - Área sensível ou migração de banco: chame o revisor com `model: opus`.
 - Subir o modelo é exceção. Antes, veja se o briefing estava claro.
 
@@ -56,7 +61,9 @@ Em tarefa trivial, use o bom senso: estes princípios priorizam cautela sobre ve
 
 **Commit.** Commit local é do mestre, depois da verificação e da revisão exigida. Antes, rode `git status --porcelain --untracked-files=all` e compare com o escopo do briefing e com a lista de arquivos do relatório do implementador. Arquivo fora do escopo não entra no commit: mostre a lista ao usuário, e descartar só com o OK dele. Sempre com os caminhos dos arquivos: nunca `git add -A`, `git add .` nem `git commit -a`. Push só quando o usuário pedir.
 
-**Encerramento.** Antes de dizer que terminou, confira: critérios atendidos, verificador sem falhas, achados do revisor resolvidos ou expostos ao usuário. Diga o que não foi verificado.
+**Encerramento.** Antes de dizer que terminou, confira com evidência nova, não só com o relato dos agentes: o resultado do verificador nesta rodada, o seu próprio `git diff` e, em correção de bug, o teste que falhava antes e passa agora. Critérios atendidos e achados do revisor resolvidos ou expostos ao usuário. Diga o que não foi verificado.
+
+**Lições viram trava.** Quando algo der errado (regra ignorada, retrabalho, agente fora do escopo), proponha ao usuário, no fim da tarefa, uma trava em vez de só mais uma regra escrita: um caso de teste e uma regra na guarda, um bloqueio no `settings.json` ou uma linha na nota de área. Regra escrita só quando não houver trava possível.
 
 ## Contrato de briefing (mestre → agente)
 
@@ -72,7 +79,7 @@ O agente começa sem nada da conversa. Todo briefing traz:
 
 Máximo de 15 linhas, sem colar código nem log. Cite `caminho:linha`.
 
-- **Status**: feito, parcial ou bloqueado.
+- **Status**: feito, feito com ressalvas (diga quais), precisa de contexto (diga o que falta), parcial ou bloqueado.
 - **O que mudou** ou **o que encontrei**.
 - **Como verifiquei**: comando e resultado.
 - **Suposições** que fiz.

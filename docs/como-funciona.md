@@ -32,6 +32,8 @@ Pedido: "o cupom de desconto não está sendo aplicado no total do carrinho".
 6. **Mestre** grava o diff com `git diff HEAD --output=.revisao/diff.patch`. **Revisor** lê esse arquivo e o código ao redor, sem ter visto a implementação. Devolve o veredito e os achados.
 7. **Mestre** confere os critérios, compara o `git status` com o escopo, faz o commit local só com os arquivos do escopo e responde a você. Se aparecer arquivo de fora, ele mostra a lista e espera o seu OK antes de descartar.
 
+Em tarefa maior (mais de 3 arquivos, banco ou área sensível), antes do passo 3, o **mestre** grava o plano em `.revisao/plano.md`, espera o seu OK e marca cada passo concluído ali, para não se perder se o contexto for compactado.
+
 Uma mudança trivial, como corrigir um texto, pula tudo isso: o mestre faz direto.
 
 ## Exemplo de briefing

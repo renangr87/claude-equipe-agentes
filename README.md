@@ -42,6 +42,7 @@ flowchart TD
 | `settings/global.json` | bloqueios que valem em todo projeto | mesclar em `~/.claude/settings.json` |
 | `projeto/CLAUDE.md` | modelo do arquivo de cada projeto | raiz do projeto |
 | `projeto/nota-de-area.md` | modelo de nota por pasta | `CLAUDE.md` dentro da pasta |
+| `projeto/mcp.dart.json` | registro do servidor MCP oficial do Dart | registrado pelo instalador com `-ComDart`, ou copiado como `.mcp.json` num projeto |
 | `projeto/mcp.codebase-memory.json` | registro do servidor do mapa do código (codebase-memory) | registrado pelo instalador com `-ComMapa`, ou copiado como `.mcp.json` num projeto |
 | `ferramentas/registrar-mcp.mjs` | script em Node que o instalador usa para registrar o servidor no `.claude.json` | usado pelo instalador |
 | `projeto/verificador-comandos.txt` | modelo da lista de comandos que o verificador pode rodar | `.claude/` do projeto |
@@ -94,10 +95,10 @@ O instalador:
 
 Ele não apaga nada. Antes de alterar um arquivo que já existe, grava uma cópia ao lado com o sufixo `.bak-<data>-<hora>`. Pode ser rodado de novo depois de atualizar o repositório: o que já está igual é mantido.
 
-Para ativar também o mapa do código, instale antes o programa (veja [Mapa do código](#mapa-do-código-opcional)), feche o app do Claude e rode com `-ComMapa`:
+Para ativar também o mapa do código e o servidor do Dart, instale antes o que cada um pede (veja [Mapa do código](#mapa-do-código-opcional) e [Servidor do Dart](#servidor-do-dart-opcional)), feche o app do Claude e rode com as opções que quiser:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\instalar.ps1 -ComMapa
+powershell -ExecutionPolicy Bypass -File .\instalar.ps1 -ComMapa -ComDart
 ```
 
 Para instalar sem mexer no `settings.json`:
@@ -165,6 +166,7 @@ Quando mudar o ajuste da sessão:
 | Proibido (`deny`) | leitura, edição e criação de `.env` e `.env.*` em qualquer pasta do computador, inclusive `.env.example` | o Claude Code recusa |
 | Pede confirmação (`ask`) | `git push`, `rm -r`, `Remove-Item -r` | aparece um pedido de aprovação para você |
 | Pede confirmação (`ask`) | descarte de trabalho: `git restore`, `git checkout -- arquivo`, `git checkout .`, `git checkout -f`, `git stash drop`, `clear` e `pop`, `git reset --merge` e `--keep`, `git switch -f` | aparece um pedido de aprovação para você |
+| Pede confirmação (`ask`) | ferramentas do servidor do Dart que mudam o projeto ou o app rodando: `pub`, hot reload e restart, `vm_service`, `dtd`, `dart_fix`, `dart_format`, `run_tests`, `launch_app` e outras | aparece um pedido de aprovação para você |
 | Pede confirmação (`ask`) | ferramentas de escrita de conectores, como as do Supabase: `execute_sql`, `apply_migration`, `deploy_edge_function`, operações de branch e de projeto, envio de arquivo (`upload_file`) | aparece um pedido de aprovação para você. `execute_sql` pede também para consultas só de leitura, porque a ferramenta é a mesma |
 
 Cada regra de comando existe duas vezes, uma para Bash e outra para PowerShell, porque no Windows o agente pode usar qualquer um dos dois.
@@ -233,6 +235,16 @@ O que fica de fora de propósito:
 - **Ferramentas de escrita:** o Explore e o revisor só recebem as de consulta. `delete_project`, `manage_adr` e `ingest_traces` pedem confirmação em `global.json`.
 - **Mapa salvo no git:** o projeto oferece gravar `.codebase-memory/graph.db.zst` no repositório, mas o arquivo é regravado a cada atualização e incha o histórico. Deixe desligado (é o padrão) e ponha `.codebase-memory/` no `.gitignore` do projeto.
 
+## Servidor do Dart (opcional)
+
+O [servidor MCP oficial do Dart](https://docs.flutter.dev/ai/mcp-server) (`dart mcp-server`, mantido pelo time do Dart, licença BSD-3, ainda experimental) dá ao Claude o analisador do Dart: erros e avisos de verdade, tipo, definição e referências de um símbolo. Para tipos, é mais preciso que o mapa do código, que em Dart faz só a análise de estrutura. Roda no seu computador e não pede chave.
+
+1. Tenha o Dart 3.9 ou mais novo (`dart --version`; no Flutter, ele vem junto).
+2. Feche o app do Claude e rode o instalador com `-ComDart`. Ele acha o `dart` no PATH (no Flutter, usa o `dart.exe` do SDK embutido), confere a versão e registra no `%USERPROFILE%\.claude.json`, com backup. A documentação do Flutter sugere instalar o plugin `dart-flutter`; aqui registramos só o servidor, sem regras e extras.
+3. Para não mandar estatísticas de uso ao Google, rode uma vez `dart --disable-analytics` e `flutter --disable-analytics`.
+
+Quem usa: o Explore (`analyze_files`, `lsp`, `pub_dev_search` e leitura de pacotes) e o revisor (`analyze_files`, `lsp`). As ferramentas que mudam o projeto ou o app rodando (`pub`, hot reload, `vm_service`, `dart_format`, `dart_fix` e outras) pedem a sua confirmação.
+
 ## Personalizar
 
 - **Modelo e esforço de um subagente**: mude `model` e `effort` no início do arquivo dele em `~/.claude/agents/`.
@@ -251,7 +263,7 @@ Depois de editar os arquivos do repositório, rode o instalador de novo.
 1. Apague `Explore.md`, `implementador.md`, `verificador.md` e `revisor.md` de `~/.claude/agents/`.
 2. Apague `equipe-agentes.md` de `~/.claude/rules/` e `guarda-comandos.ps1` de `~/.claude/hooks/`.
 3. Em `~/.claude/settings.json`, remova as entradas listadas em `settings/global.json`, ou restaure a cópia `.bak` criada pelo instalador.
-4. Se usou `-ComMapa`, remova a entrada `codebase-memory` de `mcpServers` em `%USERPROFILE%\.claude.json`, com o app fechado, ou restaure a cópia `.bak` dele. O programa sai com `codebase-memory-mcp uninstall`.
+4. Se usou `-ComMapa` ou `-ComDart`, remova as entradas `codebase-memory` e `dart` de `mcpServers` em `%USERPROFILE%\.claude.json`, com o app fechado, ou restaure a cópia `.bak` dele. O programa sai com `codebase-memory-mcp uninstall`.
 
 ## Limitações conhecidas
 

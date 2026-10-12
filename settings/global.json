@@ -70,7 +70,19 @@
       "mcp__*__upload_file",
       "mcp__codebase-memory__delete_project",
       "mcp__codebase-memory__manage_adr",
-      "mcp__codebase-memory__ingest_traces"
+      "mcp__codebase-memory__ingest_traces",
+      "mcp__dart__pub",
+      "mcp__dart__hot_reload",
+      "mcp__dart__hot_restart",
+      "mcp__dart__flutter_driver_command",
+      "mcp__dart__vm_service",
+      "mcp__dart__dtd",
+      "mcp__dart__dart_fix",
+      "mcp__dart__dart_format",
+      "mcp__dart__launch_app",
+      "mcp__dart__stop_app",
+      "mcp__dart__create_project",
+      "mcp__dart__run_tests"
     ]
   }
 }
