@@ -42,7 +42,7 @@ Em tarefa trivial, use o bom senso: estes princípios priorizam cautela sobre ve
 
 **Ordem padrão.** Entender → explorar (se preciso) → planejar em passos verificáveis → implementar → verificar → revisar (se exigido) → conferir os critérios → commit local → responder ao usuário.
 
-**Plano em arquivo (tarefa média ou maior).** Se a tarefa toca mais de 3 arquivos, o banco ou uma área sensível, grave `.revisao/plano.md` antes de implementar: objetivo, dúvidas já resolvidas, as opções quando houver escolha real (no máximo 2, com a recomendada), e os passos, cada um com os arquivos que toca e o critério de aceite. Marque os passos que podem tocar os mesmos arquivos: esses não rodam em paralelo. Mostre ao usuário e espere o OK. Durante o trabalho, marque cada passo concluído no arquivo; depois de uma compactação, releia o plano antes de continuar. Tarefa pequena não precisa de plano escrito.
+**Plano em arquivo (tarefa média ou maior).** Se a tarefa toca mais de 3 arquivos, o banco ou uma área sensível, grave `.revisao/plano.md` antes de implementar: objetivo, dúvidas já resolvidas, as opções quando houver escolha real (no máximo 2, com a recomendada), e os passos, cada um com os arquivos que toca e o critério de aceite. Marque os passos que podem tocar os mesmos arquivos: esses não rodam em paralelo. Mostre o plano ao usuário. Espere o OK só quando houver escolha real entre opções, escrita em banco, área sensível ou ação irreversível; fora isso, siga e deixe o plano à vista. Se o `CLAUDE.md` do projeto disser quando perguntar, vale o do projeto, menos as regras de Segurança, que valem sempre. Durante o trabalho, marque cada passo concluído no arquivo; depois de uma compactação, releia o plano antes de continuar. Tarefa pequena não precisa de plano escrito.
 
 **Tarefas pequenas parecidas** (vários textos, vários testes do mesmo tipo) vão juntas para um só implementador, em vez de um agente para cada.
 
@@ -53,7 +53,8 @@ Em tarefa trivial, use o bom senso: estes princípios priorizam cautela sobre ve
 **Escalonamento.**
 - Explore devolveu resposta inconsistente: repita a busca com `model: sonnet`.
 - Implementador falhou 2 vezes no mesmo critério: não tente a terceira igual. Replaneje ou chame com `model: opus`.
-- Bug: primeiro a causa, depois a correção. Uma hipótese e uma mudança por vez. Se a terceira correção do mesmo bug falhar, pare e discuta com o usuário: o problema provavelmente é de desenho, não de detalhe.
+- Bug: primeiro a causa, depois a correção. Uma hipótese e uma mudança por vez.
+- As duas contagens são a mesma, somando todas as tentativas no mesmo bug ou critério, de qualquer agente: depois da 2ª falha, a 3ª tentativa é replanejada ou com modelo maior; se ela também falhar, pare e discuta com o usuário, porque o problema provavelmente é de desenho, não de detalhe.
 - Área sensível ou migração de banco: chame o revisor com `model: opus`.
 - Subir o modelo é exceção. Antes, veja se o briefing estava claro.
 

@@ -195,6 +195,11 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
     Conferir 'dart: saiu com 0' ($r.codigo -eq 0)
     Conferir 'dart: registrou com o caminho completo' ($u.mcpServers.dart.command -eq $dartNovo)
     Conferir 'dart: argumento mcp-server' (@($u.mcpServers.dart.args) -contains 'mcp-server')
+    # Os --disable (pub, dart_fix, dart_format, create_project) chegam ao registro.
+    # Os nomes em si sao conferidos contra o servidor real por testes/conferir-dart.ps1.
+    $argsModelo = @((Get-Content -Raw -LiteralPath (Join-Path $raiz 'projeto\mcp.dart.json') | ConvertFrom-Json).mcpServers.dart.args)
+    Conferir 'dart: argumentos iguais aos de projeto/mcp.dart.json' ((@($u.mcpServers.dart.args) -join ' ') -eq ($argsModelo -join ' '))
+    Conferir 'dart: pub desligada no servidor' ((@($u.mcpServers.dart.args) -join ' ') -match '--disable pub( |$)')
 
     $dartVelho = Novo-DartFalso (Join-Path $base 'dart-velho') '3.8.1'
     $d12 = Join-Path $base 'dart-velho-cfg'

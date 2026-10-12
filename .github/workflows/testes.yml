@@ -25,3 +25,17 @@ jobs:
         if: ${{ !cancelled() }}
         shell: pwsh
         run: ./testes/testar-instalador.ps1
+      - name: Ferramentas do Dart MCP (parte fixa, sem dart)
+        if: ${{ !cancelled() }}
+        shell: powershell
+        run: ./testes/conferir-dart.ps1
+      - uses: dart-lang/setup-dart@v1
+        if: ${{ !cancelled() }}
+        with:
+          sdk: stable
+      - name: Ferramentas do Dart MCP (servidor rodando)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          dart --disable-analytics
+          ./testes/conferir-dart.ps1

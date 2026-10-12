@@ -1,0 +1,34 @@
+# Ferramentas do servidor MCP do Dart (dart mcp-server) e o tratamento de cada uma.
+# Conferido no codigo-fonte (lib/src/utils/names.dart, ToolNames) da versao 1.2.x
+# e, a cada mudanca, pelo testes/conferir-dart.ps1 com o servidor rodando.
+# Uma ferramenta nova, que nao esteja aqui, faz o teste falhar: classifique antes de usar.
+#
+# Classes:
+#   leitura    o Explore e o revisor podem usar (lista em agents/*.md)
+#   livre      sem risco, so le estado; fica com o mestre
+#   confirmar  muda o app rodando ou executa codigo; pede confirmacao (settings/global.json)
+#   desligada  muda arquivos ou dependencias; desligada no servidor com --disable (projeto/mcp.dart.json)
+analyze_files	leitura
+lsp	leitura
+pub_dev_search	leitura
+read_package_uris	leitura
+rip_grep_packages	leitura
+get_runtime_errors	livre
+roots	livre
+widget_inspector	livre
+get_active_location	livre
+list_devices	livre
+list_running_apps	livre
+get_app_logs	livre
+hot_reload	confirmar
+hot_restart	confirmar
+flutter_driver_command	confirmar
+vm_service	confirmar
+dtd	confirmar
+launch_app	confirmar
+stop_app	confirmar
+run_tests	confirmar
+pub	desligada
+dart_fix	desligada
+dart_format	desligada
+create_project	desligada

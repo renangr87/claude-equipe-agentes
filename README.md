@@ -49,7 +49,7 @@ flowchart TD
 | `settings/projeto.exemplo.json` | exemplo de bloqueios mais rígidos para um projeto | `.claude/settings.json` do projeto |
 | `exemplos/flutter-supabase/` | exemplo preenchido de `CLAUDE.md` e da lista do verificador | referência |
 | `instalar.ps1` | instalador para Windows | executar |
-| `testes/` | casos da guarda e teste do instalador, que rodam no Windows PowerShell 5.1 e no PowerShell 7 | executar |
+| `testes/` | casos da guarda, teste do instalador e conferência das ferramentas do Dart, que rodam no Windows PowerShell 5.1 e no PowerShell 7 | executar |
 | `.github/workflows/testes.yml` | roda os testes no Windows a cada mudança no GitHub | automático |
 | `docs/como-funciona.md` | explicação detalhada | leitura |
 | `docs/modelos.md` | preços e benchmarks oficiais dos modelos 5.5 e o motivo de cada escolha | leitura |
@@ -204,7 +204,7 @@ Limites:
 - **O hook depende do `powershell.exe`.** Se ele não for encontrado ou se a guarda passar de 30 segundos, o Claude Code deixa o comando seguir. Os outros casos de falha (script ausente, caminho errado, política de execução) bloqueiam. Os testes 4, 5 e 6 da instalação confirmam que a guarda está ativa.
 - **A guarda do implementador pega formatadores conhecidos, não toda forma de reformatar.** Um script próprio que reescreve arquivos passa. Quem cobre isso é a comparação de `git status` antes do commit.
 - **A lista do verificador depende do git.** Se a pasta `.claude/` estiver no `.gitignore` do projeto, a checagem de commit não enxerga mudanças.
-- **Testes.** `testes/casos-guarda.txt` tem 114 casos e `testes/testar-guarda.ps1` roda todos do mesmo jeito que o hook, mais 5 cenários (entrada vazia, JSON inválido, script ausente, lista fora de commit, lista ausente). `testes/testar-instalador.ps1` faz 25 verificações em pastas temporárias. A cada mudança no GitHub, os dois rodam no Windows com o PowerShell 5.1 e com o PowerShell 7. Para rodar na sua máquina: `powershell -ExecutionPolicy Bypass -File .\testes\testar-guarda.ps1`. O app do Windows em si não é testado: os testes 4, 5 e 6 da instalação cobrem essa parte.
+- **Testes.** `testes/casos-guarda.txt` tem 114 casos e `testes/testar-guarda.ps1` roda todos do mesmo jeito que o hook, mais 5 cenários (entrada vazia, JSON inválido, script ausente, lista fora de commit, lista ausente). `testes/testar-instalador.ps1` faz 48 verificações em pastas temporárias. `testes/conferir-dart.ps1` confere os nomes das ferramentas do servidor do Dart. A cada mudança no GitHub, os três rodam no Windows com o PowerShell 5.1 e com o PowerShell 7. Para rodar na sua máquina: `powershell -ExecutionPolicy Bypass -File .\testes\testar-guarda.ps1`. O app do Windows em si não é testado: os testes 4, 5 e 6 da instalação cobrem essa parte.
 
 ## Ferramentas de conectores
 
@@ -243,7 +243,20 @@ O [servidor MCP oficial do Dart](https://docs.flutter.dev/ai/mcp-server) (`dart 
 2. Feche o app do Claude e rode o instalador com `-ComDart`. Ele acha o `dart` no PATH (no Flutter, usa o `dart.exe` do SDK embutido), confere a versão e registra no `%USERPROFILE%\.claude.json`, com backup. A documentação do Flutter sugere instalar o plugin `dart-flutter`; aqui registramos só o servidor, sem regras e extras.
 3. Para não mandar estatísticas de uso ao Google, rode uma vez `dart --disable-analytics` e `flutter --disable-analytics`.
 
-Quem usa: o Explore (`analyze_files`, `lsp`, `pub_dev_search` e leitura de pacotes) e o revisor (`analyze_files`, `lsp`). As ferramentas que mudam o projeto ou o app rodando (`pub`, hot reload, `vm_service`, `dart_format`, `dart_fix` e outras) pedem a sua confirmação.
+Quem usa: o Explore (`analyze_files`, `lsp`, `pub_dev_search` e leitura de pacotes) e o revisor (`analyze_files`, `lsp`).
+
+As ferramentas ficam em quatro grupos, listados em `testes/dart-ferramentas.txt`:
+
+| Grupo | Ferramentas | Como fica |
+|---|---|---|
+| leitura | `analyze_files`, `lsp`, `pub_dev_search`, `read_package_uris`, `rip_grep_packages` | liberadas; são as do Explore e do revisor |
+| livre | `get_runtime_errors`, `widget_inspector`, `list_devices`, `get_app_logs` e outras só de consulta | liberadas |
+| confirmar | `hot_reload`, `hot_restart`, `flutter_driver_command`, `vm_service`, `dtd`, `launch_app`, `stop_app`, `run_tests` | pedem a sua confirmação |
+| desligada | `pub`, `dart_fix`, `dart_format`, `create_project` | desligadas no próprio servidor, com `--disable` |
+
+As que mexem em arquivos (`pub`, `dart_fix`, `dart_format`, `create_project`) são desligadas no servidor, e não só postas na lista de confirmação: se um dia o nome de uma mudar, a confirmação deixaria de valer sem aviso, e o `--disable` com nome errado impede o servidor de subir, então o erro aparece. Os nomes foram conferidos no código do servidor (`ToolNames`, em `lib/src/utils/names.dart` do [dart-lang/ai](https://github.com/dart-lang/ai)). O teste `testes/conferir-dart.ps1` sobe o servidor, pede a lista de ferramentas e falha se aparecer uma ferramenta fora dos quatro grupos, se uma desligada aparecer ou se um nome da lista de confirmação não existir. Ele roda no GitHub a cada mudança, com o Dart estável.
+
+Se você já tinha registrado o servidor do Dart antes desta versão, o instalador mantém a entrada antiga. Para pegar os `--disable`, apague a entrada `dart` de `mcpServers` em `%USERPROFILE%\.claude.json`, com o app fechado, e rode o instalador de novo.
 
 ## Personalizar
 

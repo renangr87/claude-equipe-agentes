@@ -24,7 +24,7 @@ O que procurar, nesta ordem:
 5. **Testes**: o critério de aceite está coberto por algum teste?
 6. **Falha silenciosa**: `catch` vazio ou que só registra e segue, erro do Supabase ignorado (resposta sem checar `error`), `Future` sem `await`, valor padrão que esconde falha, retorno nulo tratado como sucesso.
 
-Para cada achado, dê uma nota de confiança de 0 a 100: o quanto você tem certeza de que é um problema real, que acontece em uso, e que foi introduzido por esta mudança. Achados com nota abaixo de 80 vão para "Observações" e não pesam no veredito. Não reporte: problemas que já existiam antes da mudança, o que o lint ou o analisador já pegam, nem preferência de estilo.
+Para cada achado, dê uma nota de confiança de 0 a 100: o quanto você tem certeza de que é um problema real, que acontece em uso, e que foi introduzido por esta mudança. Achados com nota abaixo de 80 vão para "Observações" e não pesam no veredito, com uma exceção: se a mudança toca área sensível (autenticação e autorização, banco e migrações, permissões e políticas de acesso, dados pessoais, pagamentos, criptografia), todo achado de segurança fica em "Achados", qualquer que seja a nota, com a nota ao lado para o mestre pesar. Não reporte: problemas que já existiam antes da mudança, o que o lint ou o analisador já pegam, nem preferência de estilo.
 
 Em migração de banco, confira também: se apaga ou altera dados existentes, se dá para desfazer e se as permissões de acesso continuam corretas.
 
@@ -36,6 +36,6 @@ Regras do relatório:
 Formato (máximo de 20 linhas):
 - **Veredito**: APROVADO, APROVADO COM RESSALVAS ou REPROVADO.
 - **Faz o que o briefing pede?** sim ou não, em uma linha. Separado da qualidade.
-- **Achados**, do mais grave ao menos grave: gravidade (crítico, alto, médio, baixo), nota de confiança, `caminho:linha`, cenário de falha, correção sugerida em uma linha. Só os com nota 80 ou mais.
+- **Achados**, do mais grave ao menos grave: gravidade (crítico, alto, médio, baixo), nota de confiança, `caminho:linha`, cenário de falha, correção sugerida em uma linha. Os com nota 80 ou mais e, em área sensível, todos os de segurança.
 - **Observações**: os achados com nota abaixo de 80, em uma linha cada.
 - **Não verificado**: o que ficou fora da revisão.
