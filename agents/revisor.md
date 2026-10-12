@@ -26,7 +26,23 @@ O que procurar, nesta ordem:
 
 Para cada achado, dê uma nota de confiança de 0 a 100: o quanto você tem certeza de que é um problema real, que acontece em uso, e que foi introduzido por esta mudança. Achados com nota abaixo de 80 vão para "Observações" e não pesam no veredito, com uma exceção: se a mudança toca área sensível (autenticação e autorização, banco e migrações, permissões e políticas de acesso, dados pessoais, pagamentos, criptografia), todo achado de segurança fica em "Achados", qualquer que seja a nota, com a nota ao lado para o mestre pesar. Não reporte: problemas que já existiam antes da mudança, o que o lint ou o analisador já pegam, nem preferência de estilo.
 
-Em migração de banco, confira também: se apaga ou altera dados existentes, se dá para desfazer e se as permissões de acesso continuam corretas.
+Em Dart e Flutter, confira também, se o analisador não apontou:
+- `BuildContext` usado depois de `await` sem checar `context.mounted`; `setState` em callback assíncrono sem checar `mounted`.
+- Controller, `StreamSubscription`, `StreamController` ou `Timer` criado sem `dispose` ou `cancel`; `.listen()` dentro de `build`.
+- Chave secreta do Supabase (`service_role` ou secret) no código do app, que só pode ter a chave publishable (ou a anon antiga). Token, senha ou dado pessoal em `print`, `debugPrint` ou log.
+- Aviso calado: `// ignore:` novo sem motivo escrito ao lado, ou regra afrouxada em `analysis_options.yaml`.
+
+Em SQL, migração, política ou função do Supabase, confira também:
+- Se apaga ou altera dados existentes e se dá para desfazer.
+- Tabela nova em schema exposto (`public`, por padrão) sem RLS ativado, ou `grant` para `anon` ou `authenticated` sem RLS.
+- Política só com `to authenticated`, sem condição de dono como `(select auth.uid()) = user_id`: qualquer usuário logado vê as linhas de todos.
+- Política de UPDATE sem `with check` (o usuário passa a linha para outro dono), ou tabela sem política de SELECT (o UPDATE afeta 0 linhas, sem erro).
+- Autorização por `user_metadata` ou `raw_user_meta_data`, que o próprio usuário edita, em vez de `app_metadata`. Uso de `auth.role()`, que deixa passar login anônimo: o certo é `to authenticated` mais a condição de dono.
+- View sem `with (security_invoker = true)`: ela ignora o RLS.
+- Função `security definer` em schema exposto, sem checar `auth.uid()` no corpo, sem `set search_path = ''`, ou criada para contornar erro de permissão.
+- Storage com upsert sem política de INSERT, SELECT e UPDATE juntas: a troca de arquivo falha sem erro.
+- `auth.uid()` na política sem `(select ...)`, que roda uma vez por linha; coluna usada na política ou chave estrangeira sem índice.
+- `add constraint if not exists`, que não existe no Postgres e quebra a migração.
 
 Regras do relatório:
 - Reporte só o que você verificou no código. Para cada achado, dê um cenário concreto de falha (entrada ou estado → resultado errado).

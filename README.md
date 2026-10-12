@@ -166,7 +166,8 @@ Quando mudar o ajuste da sessão:
 | Proibido (`deny`) | leitura, edição e criação de `.env` e `.env.*` em qualquer pasta do computador, inclusive `.env.example` | o Claude Code recusa |
 | Pede confirmação (`ask`) | `git push`, `rm -r`, `Remove-Item -r` | aparece um pedido de aprovação para você |
 | Pede confirmação (`ask`) | descarte de trabalho: `git restore`, `git checkout -- arquivo`, `git checkout .`, `git checkout -f`, `git stash drop`, `clear` e `pop`, `git reset --merge` e `--keep`, `git switch -f` | aparece um pedido de aprovação para você |
-| Pede confirmação (`ask`) | ferramentas do servidor do Dart que mudam o projeto ou o app rodando: `pub`, hot reload e restart, `vm_service`, `dtd`, `dart_fix`, `dart_format`, `run_tests`, `launch_app` e outras | aparece um pedido de aprovação para você |
+| Pede confirmação (`ask`) | ferramentas do servidor do Dart que mexem no app rodando: hot reload e restart, `vm_service`, `dtd`, `flutter_driver_command`, `run_tests`, `launch_app` e `stop_app`. As que mudam arquivos (`pub`, `dart_fix`, `dart_format`, `create_project`) ficam desligadas no próprio servidor | aparece um pedido de aprovação para você |
+| Pede confirmação (`ask`) | editar ou criar `analysis_options.yaml`, em qualquer pasta | aparece um pedido de aprovação para você. Evita que o agente afrouxe o analisador para o aviso sumir em vez de corrigir o código. Um comando de terminal que mude o arquivo não passa por essa regra |
 | Pede confirmação (`ask`) | ferramentas de escrita de conectores, como as do Supabase: `execute_sql`, `apply_migration`, `deploy_edge_function`, operações de branch e de projeto, envio de arquivo (`upload_file`) | aparece um pedido de aprovação para você. `execute_sql` pede também para consultas só de leitura, porque a ferramenta é a mesma |
 
 Cada regra de comando existe duas vezes, uma para Bash e outra para PowerShell, porque no Windows o agente pode usar qualquer um dos dois.
