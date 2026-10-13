@@ -1,0 +1,17 @@
+{
+  "_sobre": "Regras que versoes anteriores da equipe acrescentavam ao settings.json e que o instalador agora remove, se estiverem la exatamente assim. Elas pediam confirmacao em acoes comuns e travavam a sessao quando o usuario saia.",
+  "ask": [
+    "Bash(git push *)",
+    "PowerShell(git push *)",
+    "Bash(rm -r*)",
+    "Bash(rm -R*)",
+    "Bash(rm -fr*)",
+    "PowerShell(Remove-Item *-Recurse*)",
+    "PowerShell(Remove-Item *-r*)",
+    "mcp__*__execute_sql",
+    "mcp__dart__hot_reload",
+    "mcp__dart__hot_restart",
+    "mcp__dart__flutter_driver_command",
+    "mcp__dart__dtd"
+  ]
+}

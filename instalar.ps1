@@ -6,7 +6,8 @@
   1. Copia os subagentes para <Destino>\agents, com o caminho da guarda ajustado
   2. Copia a guarda de terminal (guarda-comandos.ps1) para <Destino>\hooks
   3. Copia a regra global para <Destino>\rules
-  4. Acrescenta os bloqueios ao <Destino>\settings.json, sem remover o que ja existe
+  4. Acrescenta os bloqueios ao <Destino>\settings.json. So remove regras antigas da
+     propria equipe, listadas em settings\retiradas.json; o resto e mantido
   5. Com -ComMapa: registra o servidor codebase-memory (mapa do codigo) na
      configuracao do usuario (.claude.json), para o Explore e o revisor consultarem
      o mapa em todos os projetos
@@ -123,8 +124,26 @@ function Merge-Bloqueios([string]$arquivoNovo, [string]$arquivoDestino) {
         throw "A chave permissions de $arquivoDestino nao e um objeto. O arquivo nao foi alterado."
     }
 
+    # Regras que versoes anteriores acrescentavam e que sairam da lista: remove so as
+    # identicas, para nao mexer no que o usuario escreveu.
+    $removidas = 0
+    $arquivoRetiradas = Join-Path (Split-Path -Parent $arquivoNovo) 'retiradas.json'
+    if (Test-Path -LiteralPath $arquivoRetiradas) {
+        $retiradas = (Read-Texto $arquivoRetiradas) | ConvertFrom-Json
+        foreach ($chave in @('deny', 'ask', 'allow')) {
+            if (-not $retiradas.PSObject.Properties[$chave] -or -not $perm.PSObject.Properties[$chave]) { continue }
+            $sair = @($retiradas.$chave | Where-Object { @($novo.permissions.$chave) -cnotcontains $_ })
+            $antes = @($perm.$chave | Where-Object { $null -ne $_ })
+            $depois = @($antes | Where-Object { $sair -cnotcontains $_ })
+            if ($depois.Count -ne $antes.Count) {
+                $perm.$chave = $depois
+                $removidas += $antes.Count - $depois.Count
+            }
+        }
+    }
+
     $adicionadas = 0
-    foreach ($chave in @('deny', 'ask')) {
+    foreach ($chave in @('deny', 'ask', 'allow')) {
         $regrasNovas  = @($novo.permissions.$chave | Where-Object { $null -ne $_ })
         $regrasAtuais = @()
         $temChave     = [bool]$perm.PSObject.Properties[$chave]
@@ -143,7 +162,7 @@ function Merge-Bloqueios([string]$arquivoNovo, [string]$arquivoDestino) {
         }
     }
 
-    if ($adicionadas -eq 0) {
+    if ($adicionadas -eq 0 -and $removidas -eq 0) {
         Write-Host "  bloqueios ja presentes, mantido: $arquivoDestino"
         return
     }
@@ -154,7 +173,7 @@ function Merge-Bloqueios([string]$arquivoNovo, [string]$arquivoDestino) {
     }
     $json = $atual | ConvertTo-Json -Depth 32
     [System.IO.File]::WriteAllText($arquivoDestino, $json + "`n", $utf8)
-    Write-Host "  $adicionadas regras acrescentadas: $arquivoDestino"
+    Write-Host "  $adicionadas regras acrescentadas e $removidas regras antigas removidas: $arquivoDestino"
 }
 
 Write-Host "Instalando em: $Destino"

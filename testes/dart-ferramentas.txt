@@ -5,9 +5,10 @@
 # nome fica desligado, inclusive ferramentas que versoes futuras criarem.
 #
 #   leitura    habilitada; so le. As unicas que o Explore e o revisor recebem.
-#   livre      habilitada; so consulta o app rodando, sem pedir confirmacao.
-#   confirmar  habilitada; muda o app rodando ou o alcance do servidor. Tem regra
-#              "ask" em settings/global.json.
+#   livre      habilitada; consulta ou recarrega o app rodando, sem pedir
+#              confirmacao (uso frequente no dia a dia).
+#   confirmar  habilitada; chama metodos arbitrarios no app rodando ou muda o
+#              alcance do servidor. Tem regra "ask" em settings/global.json.
 #   desligada  nome conhecido, fica fora do --enable.
 #
 # Nomes conferidos no enum ToolNames (lib/src/utils/names.dart do dart-lang/ai) e
@@ -19,11 +20,11 @@ read_package_uris	leitura
 rip_grep_packages	leitura
 get_runtime_errors	livre
 widget_inspector	livre
-hot_reload	confirmar
-hot_restart	confirmar
-flutter_driver_command	confirmar
+hot_reload	livre
+hot_restart	livre
+flutter_driver_command	livre
+dtd	livre
 vm_service	confirmar
-dtd	confirmar
 roots	confirmar
 pub	desligada
 dart_fix	desligada

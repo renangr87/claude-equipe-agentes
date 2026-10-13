@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "supabase-leitura": {
+      "type": "http",
+      "url": "https://mcp.supabase.com/mcp?project_ref=TROQUE_PELO_ID_DO_PROJETO&read_only=true"
+    }
+  }
+}

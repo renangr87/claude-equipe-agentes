@@ -75,6 +75,22 @@ Conferir 'mescla: acrescentou deny' (@($s.permissions.deny).Count -eq $nDeny + 1
 Conferir 'mescla: manteve hooks' ($null -ne $s.PSObject.Properties['hooks'])
 Conferir 'mescla: fez backup' (@(Get-ChildItem -LiteralPath $d3 -Filter 'settings.json.bak-*').Count -eq 1)
 
+# 3b. Regras antigas da equipe saem; regra parecida escrita pelo usuario fica
+$d3b = Join-Path $base 'retiradas'
+New-Item -ItemType Directory -Force -Path $d3b | Out-Null
+[System.IO.File]::WriteAllText((Join-Path $d3b 'settings.json'), '{"permissions":{"ask":["Bash(git push *)","mcp__dart__hot_reload","Bash(git push origin main)"]}}', $utf8)
+$r = Instalar $d3b
+$s = Ler-Json (Join-Path $d3b 'settings.json')
+Conferir 'retiradas: saiu com 0' ($r.codigo -eq 0)
+Conferir 'retiradas: removeu git push *' (@($s.permissions.ask) -notcontains 'Bash(git push *)')
+Conferir 'retiradas: removeu hot_reload' (@($s.permissions.ask) -notcontains 'mcp__dart__hot_reload')
+Conferir 'retiradas: manteve regra do usuario' (@($s.permissions.ask) -contains 'Bash(git push origin main)')
+Conferir 'retiradas: acrescentou allow da leitura do Supabase' (@($s.permissions.allow) -contains 'mcp__supabase-leitura')
+$r = Instalar $d3b
+Conferir 'retiradas: repeticao nao muda nada' ($r.texto -match 'bloqueios ja presentes')
+$retiradas = Ler-Json (Join-Path (Join-Path $raiz 'settings') 'retiradas.json')
+foreach ($regra in @($retiradas.ask)) { Conferir "retiradas: '$regra' nao esta em global.json" (@($global.permissions.ask) -cnotcontains $regra) }
+
 # 4. JSON invalido: falha sem alterar o arquivo
 $d4 = Join-Path $base 'invalido'
 New-Item -ItemType Directory -Force -Path $d4 | Out-Null

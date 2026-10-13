@@ -40,6 +40,8 @@ flowchart TD
 | `agents/*.md` | os 4 subagentes, com modelo, esforço e ferramentas de cada um | `~/.claude/agents/` |
 | `hooks/guarda-comandos.ps1` | guarda de terminal do Explore, do verificador e do implementador | `~/.claude/hooks/` |
 | `settings/global.json` | bloqueios que valem em todo projeto | mesclar em `~/.claude/settings.json` |
+| `settings/retiradas.json` | regras que versões anteriores acrescentavam e o instalador agora remove | usado pelo instalador |
+| `projeto/mcp.supabase-leitura.json` | conexão do Supabase só de leitura, para consultas sem pedir aprovação | `.mcp.json` do projeto |
 | `projeto/CLAUDE.md` | modelo do arquivo de cada projeto | raiz do projeto |
 | `projeto/nota-de-area.md` | modelo de nota por pasta | `CLAUDE.md` dentro da pasta |
 | `projeto/mcp.dart.json` | registro do servidor MCP oficial do Dart | registrado pelo instalador com `-ComDart`, ou copiado como `.mcp.json` num projeto |
@@ -91,9 +93,9 @@ O instalador:
 - copia os 4 subagentes para `%USERPROFILE%\.claude\agents`, trocando o marcador `__PASTA_CLAUDE__` pelo caminho real da pasta;
 - copia a guarda de terminal para `%USERPROFILE%\.claude\hooks`;
 - copia a regra global para `%USERPROFILE%\.claude\rules`;
-- acrescenta os bloqueios ao `%USERPROFILE%\.claude\settings.json`, sem remover nada do que já existe.
+- acrescenta os bloqueios ao `%USERPROFILE%\.claude\settings.json`. Só remove regras antigas da própria equipe, listadas em `settings/retiradas.json`; o que você escreveu fica.
 
-Ele não apaga nada. Antes de alterar um arquivo que já existe, grava uma cópia ao lado com o sufixo `.bak-<data>-<hora>`. Pode ser rodado de novo depois de atualizar o repositório: o que já está igual é mantido.
+Ele não apaga arquivos. Antes de alterar um arquivo que já existe, grava uma cópia ao lado com o sufixo `.bak-<data>-<hora>`. Pode ser rodado de novo depois de atualizar o repositório: o que já está igual é mantido.
 
 Para ativar também o mapa do código e o servidor do Dart, instale antes o que cada um pede (veja [Mapa do código](#mapa-do-código-opcional) e [Servidor do Dart](#servidor-do-dart-opcional)), feche o app do Claude e rode com as opções que quiser:
 
@@ -140,7 +142,7 @@ Abra uma sessão nova e faça três testes:
 
 ## Uso
 
-1. Abra uma sessão na pasta do projeto, com **Opus** e esforço **médio**.
+1. Abra uma sessão na pasta do projeto, com **Opus**, esforço **médio** e o modo de permissão **Auto** (no seletor de modo do app). No modo Manual o Claude Code pergunta antes de quase todo comando e edição, e a sessão trava se você sair. No Auto, um segundo modelo revisa cada ação no seu lugar e só pede a você o que está na lista de confirmação da equipe. O app lembra o modo por pasta.
 2. Peça o trabalho normalmente. Não precisa citar os agentes: o mestre decide quando delegar.
 3. Na primeira vez em um projeto sem `CLAUDE.md`, o mestre manda o Explore levantar a stack e os comandos, mostra a proposta e grava o arquivo depois do seu OK.
 
@@ -164,11 +166,13 @@ Quando mudar o ajuste da sessão:
 |---|---|---|
 | Proibido (`deny`) | `git reset --hard`, `git push --force` e `-f`, `git clean`, `git add -A`, `git add --all`, `git add .`, `git commit -a` | o Claude Code recusa |
 | Proibido (`deny`) | leitura, edição e criação de `.env` e `.env.*` em qualquer pasta do computador, inclusive `.env.example` | o Claude Code recusa |
-| Pede confirmação (`ask`) | `git push`, `rm -r`, `Remove-Item -r` | aparece um pedido de aprovação para você |
 | Pede confirmação (`ask`) | descarte de trabalho: `git restore`, `git checkout -- arquivo`, `git checkout .`, `git checkout -f`, `git stash drop`, `clear` e `pop`, `git reset --merge` e `--keep`, `git switch -f` | aparece um pedido de aprovação para você |
-| Pede confirmação (`ask`) | ferramentas do servidor do Dart que mexem no app rodando ou no alcance do servidor: hot reload e restart, `vm_service`, `dtd`, `flutter_driver_command` e `roots`. As demais que mudam algo ficam desligadas no próprio servidor | aparece um pedido de aprovação para você |
+| Pede confirmação (`ask`) | ferramentas do servidor do Dart que chamam métodos arbitrários no app rodando (`vm_service`) ou mudam as pastas que o servidor alcança (`roots`). Hot reload e restart ficam livres; as que mudam arquivos ficam desligadas no próprio servidor | aparece um pedido de aprovação para você |
 | Pede confirmação (`ask`) | editar ou criar `analysis_options.yaml`, em qualquer pasta | aparece um pedido de aprovação para você. Evita que o agente afrouxe o analisador para o aviso sumir em vez de corrigir o código. Um comando de terminal que mude o arquivo não passa por essa regra |
-| Pede confirmação (`ask`) | ferramentas de escrita de conectores, como as do Supabase: `execute_sql`, `apply_migration`, `deploy_edge_function`, operações de branch e de projeto, envio de arquivo (`upload_file`) | aparece um pedido de aprovação para você. `execute_sql` pede também para consultas só de leitura, porque a ferramenta é a mesma |
+| Pede confirmação (`ask`) | ferramentas de escrita de conectores, como as do Supabase: `execute_sql` da conexão que escreve, `apply_migration`, `deploy_edge_function`, segredos, operações de branch e de projeto, envio de arquivo (`upload_file`) | aparece um pedido de aprovação para você |
+| Liberado (`allow`) | a conexão do Supabase só de leitura, `supabase-leitura` (veja [Consultas ao banco sem pedir aprovação](#consultas-ao-banco-sem-pedir-aprovação)) | roda sem pedir nada; o próprio Supabase só deixa ler |
+
+**Por que a lista é curta.** Toda regra de confirmação pede aprovação até no modo Auto, e cada pedido trava a sessão até você responder. Por isso a lista fica só com o que é raro e sem volta. `git push` (o push forçado continua proibido), `rm -r` e hot reload saíram: no modo Auto, quem avalia essas ações é o classificador do Claude Code, que barra o que foge do pedido. Instalações anteriores deixaram essas regras no seu `settings.json`; o instalador remove as que estão em `settings/retiradas.json`, só se estiverem escritas exatamente como a equipe escreveu.
 
 Cada regra de comando existe duas vezes, uma para Bash e outra para PowerShell, porque no Windows o agente pode usar qualquer um dos dois.
 
@@ -205,11 +209,20 @@ Limites:
 - **O hook depende do `powershell.exe`.** Se ele não for encontrado ou se a guarda passar de 30 segundos, o Claude Code deixa o comando seguir. Os outros casos de falha (script ausente, caminho errado, política de execução) bloqueiam. Os testes 4, 5 e 6 da instalação confirmam que a guarda está ativa.
 - **A guarda do implementador pega formatadores conhecidos, não toda forma de reformatar.** Um script próprio que reescreve arquivos passa. Quem cobre isso é a comparação de `git status` antes do commit.
 - **A lista do verificador depende do git.** Se a pasta `.claude/` estiver no `.gitignore` do projeto, a checagem de commit não enxerga mudanças.
-- **Testes.** `testes/casos-guarda.txt` tem 114 casos e `testes/testar-guarda.ps1` roda todos do mesmo jeito que o hook, mais 5 cenários (entrada vazia, JSON inválido, script ausente, lista fora de commit, lista ausente). `testes/testar-instalador.ps1` faz 54 verificações em pastas temporárias, com um `dart` falso para o `-ComDart`. `testes/conferir-dart.ps1` confere os nomes das ferramentas do servidor do Dart. A cada mudança no GitHub, os três rodam no Windows com o PowerShell 5.1 e com o PowerShell 7, e o do Dart roda também com o servidor de verdade, nas versões 3.11.3, 3.12.0, 3.13.0 e na estável. Para rodar na sua máquina: `powershell -ExecutionPolicy Bypass -File .\testes\testar-guarda.ps1`. O app do Windows em si não é testado: os testes 4, 5 e 6 da instalação cobrem essa parte.
+- **Testes.** `testes/casos-guarda.txt` tem 114 casos e `testes/testar-guarda.ps1` roda todos do mesmo jeito que o hook, mais 5 cenários (entrada vazia, JSON inválido, script ausente, lista fora de commit, lista ausente). `testes/testar-instalador.ps1` faz 72 verificações em pastas temporárias, com um `dart` falso para o `-ComDart`. `testes/conferir-dart.ps1` confere os nomes das ferramentas do servidor do Dart. A cada mudança no GitHub, os três rodam no Windows com o PowerShell 5.1 e com o PowerShell 7, e o do Dart roda também com o servidor de verdade, nas versões 3.11.3, 3.12.0, 3.13.0 e na estável. Para rodar na sua máquina: `powershell -ExecutionPolicy Bypass -File .\testes\testar-guarda.ps1`. O app do Windows em si não é testado: os testes 4, 5 e 6 da instalação cobrem essa parte.
 
 ## Ferramentas de conectores
 
 O implementador não usa ferramentas de conectores (MCP): o arquivo dele tem `disallowedTools: Agent, mcp__*`. Assim ele não alcança, por exemplo, o banco de produção pelo conector do Supabase. Nos outros agentes e no mestre, as ferramentas de escrita mais comuns pedem confirmação (veja os bloqueios). Se você quiser que o implementador use um conector, troque `mcp__*` pelo nome do servidor que ele não deve usar, por exemplo `mcp__claude_ai_Supabase`.
+
+### Consultas ao banco sem pedir aprovação
+
+A ferramenta `execute_sql` do Supabase é a mesma para ler e para escrever, então na conexão normal ela pede aprovação até para um `select`. Para as consultas do dia a dia, registre no projeto uma segunda conexão, só de leitura:
+
+1. Copie `projeto/mcp.supabase-leitura.json` para a raiz do projeto com o nome `.mcp.json` (ou junte a entrada ao `.mcp.json` que já existir) e troque `TROQUE_PELO_ID_DO_PROJETO` pelo ID do projeto no Supabase (o código que aparece na URL do painel).
+2. Abra uma sessão, aceite o servidor do projeto quando o Claude Code perguntar, e autentique o `supabase-leitura` no gerenciador de servidores MCP (`/mcp`). Não precisa de token.
+
+Nessa conexão (`read_only=true`), o Supabase roda toda consulta com um usuário do Postgres que só lê: um `insert` ou `drop` falha no próprio banco. Por isso ela fica liberada (`allow`) na lista da equipe, e a regra manda o mestre usá-la para consultas. A conexão normal continua pedindo aprovação para escrever. O nome `supabase-leitura` importa: é ele que está liberado. As regras de confirmação de `execute_sql` citam os nomes comuns da conexão que escreve (`supabase`, `Supabase`, `claude_ai_Supabase`); se a sua tiver outro nome, acrescente `mcp__<nome>__execute_sql` às regras de confirmação do seu `settings.json`.
 
 ## Mapa do código (opcional)
 
@@ -251,8 +264,8 @@ O servidor sobe com `--disable all` e um `--enable` para cada ferramenta que a e
 | Grupo | Ferramentas | Como fica |
 |---|---|---|
 | leitura | `analyze_files`, `lsp`, `pub_dev_search`, `read_package_uris`, `rip_grep_packages` | ligadas e liberadas; são as do Explore e do revisor |
-| livre | `get_runtime_errors`, `widget_inspector` | ligadas e liberadas; só consultam o app rodando |
-| confirmar | `hot_reload`, `hot_restart`, `flutter_driver_command`, `vm_service`, `dtd`, `roots` | ligadas; pedem a sua confirmação. `roots` muda as pastas que o servidor alcança |
+| livre | `get_runtime_errors`, `widget_inspector`, `hot_reload`, `hot_restart`, `flutter_driver_command`, `dtd` | ligadas e liberadas; consultam ou recarregam o app rodando, coisa do dia a dia |
+| confirmar | `vm_service`, `roots` | ligadas; pedem a sua confirmação. `vm_service` chama qualquer método no app rodando e `roots` muda as pastas que o servidor alcança |
 | desligada | `pub`, `dart_fix`, `dart_format`, `create_project`, `run_tests`, `launch_app`, `stop_app`, `list_devices`, `list_running_apps`, `get_app_logs`, `get_active_location` | desligadas no servidor. Rodar o app, os testes e o `pub` fica com o terminal, como o próprio time do Dart recomenda |
 
 Os nomes foram conferidos no código do servidor (`ToolNames`, em `lib/src/utils/names.dart` do [dart-lang/ai](https://github.com/dart-lang/ai)). O teste `testes/conferir-dart.ps1` sobe o servidor, pede a lista e falha se ela não for exatamente a habilitada; também avisa de ferramentas novas que ainda não têm grupo. No GitHub ele roda a cada mudança e toda segunda-feira, com o Dart 3.13.0 e o estável, e confirma que o 3.11 e o 3.12 são recusados.

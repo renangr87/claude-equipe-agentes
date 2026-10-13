@@ -27,12 +27,6 @@
       "Read(//**/.env.*)"
     ],
     "ask": [
-      "Bash(git push *)",
-      "Bash(rm -r*)",
-      "Bash(rm -R*)",
-      "Bash(rm -fr*)",
-      "PowerShell(git push *)",
-      "PowerShell(Remove-Item *-Recurse*)",
       "Bash(git restore *)",
       "Bash(git checkout -- *)",
       "Bash(git checkout -f*)",
@@ -55,9 +49,10 @@
       "PowerShell(git reset --keep*)",
       "PowerShell(git switch --discard-changes*)",
       "PowerShell(git switch -f*)",
-      "PowerShell(Remove-Item *-r*)",
       "Edit(//**/analysis_options.yaml)",
-      "mcp__*__execute_sql",
+      "mcp__supabase__execute_sql",
+      "mcp__Supabase__execute_sql",
+      "mcp__claude_ai_Supabase__execute_sql",
       "mcp__*__apply_migration",
       "mcp__*__deploy_edge_function",
       "mcp__*__create_edge_function_secret",
@@ -73,11 +68,7 @@
       "mcp__codebase-memory__manage_adr",
       "mcp__codebase-memory__ingest_traces",
       "mcp__dart__pub",
-      "mcp__dart__hot_reload",
-      "mcp__dart__hot_restart",
-      "mcp__dart__flutter_driver_command",
       "mcp__dart__vm_service",
-      "mcp__dart__dtd",
       "mcp__dart__roots",
       "mcp__dart__dart_fix",
       "mcp__dart__dart_format",
@@ -85,6 +76,9 @@
       "mcp__dart__stop_app",
       "mcp__dart__create_project",
       "mcp__dart__run_tests"
+    ],
+    "allow": [
+      "mcp__supabase-leitura"
     ]
   }
 }
