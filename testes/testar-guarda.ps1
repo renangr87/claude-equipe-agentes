@@ -77,6 +77,32 @@ Conferir 'script da guarda ausente' 2 (Rodar 'explore' (Json 'Bash' 'git log') (
 Conferir 'lista do verificador alterada fora de commit' 2 (Rodar 'verificador' (Json 'Bash' 'flutter test'))
 & git -C $proj checkout -q -- .claude/verificador-comandos.txt 2>$null
 
+# Worktree do projeto: vale a lista do worktree (cwd) quando ela esta em commit nele.
+function JsonEm([string]$pasta, [string]$comando) {
+    return (@{ tool_name = 'Bash'; tool_input = @{ command = $comando }; cwd = $pasta } | ConvertTo-Json -Compress)
+}
+$wt = Join-Path ([System.IO.Path]::GetTempPath()) ("guarda-wt-" + [guid]::NewGuid().ToString('N'))
+& git -C $proj worktree add -q -b wt $wt 2>$null
+$listaWt = Join-Path $wt '.claude\verificador-comandos.txt'
+[System.IO.File]::WriteAllText($listaWt, "dart test`n", $utf8)
+& git -C $wt -c user.email=t@t -c user.name=t commit -q -a -m lista-wt 2>$null
+Conferir 'worktree: comando da lista do worktree' 0 (Rodar 'verificador' (JsonEm $wt 'dart test'))
+Conferir 'worktree: comando so da lista do projeto' 2 (Rodar 'verificador' (JsonEm $wt 'flutter test'))
+[System.IO.File]::AppendAllText($listaWt, "rm -rf`n", $utf8)
+Conferir 'worktree: lista alterada fora de commit' 2 (Rodar 'verificador' (JsonEm $wt 'dart test'))
+& git -C $proj worktree remove --force $wt 2>$null
+
+# Repositorio que nao e do projeto: a lista dele nao vale; vale a do projeto.
+$outro = Join-Path ([System.IO.Path]::GetTempPath()) ("guarda-outro-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force -Path (Join-Path $outro '.claude') | Out-Null
+[System.IO.File]::WriteAllText((Join-Path $outro '.claude\verificador-comandos.txt'), "dart test`n", $utf8)
+& git -C $outro init -q 2>$null
+& git -C $outro -c user.email=t@t -c user.name=t add .claude/verificador-comandos.txt 2>$null
+& git -C $outro -c user.email=t@t -c user.name=t commit -q -m lista 2>$null
+Conferir 'outro repositorio: lista dele nao vale' 2 (Rodar 'verificador' (JsonEm $outro 'dart test'))
+Conferir 'outro repositorio: vale a do projeto' 0 (Rodar 'verificador' (JsonEm $outro 'flutter test'))
+Remove-Item -LiteralPath $outro -Recurse -Force
+
 Remove-Item -LiteralPath $lista
 Conferir 'lista do verificador ausente' 2 (Rodar 'verificador' (Json 'Bash' 'flutter test'))
 

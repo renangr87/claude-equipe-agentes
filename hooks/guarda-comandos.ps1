@@ -15,8 +15,9 @@
 
   Perfis:
     explore        so historico e estado do git: log, blame, show, diff, status, ls-files.
-    verificador    so os comandos listados em .claude/verificador-comandos.txt do projeto,
-                   e so se essa lista nao tiver mudanca fora de commit.
+    verificador    so os comandos listados em .claude/verificador-comandos.txt, e so se essa
+                   lista nao tiver mudanca fora de commit. Vale a lista do repositorio da
+                   pasta atual (worktree) quando ela esta no git; senao, a do projeto.
                    Cada linha libera o comando exato e o mesmo comando com argumentos a mais.
     implementador  terminal livre, menos formatadores: so passam com arquivos nomeados um
                    a um. Pasta, '.', curinga, variavel ou nenhum arquivo sao bloqueados,
@@ -240,8 +241,40 @@ try {
             exit 0
         }
         'verificador' {
-            $pasta = $env:CLAUDE_PROJECT_DIR
-            if (-not $pasta) { $pasta = [string]$entrada.cwd }
+            # Vale a lista do repositorio onde o verificador esta (cwd), se ela estiver no git
+            # e ele for worktree do proprio projeto (mesmo .git comum): cada worktree usa a
+            # propria. Senao, vale a do projeto da sessao.
+            $pasta = $null
+            $cwd = [string]$entrada.cwd
+            if ($cwd) {
+                try {
+                    $raiz = & git -C $cwd rev-parse --show-toplevel 2>$null
+                    if ($LASTEXITCODE -eq 0 -and $raiz) {
+                        $raiz = ([string]$raiz).Trim()
+                        $mesmoProjeto = $true
+                        if ($env:CLAUDE_PROJECT_DIR) {
+                            # --git-common-dir pode vir relativo a pasta do -C: monta o caminho completo
+                            # aqui (sem --path-format, que o git anterior ao 2.31 nao conhece).
+                            $comumCwd = & git -C $raiz rev-parse --git-common-dir 2>$null
+                            $okCwd = ($LASTEXITCODE -eq 0) -and $comumCwd
+                            $comumProj = & git -C $env:CLAUDE_PROJECT_DIR rev-parse --git-common-dir 2>$null
+                            $okProj = ($LASTEXITCODE -eq 0) -and $comumProj
+                            $mesmoProjeto = $false
+                            if ($okCwd -and $okProj) {
+                                $a = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($raiz, ([string]$comumCwd).Trim()))
+                                $b = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($env:CLAUDE_PROJECT_DIR, ([string]$comumProj).Trim()))
+                                $mesmoProjeto = ($a.TrimEnd('\', '/') -eq $b.TrimEnd('\', '/'))
+                            }
+                        }
+                        if ($mesmoProjeto) {
+                            & git -C $raiz ls-files --error-unmatch -- .claude/verificador-comandos.txt 2>$null | Out-Null
+                            if ($LASTEXITCODE -eq 0) { $pasta = $raiz }
+                        }
+                    }
+                } catch { $pasta = $null }
+            }
+            if (-not $pasta) { $pasta = $env:CLAUDE_PROJECT_DIR }
+            if (-not $pasta) { $pasta = $cwd }
             $arquivoLista = Join-Path (Join-Path $pasta '.claude') 'verificador-comandos.txt'
             if (-not (Test-Path -LiteralPath $arquivoLista)) {
                 Bloquear "nao existe $arquivoLista. Reporte ao mestre: a lista de comandos do projeto precisa ser criada."
