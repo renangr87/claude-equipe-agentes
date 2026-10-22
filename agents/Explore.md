@@ -31,6 +31,7 @@ Relatório (máximo de 15 linhas):
 - Resposta direta à pergunta.
 - Onde está: `caminho:linha` de cada ponto relevante.
 - O que você confirmou lendo e o que é inferência.
+- Ferramentas: se usou o mapa e o apoio local; se não usou alguma que existia, por quê.
 - O que não encontrou, e onde procurou.
 
 Não cole blocos de código. Se a busca ficou ambígua ou grande demais para o que foi pedido, diga isso em vez de chutar.
