@@ -8,9 +8,9 @@
   3. Copia a regra global para <Destino>\rules
   4. Acrescenta os bloqueios ao <Destino>\settings.json. So remove regras antigas da
      propria equipe, listadas em settings\retiradas.json; o resto e mantido
-  5. Com -ComMapa: registra o servidor codebase-memory (mapa do codigo) na
-     configuracao do usuario (.claude.json), para o Explore e o revisor consultarem
-     o mapa em todos os projetos
+  5. Registra o servidor codebase-memory (mapa do codigo) na configuracao do usuario
+     (.claude.json), para o Explore e o revisor consultarem o mapa em todos os
+     projetos. E obrigatorio em projeto medio ou grande: so fica de fora com -SemMapa
   6. Com -ComDart: registra o servidor MCP oficial do Dart (dart mcp-server) no mesmo
      arquivo, para o Explore e o revisor usarem o analisador e a busca de simbolos
   7. Com -ApoioLocal <servidor.py>: registra o Apoio Local (modelo do Ollama neste
@@ -27,9 +27,12 @@
 .PARAMETER SemBloqueios
   Nao altera o settings.json. Instala so os subagentes, a guarda e a regra global.
 
+.PARAMETER SemMapa
+  Nao registra o mapa do codigo. Sem esta opcao, o instalador sempre tenta registrar.
+
 .PARAMETER ComMapa
-  Registra o servidor codebase-memory no .claude.json do usuario, com o caminho completo
-  do executavel codebase-memory-mcp encontrado no PATH. O programa e instalado antes,
+  Mantido por compatibilidade: o mapa ja e registrado por padrao.
+  O registro usa o caminho completo do executavel codebase-memory-mcp encontrado no PATH. O programa e instalado antes,
   pelo instalador oficial do projeto, so o binario (--skip-config). Precisa do Node.js,
   que faz a juncao do JSON (o .claude.json pode ser grande demais para o Windows
   PowerShell 5.1), e do app do Claude fechado, porque ele reescreve esse arquivo.
@@ -51,7 +54,7 @@
   powershell -ExecutionPolicy Bypass -File .\instalar.ps1 -ComMapa
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File .\instalar.ps1 -ComMapa -ComDart
+  powershell -ExecutionPolicy Bypass -File .\instalar.ps1 -ComDart
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\instalar.ps1 -SemBloqueios
@@ -61,6 +64,7 @@ param(
     [string]$Destino = '',
     [switch]$SemBloqueios,
     [switch]$ComMapa,
+    [switch]$SemMapa,
     [switch]$ComDart,
     [string]$ApoioLocal = ''
 )
@@ -246,11 +250,12 @@ function Registrar-Servidor([string]$titulo, [string]$nome, [string]$modelo, [st
     }
 }
 
-if ($ComMapa) {
+if (-not $SemMapa) {
     $mapa = Get-Command 'codebase-memory-mcp' -ErrorAction SilentlyContinue
     if (-not $mapa) {
         Write-Host "Mapa do codigo (codebase-memory):"
-        Write-Host "  nao registrado: o programa codebase-memory-mcp nao foi encontrado. Instale com o instalador oficial, so o binario (--skip-config), e rode de novo com -ComMapa."
+        Write-Host "  ATENCAO: nao registrado, porque o programa codebase-memory-mcp nao foi encontrado no PATH."
+        Write-Host "  Ele e obrigatorio em projeto medio ou grande. Instale so o binario (--skip-config), como no README da equipe, secao 'Mapa do codigo', e rode este instalador de novo."
     } else {
         Registrar-Servidor 'Mapa do codigo (codebase-memory)' 'codebase-memory' (Join-Path (Join-Path $origem 'projeto') 'mcp.codebase-memory.json') $mapa.Source
     }

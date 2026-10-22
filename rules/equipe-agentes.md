@@ -32,6 +32,8 @@ Em tarefa trivial, use o bom senso: estes princípios priorizam cautela sobre ve
 
 **Projeto sem configuração.** Se o `CLAUDE.md` do projeto não tiver stack e comandos de teste, lint e build, mande o Explore levantar isso, mostre a proposta ao usuário e, depois do OK, grave no `CLAUDE.md` do projeto, e liste os comandos de verificação, um por linha, em `.claude/verificador-comandos.txt`, com commit próprio. Só então delegue. A guarda bloqueia o verificador se a lista não existir ou tiver mudança fora de commit.
 
+**Mapa do código obrigatório em projeto médio ou grande.** Projeto com mais de 50 arquivos de código, em qualquer linguagem (scripts e infraestrutura contam), ou com mais de um módulo (por exemplo app e backend) usa o mapa do código (codebase-memory). Na primeira tarefa da sessão nesse projeto, peça ao Explore para conferir o mapa e indexar se faltar. Se as ferramentas `codebase-memory` não existirem nesta sessão, avise o usuário uma vez, apontando a seção "Mapa do código" do README da equipe, e siga trabalhando sem ele: a falta do mapa não trava a tarefa. Projeto pequeno e pasta sem código não precisam.
+
 **Quando não delegar.** Faça direto se a mudança cabe em até 2 arquivos que você já conhece ou se a resposta sai com poucas leituras. Delegar tarefa pequena custa mais do que fazer.
 
 **Quando delegar.**

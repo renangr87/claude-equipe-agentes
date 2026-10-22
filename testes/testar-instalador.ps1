@@ -179,6 +179,17 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
     $r = Instalar $d9 @('-ComMapa')
     Conferir 'mapa invalido: saiu com erro' ($r.codigo -ne 0)
     Conferir 'mapa invalido: arquivo intacto' ([System.IO.File]::ReadAllText($usuario, $utf8) -eq '{ quebrado')
+
+    # 9b. Obrigatorio: sem opcao nenhuma, o mapa e registrado; com -SemMapa, nao
+    $d9b = Join-Path $base 'mapa-padrao'
+    New-Item -ItemType Directory -Force -Path $d9b | Out-Null
+    $r = Instalar $d9b
+    $json9b = Join-Path $d9b '.claude.json'
+    Conferir 'mapa padrao: registrou sem -ComMapa' ((Test-Path $json9b) -and [System.IO.File]::ReadAllText($json9b, $utf8).Contains('"codebase-memory"'))
+    $d9c = Join-Path $base 'mapa-recusado'
+    New-Item -ItemType Directory -Force -Path $d9c | Out-Null
+    $r = Instalar $d9c @('-SemMapa')
+    Conferir 'mapa recusado: -SemMapa nao registra' (-not (Test-Path (Join-Path $d9c '.claude.json')))
     $env:PATH = $pathOriginal
 
     # 10. Sem o programa instalado: avisa e nao registra
