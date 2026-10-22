@@ -6,6 +6,8 @@
 //   comando:    troca o "command" do modelo (por exemplo, o caminho completo do executável)
 //   substituir: se já existir um servidor com o mesmo nome e ele for diferente do
 //               modelo, troca pelo do modelo. Sem isso, a entrada existente é mantida.
+//   substituir-manter-env: como substituir, mas as variáveis (env) e o "type" que já
+//               estavam registrados prevalecem sobre os do modelo.
 //
 // Antes de gravar,
 // copia o arquivo para <arquivo>.bak-<carimbo>. Feito em Node porque o
@@ -50,13 +52,24 @@ if (dados.mcpServers === null || typeof dados.mcpServers !== 'object' || Array.i
   console.error(`A chave mcpServers de ${arquivo} não é um objeto. O arquivo não foi alterado.`);
   process.exit(3);
 }
+// Comparação sem depender da ordem das chaves.
+const canonico = (v) => Array.isArray(v) ? v.map(canonico)
+  : (v && typeof v === 'object') ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canonico(v[k])]))
+  : v;
+
 const atual = dados.mcpServers[nome];
 if (atual) {
-  if (modo !== 'substituir') {
+  if (modo !== 'substituir' && modo !== 'substituir-manter-env') {
     console.log(`  servidor ${nome} já existe, mantido: ${arquivo}`);
     process.exit(0);
   }
-  if (JSON.stringify(atual) === JSON.stringify(entrada)) {
+  if (modo === 'substituir-manter-env' && atual && typeof atual === 'object') {
+    if (atual.type !== undefined) entrada.type = atual.type;
+    if (atual.env && typeof atual.env === 'object' && !Array.isArray(atual.env)) {
+      entrada.env = { ...(entrada.env || {}), ...atual.env };
+    }
+  }
+  if (JSON.stringify(canonico(atual)) === JSON.stringify(canonico(entrada))) {
     console.log(`  servidor ${nome} já está igual ao modelo: ${arquivo}`);
     process.exit(0);
   }

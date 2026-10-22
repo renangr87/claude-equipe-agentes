@@ -29,8 +29,13 @@ function Conferir([string]$nome, [bool]$ok) {
     }
 }
 
+# Sempre sem instalar nem baixar nada (-SemInstalar). Dart e Apoio Local ficam de fora,
+# a menos que o cenario peca por eles: assim um Dart ou Ollama da maquina nao muda o resultado.
 function Instalar([string]$destino, [string[]]$extra = @()) {
-    $saida = & $exe -NoProfile -ExecutionPolicy Bypass -File $instalador -Destino $destino @extra 2>&1
+    $padrao = @('-SemInstalar')
+    if ($extra -notcontains '-ComDart') { $padrao += '-SemDart' }
+    if ($extra -notcontains '-ApoioLocal' -and $extra -notcontains '-PastaApoio') { $padrao += '-SemApoio' }
+    $saida = & $exe -NoProfile -ExecutionPolicy Bypass -File $instalador -Destino $destino @padrao @extra 2>&1
     return @{ codigo = $LASTEXITCODE; texto = ($saida | Out-String) }
 }
 
@@ -193,9 +198,13 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
     $env:PATH = $pathOriginal
 
     # 10. Sem o programa instalado: avisa e nao registra
+    # (LOCALAPPDATA trocado: o instalador tambem procura na pasta padrao do programa)
     $d10 = Join-Path $base 'mapa-ausente'
     New-Item -ItemType Directory -Force -Path $d10 | Out-Null
+    $localOriginal = $env:LOCALAPPDATA
+    $env:LOCALAPPDATA = Join-Path $base 'localappdata-vazio'
     $r = Instalar $d10 @('-ComMapa')
+    $env:LOCALAPPDATA = $localOriginal
     Conferir 'mapa ausente: saiu com 0' ($r.codigo -eq 0)
     Conferir 'mapa ausente: avisou' ($r.texto -match 'codebase-memory-mcp nao foi encontrado')
     Conferir 'mapa ausente: nao registrou' (-not (Test-Path (Join-Path $d10 '.claude.json')))
@@ -267,28 +276,39 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
     $servidorFalso = Join-Path $base 'apoio-local\servidor.py'
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $servidorFalso) | Out-Null
     [System.IO.File]::WriteAllText($servidorFalso, "# servidor falso`n", $utf8)
-    function Instalar-ComApoio([string]$nome, [string]$comMcp, [string]$servidor) {
+    function Instalar-ComApoio([string]$nome, [string]$comMcp, [string[]]$extra, [string]$pip = '', [string]$jsonInicial = '') {
         $pasta = Join-Path $base "python-$nome"
         New-Item -ItemType Directory -Force -Path $pasta | Out-Null
         if ($env:OS -eq 'Windows_NT') {
             $exePy = Join-Path $pasta 'python.cmd'
-            $texto = "@set PYTHON_FALSO_EXE=$exePy`r`n@set PYTHON_FALSO_MCP=$comMcp`r`n@`"$exe`" -NoProfile -ExecutionPolicy Bypass -File `"$pyFalso`" %*`r`n"
+            $texto = "@set PYTHON_FALSO_EXE=$exePy`r`n@set PYTHON_FALSO_MCP=$comMcp`r`n@set PYTHON_FALSO_PIP=$pip`r`n@`"$exe`" -NoProfile -ExecutionPolicy Bypass -File `"$pyFalso`" %*`r`n"
         } else {
             $exePy = Join-Path $pasta 'python'
-            $texto = "#!/bin/sh`nPYTHON_FALSO_EXE='$exePy' PYTHON_FALSO_MCP='$comMcp' exec '$exe' -NoProfile -File '$pyFalso' `"`$@`"`n"
+            $texto = "#!/bin/sh`nPYTHON_FALSO_EXE='$exePy' PYTHON_FALSO_MCP='$comMcp' PYTHON_FALSO_PIP='$pip' exec '$exe' -NoProfile -File '$pyFalso' `"`$@`"`n"
         }
         [System.IO.File]::WriteAllText($exePy, $texto, $utf8)
         if ($env:OS -ne 'Windows_NT') { & chmod +x $exePy }
         $destino = Join-Path $base "cfg-apoio-$nome"
         New-Item -ItemType Directory -Force -Path $destino | Out-Null
+        $json = Join-Path $destino '.claude.json'
+        if ($jsonInicial) { [System.IO.File]::WriteAllText($json, $jsonInicial, $utf8) }
         $env:PATH = $pasta + [System.IO.Path]::PathSeparator + $pathOriginal
-        $r = Instalar $destino @('-SemBloqueios', '-ApoioLocal', $servidor)
+        $r = Instalar $destino (@('-SemBloqueios') + $extra)
         $env:PATH = $pathOriginal
-        return @{ r = $r; py = $exePy; json = (Join-Path $destino '.claude.json') }
+        return @{ r = $r; py = $exePy; json = $json; destino = $destino }
+    }
+    # Copia falsa do Apoio Local com requirements.txt: o instalador cria o .venv ao lado
+    function Nova-CopiaApoio([string]$nome) {
+        $pasta = Join-Path $base "copia-$nome"
+        New-Item -ItemType Directory -Force -Path $pasta | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $pasta 'servidor.py'), "# servidor falso`n", $utf8)
+        [System.IO.File]::WriteAllText((Join-Path $pasta 'requirements.txt'), "mcp==2.3.0`n", $utf8)
+        if ($env:OS -eq 'Windows_NT') { $py = Join-Path $pasta '.venv\Scripts\python.cmd' } else { $py = Join-Path $pasta '.venv/bin/python' }
+        return @{ pasta = $pasta; servidor = (Join-Path $pasta 'servidor.py'); py = $py }
     }
 
     # 16. Python com o pacote mcp: registra com o caminho completo do Python e do servidor
-    $c = Instalar-ComApoio 'ok' 'sim' $servidorFalso
+    $c = Instalar-ComApoio 'ok' 'sim' @('-ApoioLocal', $servidorFalso)
     $u = $null
     if (Test-Path $c.json) { $u = Ler-Json $c.json }
     Conferir 'apoio: saiu com 0' ($c.r.codigo -eq 0)
@@ -297,15 +317,60 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
     if ($null -eq $u) { Write-Host $c.r.texto }
 
     # 17. Python sem o pacote mcp: avisa e nao registra
-    $c = Instalar-ComApoio 'sem-mcp' 'nao' $servidorFalso
+    $c = Instalar-ComApoio 'sem-mcp' 'nao' @('-ApoioLocal', $servidorFalso)
     Conferir 'apoio sem mcp: saiu com 0' ($c.r.codigo -eq 0)
     Conferir 'apoio sem mcp: avisou' ($c.r.texto -match 'pacote mcp')
     Conferir 'apoio sem mcp: nao registrou' (-not (Test-Path $c.json))
 
     # 18. Caminho do servidor que nao existe: avisa e nao registra
-    $c = Instalar-ComApoio 'sem-arquivo' 'sim' (Join-Path $base 'nao-existe\servidor.py')
+    $c = Instalar-ComApoio 'sem-arquivo' 'sim' @('-ApoioLocal', (Join-Path $base 'nao-existe\servidor.py'))
     Conferir 'apoio sem servidor: avisou' ($c.r.texto -match 'nao existe')
     Conferir 'apoio sem servidor: nao registrou' (-not (Test-Path $c.json))
+
+    # 19. Copia com requirements.txt: cria o .venv, instala com o pip e registra o Python dele
+    $copia = Nova-CopiaApoio 'venv'
+    $c = Instalar-ComApoio 'venv' 'nao' @('-ApoioLocal', $copia.servidor)
+    $u = $null
+    if (Test-Path $c.json) { $u = Ler-Json $c.json }
+    Conferir 'apoio venv: saiu com 0' ($c.r.codigo -eq 0)
+    Conferir 'apoio venv: criou o ambiente' (Test-Path -LiteralPath $copia.py)
+    Conferir 'apoio venv: registrou o Python do .venv' ($null -ne $u -and $u.mcpServers.'apoio-local'.command -eq $copia.py)
+    if ($null -eq $u) { Write-Host $c.r.texto }
+    $r = Instalar $c.destino @('-SemBloqueios', '-ApoioLocal', $copia.servidor)
+    Conferir 'apoio venv: repeticao nao muda nada' ($r.codigo -eq 0 -and $r.texto -match 'igual ao modelo' -and @(Get-ChildItem -LiteralPath $c.destino -Filter '.claude.json.bak-*' -Force).Count -eq 0)
+
+    # 20. pip com erro: avisa e nao registra
+    $copia = Nova-CopiaApoio 'pip-falha'
+    $c = Instalar-ComApoio 'pip-falha' 'nao' @('-ApoioLocal', $copia.servidor) 'falha'
+    Conferir 'apoio pip falhou: avisou' ($c.r.texto -match 'pip nao conseguiu')
+    Conferir 'apoio pip falhou: nao registrou' (-not (Test-Path $c.json))
+
+    # 21. Registro que ja existe: usa a copia registrada e mantem os ajustes (env, type)
+    $copia = Nova-CopiaApoio 'registrada'
+    $servidorJson = $copia.servidor.Replace('\', '\\')
+    $inicial = '{"mcpServers":{"apoio-local":{"type":"stdio","command":"velho","args":["' + $servidorJson + '"],"env":{"APOIO_LOCAL_URL":"http://127.0.0.1:11435","APOIO_LOCAL_MODELO":"meu-modelo"}}}}'
+    $c = Instalar-ComApoio 'registrada' 'nao' @('-PastaApoio', (Join-Path $base 'nao-baixar')) '' $inicial
+    $u = Ler-Json $c.json
+    $e = $u.mcpServers.'apoio-local'
+    Conferir 'apoio registrado: saiu com 0' ($c.r.codigo -eq 0)
+    Conferir 'apoio registrado: usou a copia registrada' ($c.r.texto -match 'copia ja registrada' -and (@($e.args) -join '|') -eq $copia.servidor)
+    Conferir 'apoio registrado: trocou o Python pelo do .venv' ($e.command -eq $copia.py)
+    Conferir 'apoio registrado: manteve env e type' ($e.env.APOIO_LOCAL_URL -eq 'http://127.0.0.1:11435' -and $e.env.APOIO_LOCAL_MODELO -eq 'meu-modelo' -and $e.type -eq 'stdio')
+    Conferir 'apoio registrado: nao mexeu no Ollama local' ($c.r.texto -match 'registro atual usa http://127\.0\.0\.1:11435')
+    Conferir 'apoio registrado: nao baixou nada' (-not (Test-Path (Join-Path $base 'nao-baixar')))
+
+    # 22. Copia na pasta padrao (-PastaApoio): registra sem baixar
+    $copia = Nova-CopiaApoio 'pasta'
+    $c = Instalar-ComApoio 'pasta' 'nao' @('-PastaApoio', $copia.pasta)
+    $u = $null
+    if (Test-Path $c.json) { $u = Ler-Json $c.json }
+    Conferir 'apoio na pasta: registrou' ($null -ne $u -and (@($u.mcpServers.'apoio-local'.args) -join '|') -eq $copia.servidor)
+
+    # 23. Sem copia e com -SemInstalar: avisa, nao baixa e nao registra
+    $c = Instalar-ComApoio 'ausente' 'sim' @('-PastaApoio', (Join-Path $base 'apoio-ausente'))
+    Conferir 'apoio ausente: avisou' ($c.r.texto -match 'nao foi encontrado em')
+    Conferir 'apoio ausente: nao baixou' (-not (Test-Path (Join-Path $base 'apoio-ausente')))
+    Conferir 'apoio ausente: nao registrou' (-not (Test-Path $c.json))
 } else {
     Write-Host "Sem Node.js: cenarios do -ComMapa e do -ComDart pulados."
 }
