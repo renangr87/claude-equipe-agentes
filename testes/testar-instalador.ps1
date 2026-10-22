@@ -371,6 +371,29 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
     Conferir 'apoio ausente: avisou' ($c.r.texto -match 'nao foi encontrado em')
     Conferir 'apoio ausente: nao baixou' (-not (Test-Path (Join-Path $base 'apoio-ausente')))
     Conferir 'apoio ausente: nao registrou' (-not (Test-Path $c.json))
+
+    # 24. -ApoioEmpresa: registra com o atalho para o Ollama de casa; o pedido explicito
+    # troca a URL antiga e mantem os outros ajustes. Com -SemInstalar, o Tailscale e pulado.
+    $copia = Nova-CopiaApoio 'empresa'
+    $servidorJson = $copia.servidor.Replace('\', '\\')
+    $inicial = '{"mcpServers":{"apoio-local":{"command":"velho","args":["' + $servidorJson + '"],"env":{"APOIO_LOCAL_URL":"http://127.0.0.1:9999","APOIO_LOCAL_TIMEOUT_S":"900"}}}}'
+    $c = Instalar-ComApoio 'empresa' 'nao' @('-PastaApoio', $copia.pasta, '-ApoioEmpresa') '' $inicial
+    $e = (Ler-Json $c.json).mcpServers.'apoio-local'
+    Conferir 'apoio empresa: saiu com 0' ($c.r.codigo -eq 0)
+    Conferir 'apoio empresa: URL do atalho de casa' ($e.env.APOIO_LOCAL_URL -eq 'http://127.0.0.1:11435')
+    Conferir 'apoio empresa: modelo fixado' ($e.env.APOIO_LOCAL_MODELO -eq 'gemma4:12b')
+    Conferir 'apoio empresa: manteve outro ajuste' ($e.env.APOIO_LOCAL_TIMEOUT_S -eq '900')
+    Conferir 'apoio empresa: Tailscale pulado com -SemInstalar' ($c.r.texto -match 'pulado \(-SemInstalar\)')
+    $env:PATH = (Split-Path -Parent $c.py) + [System.IO.Path]::PathSeparator + $pathOriginal
+    $r = Instalar $c.destino @('-SemBloqueios', '-PastaApoio', $copia.pasta, '-ApoioEmpresa')
+    $env:PATH = $pathOriginal
+    Conferir 'apoio empresa: repeticao nao muda nada' ($r.texto -match 'igual ao modelo')
+
+    # 25. -ApoioCasa e -ApoioEmpresa juntos: recusa antes de mexer em qualquer coisa
+    $d25 = Join-Path $base 'casa-e-empresa'
+    $r = Instalar $d25 @('-PastaApoio', $copia.pasta, '-ApoioCasa', '-ApoioEmpresa')
+    Conferir 'apoio casa e empresa: saiu com erro' ($r.codigo -ne 0)
+    Conferir 'apoio casa e empresa: nao instalou nada' (-not (Test-Path (Join-Path $d25 'agents')))
 } else {
     Write-Host "Sem Node.js: cenarios do -ComMapa e do -ComDart pulados."
 }

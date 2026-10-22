@@ -9,6 +9,10 @@
 
     irm https://raw.githubusercontent.com/renangr87/claude-equipe-agentes/main/baixar-e-instalar.ps1 | iex
 
+  Para passar opcoes ao instalar.ps1 (por exemplo -ApoioCasa ou -ApoioEmpresa):
+
+    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/renangr87/claude-equipe-agentes/main/baixar-e-instalar.ps1))) -ApoioCasa
+
   Se faltar o Git, instala pelo winget (sem winget, baixa o ZIP do repositorio).
   Pode ser rodado de novo para atualizar: faz git pull e reinstala o que mudou.
 #>
@@ -54,5 +58,5 @@
     }
 
     $ps = (Get-Process -Id $PID).Path
-    & $ps -NoProfile -ExecutionPolicy Bypass -File (Join-Path $pasta 'instalar.ps1')
-}
+    & $ps -NoProfile -ExecutionPolicy Bypass -File (Join-Path $pasta 'instalar.ps1') @args
+} @args

@@ -18,6 +18,10 @@
   8. Apoio Local (modelo do Ollama neste computador): baixa ou atualiza o repositorio
      apoio-local-ollama, cria o ambiente Python dele, instala o Ollama e o modelo se
      faltarem e registra. So fica de fora com -SemApoio
+  9. Com -ApoioCasa (no PC da placa de video): publica o Ollama so para os aparelhos da
+     sua conta Tailscale. Com -ApoioEmpresa (no outro computador): cria o atalho
+     127.0.0.1:11435 para o Ollama de casa e registra o Apoio Local usando ele, com o
+     Ollama deste computador como reserva. Os dois usam os scripts remoto\ do Apoio
 
   O que faltar (Git, Node.js, Python 3.12, Ollama) e instalado pelo winget. Com
   -SemInstalar, nada e instalado nem baixado: so e registrado o que ja existe.
@@ -61,6 +65,21 @@
   Modelo do Ollama fixado no Apoio Local, se estiver instalado. Se o Ollama nao tiver
   nenhum modelo, este e baixado. Padrao: gemma4:12b (cerca de 8 GB).
 
+.PARAMETER ApoioCasa
+  Use no PC da placa de video. Depois de registrar o Apoio Local, roda remoto\casa_ligar.ps1
+  do Apoio: instala o Tailscale, faz o login e publica o Ollama so para os aparelhos da
+  sua conta (tailscale serve). Para desligar: tailscale serve --tcp=11434 off.
+
+.PARAMETER ApoioEmpresa
+  Use no outro computador (por exemplo, o do trabalho; confira antes com a TI se o texto
+  dos documentos pode passar pelo seu PC). Roda remoto\empresa_ligar.ps1 -SoRede do Apoio:
+  instala o Tailscale, acha o PC de casa e cria o atalho 127.0.0.1:11435 (pede
+  administrador uma vez). Registra o Apoio Local com APOIO_LOCAL_URL nesse atalho e, se
+  houver Ollama nesta maquina, com ele de reserva. Nao instala Ollama nem baixa modelo aqui.
+
+.PARAMETER NomeCasa
+  Nome do PC de casa no Tailscale, para -ApoioEmpresa. Padrao: o do script do Apoio.
+
 .PARAMETER SemInstalar
   Nao instala programas (Git, Node.js, Python, Ollama, mapa do codigo), nao baixa nem
   atualiza o Apoio Local e nao baixa modelo. As dependencias Python do Apoio Local
@@ -87,10 +106,20 @@ param(
     [string]$ApoioLocal = '',
     [string]$PastaApoio = '',
     [string]$ModeloApoio = 'gemma4:12b',
-    [switch]$SemInstalar
+    [switch]$SemInstalar,
+    [switch]$ApoioCasa,
+    [switch]$ApoioEmpresa,
+    [string]$NomeCasa = ''
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($ApoioCasa -and $ApoioEmpresa) {
+    throw 'Use -ApoioCasa no PC da placa de video ou -ApoioEmpresa no outro computador, nao os dois.'
+}
+if (($ApoioCasa -or $ApoioEmpresa) -and $SemApoio) {
+    throw '-ApoioCasa e -ApoioEmpresa nao combinam com -SemApoio.'
+}
 
 # O .claude.json do usuario fica ao lado da pasta .claude no caso padrao, e dentro
 # da pasta de configuracao quando ela e outra (CLAUDE_CONFIG_DIR ou -Destino).
@@ -470,6 +499,29 @@ function Get-ModelosOllama([string]$url) {
     }
 }
 
+# Roda um script de remoto\ do Apoio Local (Tailscale). Falha vira aviso: o resto segue.
+function Rodar-ScriptApoio([string]$script, [string[]]$argumentos, [string]$titulo) {
+    if ($SemInstalar) {
+        Write-Host "  $($titulo): pulado (-SemInstalar)."
+        return
+    }
+    if ($env:OS -ne 'Windows_NT') {
+        Write-Host "  $($titulo): pulado (so no Windows)."
+        return
+    }
+    if (-not (Test-Path -LiteralPath $script -PathType Leaf)) {
+        Write-Host "  ATENCAO: $titulo nao rodou: falta $script. Atualize a copia do Apoio Local e rode de novo."
+        return
+    }
+    Write-Host "  $titulo..."
+    $eap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    & (Get-Process -Id $PID).Path -NoProfile -ExecutionPolicy Bypass -File $script @argumentos | Out-Host
+    $codigo = $LASTEXITCODE
+    $ErrorActionPreference = $eap
+    if ($codigo -ne 0) { Write-Host "  ATENCAO: $titulo falhou. Veja a mensagem acima, corrija e rode de novo." }
+}
+
 function Ligar-Ollama([string]$exe) {
     $app = Join-Path (Split-Path -Parent $exe) 'ollama app.exe'
     if (Test-Path -LiteralPath $app) {
@@ -600,7 +652,25 @@ if (-not $SemApoio) {
         $urlOllama = 'http://127.0.0.1:11434'
         $urlRegistrada = ''
         if ($envAtual -and $envAtual.PSObject.Properties['APOIO_LOCAL_URL']) { $urlRegistrada = "$($envAtual.APOIO_LOCAL_URL)".Trim() }
-        if ($urlRegistrada -and $urlRegistrada -notmatch '^https?://(127\.0\.0\.1|localhost|\[::1\]):11434/?$') {
+        if ($ApoioEmpresa) {
+            # Principal: o Ollama do PC de casa, pelo atalho 127.0.0.1:11435 que o script do
+            # Apoio cria (Tailscale + portproxy). O Ollama desta maquina, se houver, vira reserva.
+            $scriptRede = Join-Path (Split-Path -Parent $servidorApoio) 'remoto\empresa_ligar.ps1'
+            $argsRede = @('-SoRede')
+            if ($NomeCasa) { $argsRede += @('-Casa', $NomeCasa) }
+            if ((Test-Path -LiteralPath $scriptRede -PathType Leaf) -and -not (Select-String -LiteralPath $scriptRede -Pattern 'SoRede' -Quiet)) {
+                Write-Host "  ATENCAO: a copia do Apoio Local e antiga (o script do trabalho nao tem -SoRede). Atualize a copia (git pull) e rode de novo."
+            } else {
+                Rodar-ScriptApoio $scriptRede $argsRede 'Atalho para o Ollama de casa (Tailscale; pede administrador uma vez)'
+            }
+            $envApoio['APOIO_LOCAL_URL'] = 'http://127.0.0.1:11435'
+            if ($ModeloApoio) { $envApoio['APOIO_LOCAL_MODELO'] = $ModeloApoio }
+            if ($null -ne (Get-ModelosOllama $urlOllama)) {
+                $envApoio['APOIO_LOCAL_URL_RESERVA'] = $urlOllama
+                Write-Host "  Ollama deste computador achado: vira a reserva quando o de casa nao responder."
+            }
+            Write-Host "  Ollama principal: o de casa, por http://127.0.0.1:11435."
+        } elseif ($urlRegistrada -and $urlRegistrada -notmatch '^https?://(127\.0\.0\.1|localhost|\[::1\]):11434/?$') {
             Write-Host "  Ollama: o registro atual usa $urlRegistrada; mantido, sem mexer no Ollama deste computador."
         } else {
             $modelos = Get-ModelosOllama $urlOllama
@@ -646,15 +716,30 @@ if (-not $SemApoio) {
         Write-Host "  nao registrado: $problema"
     } else {
         $entrada = [ordered]@{ command = $pythonApoio; args = @($servidorApoio) }
+        # Normalmente, ajustes que ja estavam no registro (env) prevalecem sobre os do
+        # instalador. Com -ApoioEmpresa, o pedido e explicito: os do instalador prevalecem.
+        $modoApoio = 'substituir-manter-env'
+        if ($ApoioEmpresa) {
+            $mesclado = [ordered]@{}
+            if ($envAtual) { foreach ($p in $envAtual.PSObject.Properties) { $mesclado[$p.Name] = $p.Value } }
+            foreach ($k in @($envApoio.Keys)) { $mesclado[$k] = $envApoio[$k] }
+            $envApoio = $mesclado
+            if ($atual -and $atual.PSObject.Properties['type']) { $entrada['type'] = $atual.type }
+            $modoApoio = 'substituir'
+        }
         if ($envApoio.Count -gt 0) { $entrada['env'] = $envApoio }
         $modeloApoioJson = Join-Path ([System.IO.Path]::GetTempPath()) ("apoio-local-" + [guid]::NewGuid().ToString('N') + '.json')
         $modeloTexto = (@{ mcpServers = @{ 'apoio-local' = $entrada } } | ConvertTo-Json -Depth 6)
         [System.IO.File]::WriteAllText($modeloApoioJson, $modeloTexto, $utf8)
         try {
-            # Ajustes que ja estavam no registro (env) prevalecem sobre os do instalador.
-            Registrar-Servidor 'Apoio Local, registro' 'apoio-local' $modeloApoioJson $pythonApoio 'substituir-manter-env'
+            Registrar-Servidor 'Apoio Local, registro' 'apoio-local' $modeloApoioJson $pythonApoio $modoApoio
         } finally {
             Remove-Item -LiteralPath $modeloApoioJson -Force -ErrorAction SilentlyContinue
+        }
+
+        # PC da placa de video: publica o Ollama so para os aparelhos da conta Tailscale.
+        if ($ApoioCasa) {
+            Rodar-ScriptApoio (Join-Path (Split-Path -Parent $servidorApoio) 'remoto\casa_ligar.ps1') @() 'Acesso ao Ollama a partir dos seus outros computadores (Tailscale)'
         }
     }
 }

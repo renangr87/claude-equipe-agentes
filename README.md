@@ -117,6 +117,14 @@ Opções:
 | `-PastaApoio <pasta>` | onde guardar o Apoio Local baixado |
 | `-ModeloApoio <nome>` | modelo fixado no Apoio Local (padrão `gemma4:12b`) |
 | `-SemInstalar` | não instala nem baixa nada: só registra o que já existe |
+| `-ApoioCasa` | no PC da placa de vídeo: libera o Ollama para os seus outros computadores pelo Tailscale (veja [Apoio local](#apoio-local)) |
+| `-ApoioEmpresa [-NomeCasa <nome>]` | no outro computador: usa o Ollama de casa pelo Tailscale (veja [Apoio local](#apoio-local)) |
+
+Para passar opções pela linha de uma vez, use esta forma (troque `-ApoioCasa` pelo que quiser):
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/renangr87/claude-equipe-agentes/main/baixar-e-instalar.ps1))) -ApoioCasa
+```
 
 ### Opção 2: manual (qualquer sistema)
 
@@ -219,7 +227,7 @@ Limites:
 - **O hook depende do `powershell.exe`.** Se ele não for encontrado ou se a guarda passar de 30 segundos, o Claude Code deixa o comando seguir. Os outros casos de falha (script ausente, caminho errado, política de execução) bloqueiam. Os testes 4, 5 e 6 da instalação confirmam que a guarda está ativa.
 - **A guarda do implementador pega formatadores conhecidos, não toda forma de reformatar.** Um script próprio que reescreve arquivos passa. Quem cobre isso é a comparação de `git status` antes do commit.
 - **A lista do verificador depende do git.** Se a pasta `.claude/` estiver no `.gitignore` do projeto, a checagem de commit não enxerga mudanças.
-- **Testes.** `testes/casos-guarda.txt` tem 114 casos e `testes/testar-guarda.ps1` roda todos do mesmo jeito que o hook, mais 5 cenários (entrada vazia, JSON inválido, script ausente, lista fora de commit, lista ausente). `testes/testar-instalador.ps1` faz 98 verificações em pastas temporárias, sem instalar nem baixar nada, com um `dart` falso para o servidor do Dart e um `python` falso (com `.venv` e `pip` simulados) para o Apoio Local. `testes/conferir-dart.ps1` confere os nomes das ferramentas do servidor do Dart. A cada mudança no GitHub, os três rodam no Windows com o PowerShell 5.1 e com o PowerShell 7, e o do Dart roda também com o servidor de verdade, nas versões 3.11.3, 3.12.0, 3.13.0 e na estável. Para rodar na sua máquina: `powershell -ExecutionPolicy Bypass -File .\testes\testar-guarda.ps1`. O app do Windows em si não é testado: os testes 4, 5 e 6 da instalação cobrem essa parte.
+- **Testes.** `testes/casos-guarda.txt` tem 114 casos e `testes/testar-guarda.ps1` roda todos do mesmo jeito que o hook, mais 5 cenários (entrada vazia, JSON inválido, script ausente, lista fora de commit, lista ausente). `testes/testar-instalador.ps1` faz 106 verificações em pastas temporárias, sem instalar nem baixar nada, com um `dart` falso para o servidor do Dart e um `python` falso (com `.venv` e `pip` simulados) para o Apoio Local. `testes/conferir-dart.ps1` confere os nomes das ferramentas do servidor do Dart. A cada mudança no GitHub, os três rodam no Windows com o PowerShell 5.1 e com o PowerShell 7, e o do Dart roda também com o servidor de verdade, nas versões 3.11.3, 3.12.0, 3.13.0 e na estável. Para rodar na sua máquina: `powershell -ExecutionPolicy Bypass -File .\testes\testar-guarda.ps1`. O app do Windows em si não é testado: os testes 4, 5 e 6 da instalação cobrem essa parte.
 
 ## Ferramentas de conectores
 
@@ -296,6 +304,14 @@ O instalador da equipe instala e registra sozinho (só fica de fora com `-SemApo
 2. **Python:** cria o ambiente próprio `.venv` dentro da cópia, com as versões fixadas no `requirements.txt`, sem mexer no Python do sistema. Se faltar Python 3.12, instala pelo winget.
 3. **Ollama:** se não responder, liga; se não estiver instalado, instala pelo winget. Se o Ollama não tiver nenhum modelo, baixa o `gemma4:12b` (uns 8 GB, o recomendado para placa de 16 GB). Se o modelo estiver instalado, fixa ele no registro; se houver outros e não ele, o Apoio usa o maior. Outro modelo: `-ModeloApoio <nome>`.
 4. **Registro:** grava o servidor `apoio-local` no `%USERPROFILE%\.claude.json`, com backup. Ajustes que já estavam no registro (por exemplo, `APOIO_LOCAL_URL` apontando para o Ollama de casa, feito pelos scripts `remoto\` do Apoio) são mantidos, e nesse caso o instalador não mexe no Ollama local.
+
+**Usar a placa de casa em outro computador** (por exemplo, no trabalho, onde não há placa boa). Os arquivos continuam sendo lidos no computador onde você está; só o texto vai para o Ollama de casa, criptografado pela rede privada do Tailscale. Antes de usar no trabalho, confira com a TI se o texto dos documentos de lá pode passar pelo seu PC pessoal.
+
+1. **No PC de casa**, rode a linha de instalação com `-ApoioCasa`. Além do normal, ele instala o Tailscale, abre o login no navegador e publica o Ollama só para os aparelhos da sua conta (`tailscale serve`). Enquanto estiver ligado, qualquer aparelho da sua conta alcança o Ollama, que não tem senha; ninguém fora da conta enxerga. Para desligar: `tailscale serve --tcp=11434 off`.
+2. **No outro computador**, rode com `-ApoioEmpresa` (e `-NomeCasa <nome do PC de casa>`, se não for o padrão do Apoio). Ele instala o Tailscale (entre com a mesma conta), acha o PC de casa, cria o atalho `127.0.0.1:11435` (pede administrador uma vez) e registra o Apoio usando esse atalho. Se esse computador tiver Ollama, ele vira a reserva para quando o de casa estiver desligado. Aqui o instalador não instala Ollama nem baixa modelo.
+3. Deixe o PC de casa ligado e sem suspensão enquanto usar de fora.
+
+Os dois passos usam os scripts `remoto\` do próprio Apoio Local. Depois disso, rodar o instalador sem as opções mantém o atalho: o registro que aponta para outro Ollama não é trocado.
 
 Como a equipe usa, sem perder qualidade:
 
