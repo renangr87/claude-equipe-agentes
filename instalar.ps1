@@ -555,11 +555,17 @@ if (-not $SemApoio) {
     if ($atual) {
         if ($atual.PSObject.Properties['env'] -and $atual.env) { $envAtual = $atual.env }
         if (-not $servidorApoio -and -not $problema -and $atual.PSObject.Properties['args']) {
+            # So vale se for um clone do git, que se atualiza. Copia solta (de um ZIP) fica
+            # para tras: o instalador passa a usar o clone em -PastaApoio.
             $registrado = @($atual.args | Where-Object { "$_" -match 'servidor\.py$' }) | Select-Object -First 1
             if ($registrado -and (Test-Path -LiteralPath $registrado -PathType Leaf)) {
-                $servidorApoio = $registrado
-                $atualizar = $true
-                Write-Host "  usando a copia ja registrada: $registrado"
+                if (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $registrado) '.git')) {
+                    $servidorApoio = $registrado
+                    $atualizar = $true
+                    Write-Host "  usando a copia ja registrada: $registrado"
+                } else {
+                    Write-Host "  a copia registrada ($registrado) nao e um clone do git e nao se atualiza: passo a usar a copia em $(if ($PastaApoio) { $PastaApoio } else { Join-Path $HOME 'apoio-local-ollama' }). Os ajustes do registro ficam."
+                }
             }
         }
     }

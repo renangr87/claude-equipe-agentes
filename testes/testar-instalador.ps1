@@ -345,8 +345,9 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
     Conferir 'apoio pip falhou: avisou' ($c.r.texto -match 'pip nao conseguiu')
     Conferir 'apoio pip falhou: nao registrou' (-not (Test-Path $c.json))
 
-    # 21. Registro que ja existe: usa a copia registrada e mantem os ajustes (env, type)
+    # 21. Registro que ja existe (clone do git): usa a copia registrada e mantem os ajustes (env, type)
     $copia = Nova-CopiaApoio 'registrada'
+    New-Item -ItemType Directory -Force -Path (Join-Path $copia.pasta '.git') | Out-Null
     $servidorJson = $copia.servidor.Replace('\', '\\')
     $inicial = '{"mcpServers":{"apoio-local":{"type":"stdio","command":"velho","args":["' + $servidorJson + '"],"env":{"APOIO_LOCAL_URL":"http://127.0.0.1:11435","APOIO_LOCAL_MODELO":"meu-modelo"}}}}'
     $c = Instalar-ComApoio 'registrada' 'nao' @('-PastaApoio', (Join-Path $base 'nao-baixar')) '' $inicial
@@ -358,6 +359,17 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
     Conferir 'apoio registrado: manteve env e type' ($e.env.APOIO_LOCAL_URL -eq 'http://127.0.0.1:11435' -and $e.env.APOIO_LOCAL_MODELO -eq 'meu-modelo' -and $e.type -eq 'stdio')
     Conferir 'apoio registrado: nao mexeu no Ollama local' ($c.r.texto -match 'registro atual usa http://127\.0\.0\.1:11435')
     Conferir 'apoio registrado: nao baixou nada' (-not (Test-Path (Join-Path $base 'nao-baixar')))
+
+    # 21b. Registro que aponta para copia solta (ZIP, sem .git): passa a usar a copia de
+    # -PastaApoio e mantem os ajustes
+    $solta = Nova-CopiaApoio 'solta'
+    $clone = Nova-CopiaApoio 'clone'
+    $inicial = '{"mcpServers":{"apoio-local":{"command":"velho","args":["' + $solta.servidor.Replace('\', '\\') + '"],"env":{"APOIO_LOCAL_URL":"http://127.0.0.1:11435"}}}}'
+    $c = Instalar-ComApoio 'solta' 'nao' @('-PastaApoio', $clone.pasta) '' $inicial
+    $e = (Ler-Json $c.json).mcpServers.'apoio-local'
+    Conferir 'apoio copia solta: avisou' ($c.r.texto -match 'nao e um clone do git')
+    Conferir 'apoio copia solta: passou para a copia da pasta' ((@($e.args) -join '|') -eq $clone.servidor -and $e.command -eq $clone.py)
+    Conferir 'apoio copia solta: manteve os ajustes' ($e.env.APOIO_LOCAL_URL -eq 'http://127.0.0.1:11435')
 
     # 22. Copia na pasta padrao (-PastaApoio): registra sem baixar
     $copia = Nova-CopiaApoio 'pasta'
