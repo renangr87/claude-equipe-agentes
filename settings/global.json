@@ -78,7 +78,8 @@
       "mcp__dart__run_tests"
     ],
     "allow": [
-      "mcp__supabase-leitura"
+      "mcp__supabase-leitura",
+      "mcp__apoio-local"
     ]
   }
 }

@@ -250,6 +250,51 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
     $c = Instalar-ComDart 'extra' '3.13.1' 'extra'
     Conferir 'dart com ferramenta a mais: avisou' ($c.r.texto -match 'ferramenta_nova')
     Conferir 'dart com ferramenta a mais: nao registrou' (-not (Test-Path $c.json))
+
+    # 16 a 18. -ApoioLocal com um python falso no PATH (testes/python-falso.ps1)
+    $pyFalso = Join-Path $PSScriptRoot 'python-falso.ps1'
+    $servidorFalso = Join-Path $base 'apoio-local\servidor.py'
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $servidorFalso) | Out-Null
+    [System.IO.File]::WriteAllText($servidorFalso, "# servidor falso`n", $utf8)
+    function Instalar-ComApoio([string]$nome, [string]$comMcp, [string]$servidor) {
+        $pasta = Join-Path $base "python-$nome"
+        New-Item -ItemType Directory -Force -Path $pasta | Out-Null
+        if ($env:OS -eq 'Windows_NT') {
+            $exePy = Join-Path $pasta 'python.cmd'
+            $texto = "@set PYTHON_FALSO_EXE=$exePy`r`n@set PYTHON_FALSO_MCP=$comMcp`r`n@`"$exe`" -NoProfile -ExecutionPolicy Bypass -File `"$pyFalso`" %*`r`n"
+        } else {
+            $exePy = Join-Path $pasta 'python'
+            $texto = "#!/bin/sh`nPYTHON_FALSO_EXE='$exePy' PYTHON_FALSO_MCP='$comMcp' exec '$exe' -NoProfile -File '$pyFalso' `"`$@`"`n"
+        }
+        [System.IO.File]::WriteAllText($exePy, $texto, $utf8)
+        if ($env:OS -ne 'Windows_NT') { & chmod +x $exePy }
+        $destino = Join-Path $base "cfg-apoio-$nome"
+        New-Item -ItemType Directory -Force -Path $destino | Out-Null
+        $env:PATH = $pasta + [System.IO.Path]::PathSeparator + $pathOriginal
+        $r = Instalar $destino @('-SemBloqueios', '-ApoioLocal', $servidor)
+        $env:PATH = $pathOriginal
+        return @{ r = $r; py = $exePy; json = (Join-Path $destino '.claude.json') }
+    }
+
+    # 16. Python com o pacote mcp: registra com o caminho completo do Python e do servidor
+    $c = Instalar-ComApoio 'ok' 'sim' $servidorFalso
+    $u = $null
+    if (Test-Path $c.json) { $u = Ler-Json $c.json }
+    Conferir 'apoio: saiu com 0' ($c.r.codigo -eq 0)
+    Conferir 'apoio: registrou com o Python encontrado' ($null -ne $u -and $u.mcpServers.'apoio-local'.command -eq $c.py)
+    Conferir 'apoio: argumento e o servidor.py' ($null -ne $u -and (@($u.mcpServers.'apoio-local'.args) -join '|') -eq $servidorFalso)
+    if ($null -eq $u) { Write-Host $c.r.texto }
+
+    # 17. Python sem o pacote mcp: avisa e nao registra
+    $c = Instalar-ComApoio 'sem-mcp' 'nao' $servidorFalso
+    Conferir 'apoio sem mcp: saiu com 0' ($c.r.codigo -eq 0)
+    Conferir 'apoio sem mcp: avisou' ($c.r.texto -match 'pacote mcp')
+    Conferir 'apoio sem mcp: nao registrou' (-not (Test-Path $c.json))
+
+    # 18. Caminho do servidor que nao existe: avisa e nao registra
+    $c = Instalar-ComApoio 'sem-arquivo' 'sim' (Join-Path $base 'nao-existe\servidor.py')
+    Conferir 'apoio sem servidor: avisou' ($c.r.texto -match 'nao existe')
+    Conferir 'apoio sem servidor: nao registrou' (-not (Test-Path $c.json))
 } else {
     Write-Host "Sem Node.js: cenarios do -ComMapa e do -ComDart pulados."
 }

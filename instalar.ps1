@@ -13,6 +13,8 @@
      o mapa em todos os projetos
   6. Com -ComDart: registra o servidor MCP oficial do Dart (dart mcp-server) no mesmo
      arquivo, para o Explore e o revisor usarem o analisador e a busca de simbolos
+  7. Com -ApoioLocal <servidor.py>: registra o Apoio Local (modelo do Ollama neste
+     computador) no mesmo arquivo, para o mestre e o Explore delegarem leitura grande
 
   Nada e apagado. Antes de alterar um arquivo que ja existe, o script grava
   uma copia ao lado dele com o sufixo .bak-<data>-<hora>.
@@ -39,6 +41,12 @@
   sobe o servidor e confere a lista de ferramentas; se nao bater, nao registra. Se ja
   houver uma entrada dart diferente da do modelo, ela e trocada (com backup).
 
+.PARAMETER ApoioLocal
+  Caminho do servidor.py do Apoio Local. Registra o servidor apoio-local no .claude.json
+  do usuario, rodando com o Python encontrado no PATH (python ou py). Confere antes se
+  esse Python tem o pacote mcp; se nao tiver, nao registra e diz o que instalar. Precisa
+  do Node.js e do app do Claude fechado. Uma entrada apoio-local diferente e trocada.
+
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\instalar.ps1 -ComMapa
 
@@ -53,7 +61,8 @@ param(
     [string]$Destino = '',
     [switch]$SemBloqueios,
     [switch]$ComMapa,
-    [switch]$ComDart
+    [switch]$ComDart,
+    [string]$ApoioLocal = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -286,6 +295,49 @@ if ($ComDart) {
                 Write-Host "  Para nao enviar estatisticas de uso ao Google, rode uma vez: dart --disable-analytics e flutter --disable-analytics"
             }
         }
+    }
+}
+
+if ($ApoioLocal) {
+    # Saida de erro de programa externo com Stop vira excecao no Windows PowerShell 5.1.
+    $ErrorActionPreference = 'Continue'
+    $servidorApoio = $null
+    if (Test-Path -LiteralPath $ApoioLocal -PathType Leaf) {
+        $servidorApoio = (Resolve-Path -LiteralPath $ApoioLocal).ProviderPath
+    }
+    # Python de verdade: o "python" da Microsoft Store e so um atalho que abre a loja.
+    $pythonApoio = $null
+    foreach ($tentativa in @(@('python'), @('py', '-3'))) {
+        if (-not (Get-Command $tentativa[0] -ErrorAction SilentlyContinue)) { continue }
+        $extra = @($tentativa | Select-Object -Skip 1)
+        $saida = (& $tentativa[0] @extra -c 'import sys; print(sys.executable)' 2>$null | Out-String).Trim()
+        if ($LASTEXITCODE -eq 0 -and $saida -and (Test-Path -LiteralPath $saida -PathType Leaf)) { $pythonApoio = $saida; break }
+    }
+    $problema = ''
+    if (-not $servidorApoio) {
+        $problema = "o arquivo $ApoioLocal nao existe. Passe o caminho do servidor.py do Apoio Local."
+    } elseif (-not $pythonApoio) {
+        $problema = 'o Python nao foi encontrado no PATH. Instale o Python 3.12 (python.org) e rode de novo.'
+    } else {
+        & $pythonApoio -c 'import mcp' 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            $problema = "o Python $pythonApoio nao tem o pacote mcp. Na pasta do Apoio Local, rode: `"$pythonApoio`" -m pip install -r requirements.txt"
+        }
+    }
+    $ErrorActionPreference = 'Stop'
+    if ($problema) {
+        Write-Host "Apoio Local:"
+        Write-Host "  nao registrado: $problema"
+    } else {
+        $modeloApoio = Join-Path ([System.IO.Path]::GetTempPath()) ("apoio-local-" + [guid]::NewGuid().ToString('N') + '.json')
+        $entrada = @{ mcpServers = @{ 'apoio-local' = @{ command = $pythonApoio; args = @($servidorApoio) } } }
+        [System.IO.File]::WriteAllText($modeloApoio, ($entrada | ConvertTo-Json -Depth 5), $utf8)
+        try {
+            Registrar-Servidor 'Apoio Local (modelo do Ollama neste computador)' 'apoio-local' $modeloApoio $pythonApoio 'substituir'
+        } finally {
+            Remove-Item -LiteralPath $modeloApoio -Force -ErrorAction SilentlyContinue
+        }
+        Write-Host "  Deixe o Ollama ligado com um modelo instalado: o Apoio Local usa o maior que encontrar."
     }
 }
 

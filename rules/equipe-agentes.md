@@ -112,6 +112,11 @@ Uma pasta pode ter o próprio `CLAUDE.md` com o mapa, as decisões e as armadilh
 
 ## Economia de tokens
 
+- **Apoio local** (quando existirem as ferramentas `mcp__apoio-local__*`): um modelo no próprio computador faz a leitura braçal, e você recebe só a resposta.
+  - Use para: arquivo que não é código e passa de ~300 linhas (log, PDF, CSV, documentação, saída de comando gravada em arquivo); dezenas de arquivos para classificar ou extrair campos; e qualquer documento pessoal, que deve passar só por ele, nunca por Read.
+  - Não use para: ler código que você vai mudar, decidir, revisar, checar segurança ou fazer a verificação final.
+  - A resposta dele é pista, não fato: antes de agir ou relatar, confirme com Read o trecho que ela aponta (`offset` e `limit`). Número, nome, caminho e código de saída sempre conferidos na fonte.
+  - Ele é lento (dezenas de segundos a minutos): junte os pedidos numa chamada só. Rascunho com `delegar` vai para um arquivo novo e passa por revisão antes de ser usado. Se falhar, siga sem ele.
 - Busque antes de ler (Grep, Glob). Leia o trecho, não o arquivo inteiro.
 - Não releia o que já leu nesta sessão.
 - Durante o trabalho, rode só os testes afetados. A suíte completa roda uma vez, no fim.
