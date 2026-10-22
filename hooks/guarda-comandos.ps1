@@ -22,7 +22,9 @@
     implementador  terminal livre, menos formatadores: so passam com arquivos nomeados um
                    a um. Pasta, '.', curinga, variavel ou nenhum arquivo sao bloqueados,
                    em qualquer parte de um comando composto. Scripts de formatacao
-                   (npm run format e parecidos) sao bloqueados.
+                   (npm run format e parecidos) sao bloqueados. Tambem bloqueia o git que
+                   descarta trabalho (checkout, restore, reset, stash, clean, switch) e
+                   git show/cat-file gravado em arquivo.
 
   Compativel com Windows PowerShell 5.1 e PowerShell 7. Os casos de teste ficam em
   testes/casos-guarda.txt.
@@ -182,6 +184,50 @@ function Testar-Formatadores([string]$texto, [string]$pastaAtual) {
     }
 }
 
+# Git que descarta trabalho nao commitado ou troca o que esta na pasta (so o mestre, com o
+# OK do usuario).
+$gitDescarte = '^(checkout|checkout-index|restore|reset|stash|clean|switch)$'
+# Opcoes do git que levam um valor no token seguinte.
+$gitOpcaoComValor = '^(-C|-c|--git-dir|--work-tree|--namespace|--exec-path|--config-env)$'
+
+function Testar-Descarte([string]$texto) {
+    # Saida gravada em arquivo (> arquivo, Out-File, Set-Content, tee): o "2>&1" nao conta.
+    $grava = ($texto -replace '(\*|\d)?>&\d+', ' ') -match '>|(?i)\b(out-file|set-content|add-content|tee|tee-object)\b'
+
+    foreach ($parte in ($texto -split '&&|\|\||[;&|\r\n]')) {
+        $seg = ($parte -replace '\s+', ' ').Trim()
+        if (-not $seg) { continue }
+        $tokens = Separar-Tokens $seg
+        if ($tokens.Count -eq 0) { continue }
+        $nomes = @($tokens | ForEach-Object { Nome-Programa $_ })
+
+        if ($nomes[0] -ne 'git' -and $nomes[0] -match $comandosDeTexto) { continue }
+        if ($nomes[0] -ne 'git') {
+            # Texto entre aspas pode ser outro comando (bash -c "...").
+            foreach ($t in $tokens) {
+                if ($t -match '\s') { Testar-Descarte $t }
+            }
+        }
+        for ($i = 0; $i -lt $tokens.Count; $i++) {
+            if ($nomes[$i] -ne 'git') { continue }
+            $j = $i + 1
+            while ($j -lt $tokens.Count -and $tokens[$j].StartsWith('-')) {
+                if ($tokens[$j] -cmatch $gitOpcaoComValor) { $j++ }
+                $j++
+            }
+            if ($j -ge $tokens.Count) { break }
+            $sub = $tokens[$j].ToLowerInvariant()
+            if ($sub -match $gitDescarte) {
+                Bloquear "git $sub descarta ou troca trabalho nao commitado. Nao use: relate ao mestre o que precisa voltar, e ele decide com o usuario."
+            }
+            if (($sub -eq 'show' -or $sub -eq 'cat-file') -and $grava) {
+                Bloquear "gravar a saida de git $sub em arquivo refaz o arquivo a partir de uma versao antiga e apaga o trabalho de outros agentes. Leia sem gravar ou relate ao mestre."
+            }
+            break
+        }
+    }
+}
+
 try {
     # Le a entrada em bytes e detecta a codificacao: o Windows PowerShell 5.1 nao
     # usa UTF-8 por padrao no console.
@@ -218,6 +264,7 @@ try {
 
     if ($Perfil -eq 'implementador') {
         Testar-Formatadores $comando ([string]$entrada.cwd)
+        Testar-Descarte $comando
         exit 0
     }
 

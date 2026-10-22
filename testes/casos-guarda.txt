@@ -123,3 +123,35 @@ implementador	0	Bash	grep -c black src/
 implementador	0	Bash	env -a0=v -a1=v -a2=v -a3=v -a4=v -a5=v -a6=v -a7=v -a8=v -a9=v -a10=v -a11=v -a12=v -a13=v -a14=v -a15=v -a16=v -a17=v -a18=v -a19=v -a20=v -a21=v -a22=v -a23=v -a24=v -a25=v -a26=v -a27=v -a28=v -a29=v echo ok
 implementador	0	PowerShell	dart format lib\a.dart
 implementador	0	Read	qualquer coisa
+# --- implementador: bloqueia git que descarta trabalho (licao da F9.4: arquivo refeito a partir do HEAD)
+implementador	2	Bash	git checkout -- lib/a.dart
+implementador	2	Bash	git checkout HEAD lib/a.dart
+implementador	2	Bash	git restore lib/a.dart
+implementador	2	Bash	git restore --staged --worktree .
+implementador	2	PowerShell	git reset --hard
+implementador	2	Bash	git reset HEAD~1
+implementador	2	Bash	git stash push -m x
+implementador	2	Bash	git stash
+implementador	2	Bash	git clean -fd
+implementador	2	Bash	git switch main
+implementador	2	Bash	git -C app checkout -- lib/a.dart
+implementador	2	Bash	git -c core.quotepath=off restore lib/a.dart
+implementador	2	Bash	git --no-pager checkout lib/a.dart
+implementador	2	Bash	cd app && git restore .
+implementador	2	Bash	flutter test; git checkout lib/a.dart
+implementador	2	Bash	bash -c "git checkout lib/a.dart"
+implementador	2	Bash	git show HEAD:lib/a.dart > lib/a.dart
+implementador	2	Bash	git show HEAD:lib/a.dart | tee lib/a.dart
+implementador	2	Bash	git cat-file -p HEAD:lib/a.dart > lib/a.dart
+implementador	2	PowerShell	git show HEAD:lib/a.dart | Out-File lib/a.dart
+implementador	2	PowerShell	git show HEAD:lib/a.dart | Set-Content lib/a.dart
+implementador	2	PowerShell	& git checkout lib/a.dart
+# --- implementador: passa (git que so le)
+implementador	0	Bash	git status
+implementador	0	Bash	git diff -- lib/a.dart
+implementador	0	Bash	git diff HEAD 2>&1
+implementador	0	Bash	git show HEAD:lib/a.dart
+implementador	0	Bash	git log --grep checkout
+implementador	0	Bash	git -C app log -1
+implementador	0	Bash	echo git reset --hard
+implementador	0	Bash	grep -rn "git checkout" lib
