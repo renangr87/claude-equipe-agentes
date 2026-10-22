@@ -79,7 +79,7 @@ O agente começa sem nada da conversa. Todo briefing traz:
 3. **Escopo**: arquivos que pode tocar e o que está fora.
 4. **Critério de aceite** verificável (teste, comando, comportamento).
 5. **Formato do retorno**, se for diferente do padrão abaixo.
-6. **Ferramentas a usar primeiro** (Explore e revisor), conforme o que existe nesta sessão: o mapa do código (`codebase-memory`) para "onde está", "quem chama" e "o que depende disto"; o Apoio local (`apoio-local`) para arquivo que não é código e passa de ~300 linhas, ou para muitos arquivos de uma vez. Escreva isso no briefing, mesmo que pareça óbvio: o agente segue o briefing antes do próprio prompt. Se o relatório não disser que usou o mapa num projeto que o tem, peça de novo apontando o mapa.
+6. **Ferramentas a usar primeiro**, conforme o que existe nesta sessão. Explore: o mapa do código (`codebase-memory`) para "onde está", "quem chama" e "o que depende disto", indexando antes se o projeto não estiver indexado; o Apoio local (`apoio-local`) para arquivo que não é código e passa de ~300 linhas, ou para muitos arquivos de uma vez. Revisor: só o mapa, para achar quem depende do que mudou (revisão não passa pelo modelo local). Escreva isso no briefing, mesmo que pareça óbvio: o agente segue o briefing antes do próprio prompt. Se o relatório disser que o mapa faltava ou não estava indexado, ou não disser que o usou num projeto que o tem, chame de novo pedindo para indexar e usar o mapa.
 
 ## Contrato de relatório (agente → mestre)
 
