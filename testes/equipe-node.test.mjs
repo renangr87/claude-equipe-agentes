@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HOOKS = fileURLToPath(new URL('../hooks/', import.meta.url));
 const BOLETIM = path.join(HOOKS, 'equipe-boletim.mjs');
@@ -271,7 +271,8 @@ test('medidor: sem sessões, diz onde procurou', () => {
 });
 
 test('comparação marca o que melhorou e o que piorou', async () => {
-  const { comparacao } = await import(MEDIR);
+  // No Windows, import() precisa de URL file://, não de caminho com letra de unidade.
+  const { comparacao } = await import(pathToFileURL(MEDIR).href);
   const t = comparacao({ custo_por_sessao: 2, explore_mapa_pct: 10 }, { custo_por_sessao: 1, explore_mapa_pct: 5 });
   assert.match(t, /Custo por sessão \| US\$ 2,00 \| US\$ 1,00 \| melhorou/);
   assert.match(t, /consultaram o mapa \| 10% \| 5% \| piorou/);
