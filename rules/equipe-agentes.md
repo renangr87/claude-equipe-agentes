@@ -30,6 +30,8 @@ Em tarefa trivial, use o bom senso: estes princípios priorizam cautela sobre ve
 
 ## Orquestração (regras do mestre)
 
+**Boletim de início.** Com os hooks da equipe instalados, a sessão começa com um "Boletim da equipe": tamanho do projeto e se o mapa é obrigatório, se o projeto está configurado, a lista do verificador, as notas de área e o plano em andamento. Use esses dados em vez de descobrir de novo. Os avisos de versão nova da equipe e de retrospectiva pendente são para o usuário: diga uma vez, no fim da primeira tarefa, sem interromper o trabalho. O Explore, o verificador e o revisor também recebem, por hook, o contexto do projeto (raiz, mapa, notas de área, comandos liberados, regras do projeto). O briefing continua trazendo objetivo, escopo, critério e as ferramentas a usar primeiro.
+
 **Projeto sem configuração.** Se o `CLAUDE.md` do projeto não tiver stack e comandos de teste, lint e build, mande o Explore levantar isso, mostre a proposta ao usuário e, depois do OK, grave no `CLAUDE.md` do projeto, e liste os comandos de verificação, um por linha, em `.claude/verificador-comandos.txt`, com commit próprio. Só então delegue. A guarda bloqueia o verificador se a lista não existir ou tiver mudança fora de commit.
 
 **Mapa do código obrigatório em projeto médio ou grande.** Projeto com mais de 50 arquivos de código, em qualquer linguagem (scripts e infraestrutura contam), ou com mais de um módulo (por exemplo app e backend) usa o mapa do código (codebase-memory). Na primeira tarefa da sessão nesse projeto, peça ao Explore para conferir o mapa e indexar se faltar. Se as ferramentas `codebase-memory` não existirem nesta sessão, avise o usuário uma vez, apontando a seção "Mapa do código" do README da equipe, e siga trabalhando sem ele: a falta do mapa não trava a tarefa. Projeto pequeno e pasta sem código não precisam.
@@ -68,7 +70,7 @@ Durante o trabalho, marque cada passo concluído no arquivo; depois de uma compa
 
 **Encerramento.** Antes de dizer que terminou, confira com evidência nova, não só com o relato dos agentes: o resultado do verificador nesta rodada, o seu próprio `git diff` e, em correção de bug, o teste que falhava antes e passa agora. Critérios atendidos e achados do revisor resolvidos ou expostos ao usuário. Diga o que não foi verificado.
 
-**Lições viram trava.** Quando algo der errado (regra ignorada, retrabalho, agente fora do escopo), proponha ao usuário, no fim da tarefa, uma trava em vez de só mais uma regra escrita: um caso de teste e uma regra na guarda, um bloqueio no `settings.json` ou uma linha na nota de área. Regra escrita só quando não houver trava possível.
+**Lições viram trava.** Quando algo der errado (regra ignorada, retrabalho, agente fora do escopo), proponha ao usuário, no fim da tarefa, uma trava em vez de só mais uma regra escrita: um caso de teste e uma regra na guarda, um bloqueio no `settings.json` ou uma linha na nota de área. Regra escrita só quando não houver trava possível. Para o que se repete entre sessões, existe a `/retro-equipe`: ela mede as sessões da semana e propõe as travas com números. Quando o boletim disser que a retrospectiva está pendente, sugira ao usuário uma vez.
 
 ## Contrato de briefing (mestre → agente)
 

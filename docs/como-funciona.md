@@ -84,6 +84,16 @@ Um subagente não lembra da tarefa anterior. Três mecanismos compensam:
 
 O estado da rodada (onde paramos, o que falta) fica na memória do projeto ou em um arquivo de plano, e é o mestre quem lê.
 
+## Como a equipe melhora com o uso
+
+Regra escrita depende de o agente lembrar dela. Por isso a equipe tem três mecanismos que não dependem de memória:
+
+1. **Boletim de início:** um hook entrega ao mestre, no começo de cada sessão, os fatos do projeto (tamanho, mapa obrigatório, configuração, lista do verificador, notas de área, plano em andamento). Ele não gasta chamadas descobrindo isso.
+2. **Contexto dos subagentes:** outro hook entrega ao Explore, ao verificador e ao revisor o que eles não carregam do `CLAUDE.md`: como conferir e indexar o mapa, as notas de área, os comandos liberados, as regras do projeto. O briefing continua necessário, mas o essencial chega mesmo quando o mestre esquece.
+3. **Retrospectiva com números:** a `/retro-equipe` mede as sessões da semana, propõe no máximo 5 mudanças, cada uma com teste, e guarda o resultado. Na seguinte, compara os números antes e depois. Uma mudança que não mexeu no indicador sai ou é trocada.
+
+O ciclo é: medir, propor, você escolher, testar, instalar, medir de novo. A equipe não se altera sozinha, porque uma regra mal ajustada piora tudo e porque mexer em permissões e hooks sem você seria um risco.
+
 ## Por que as regras não ficam todas em um arquivo
 
 - **Global** carrega em toda sessão e em todo subagente. Precisa ser curto e geral.

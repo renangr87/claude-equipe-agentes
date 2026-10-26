@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__NODE__",
+            "args": ["__PASTA_CLAUDE__/hooks/equipe-boletim.mjs"],
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": "Explore|verificador|revisor",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__NODE__",
+            "args": ["__PASTA_CLAUDE__/hooks/equipe-contexto.mjs"],
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

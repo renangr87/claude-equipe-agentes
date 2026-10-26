@@ -61,6 +61,32 @@ $s = Ler-Json (Join-Path $d1 'settings.json')
 Conferir 'limpa: todas as regras deny' (@($s.permissions.deny).Count -eq $nDeny)
 Conferir 'limpa: todas as regras ask' (@($s.permissions.ask).Count -eq $nAsk)
 
+# 1b. Scripts, skill da retrospectiva, versao instalada e hooks da equipe
+foreach ($n in 'equipe-comum.mjs', 'equipe-boletim.mjs', 'equipe-contexto.mjs', 'equipe-medir.mjs') {
+    Conferir "limpa: $n copiado" (Test-Path (Join-Path $d1 "hooks\$n"))
+}
+$caminhoSkill = Join-Path $d1 'skills\retro-equipe\SKILL.md'
+$skill = if (Test-Path $caminhoSkill) { [System.IO.File]::ReadAllText($caminhoSkill, $utf8) } else { '__PASTA_CLAUDE__' }
+Conferir 'limpa: skill /retro-equipe sem marcadores' (-not $skill.Contains('__PASTA_CLAUDE__') -and -not $skill.Contains('__NODE__'))
+$versao = $null
+if (Test-Path (Join-Path $d1 'equipe-versao.json')) { $versao = Ler-Json (Join-Path $d1 'equipe-versao.json') }
+Conferir 'limpa: versao instalada gravada' ($null -ne $versao -and [string]$versao.pasta -ne '')
+$temNode = [bool](Get-Command node -ErrorAction SilentlyContinue)
+if ($temNode) {
+    $ini = @($s.hooks.SessionStart)
+    $sub = @($s.hooks.SubagentStart)
+    Conferir 'limpa: hook de inicio aponta para o boletim' ($ini.Count -eq 1 -and [string](@(@($ini[0].hooks)[0].args)[0]) -like '*/hooks/equipe-boletim.mjs')
+    Conferir 'limpa: hook dos subagentes so para Explore, verificador e revisor' ($sub.Count -eq 1 -and $sub[0].matcher -eq 'Explore|verificador|revisor')
+    # O hook registrado roda de verdade e devolve o JSON que o Claude Code espera.
+    $h = @($ini[0].hooks)[0]
+    $env:EQUIPE_SEM_REDE = '1'
+    $entrada = '{"cwd":"' + ($raiz -replace '\\', '/') + '","source":"startup"}'
+    $saidaHook = ($entrada | & $h.command @($h.args) 2>&1 | Out-String)
+    Remove-Item Env:\EQUIPE_SEM_REDE
+    Conferir 'limpa: hook de inicio roda e devolve contexto' ($saidaHook -match '"hookEventName":"SessionStart"' -and $saidaHook -match 'additionalContext')
+    if ($saidaHook -notmatch 'additionalContext') { Write-Host $saidaHook }
+}
+
 # 2. Repeticao: nada muda, nenhum backup novo
 $r = Instalar $d1
 Conferir 'repeticao: saiu com 0' ($r.codigo -eq 0)
@@ -96,6 +122,24 @@ Conferir 'retiradas: repeticao nao muda nada' ($r.texto -match 'bloqueios ja pre
 $retiradas = Ler-Json (Join-Path (Join-Path $raiz 'settings') 'retiradas.json')
 foreach ($regra in @($retiradas.ask)) { Conferir "retiradas: '$regra' nao esta em global.json" (@($global.permissions.ask) -cnotcontains $regra) }
 
+# 3c. Hooks que o usuario escreveu ficam; a entrada antiga da equipe e trocada
+if ($temNode) {
+    $d3c = Join-Path $base 'hooks-usuario'
+    New-Item -ItemType Directory -Force -Path $d3c | Out-Null
+    $inicial = '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo","args":["oi"]}]},{"hooks":[{"type":"command","command":"node","args":["C:/velho/.claude/hooks/equipe-boletim.mjs"],"timeout":5}]}],"Stop":[{"hooks":[{"type":"command","command":"meu-stop"}]}]}}'
+    [System.IO.File]::WriteAllText((Join-Path $d3c 'settings.json'), $inicial, $utf8)
+    $r = Instalar $d3c
+    $s = Ler-Json (Join-Path $d3c 'settings.json')
+    $ini = @($s.hooks.SessionStart)
+    Conferir 'hooks: saiu com 0' ($r.codigo -eq 0)
+    Conferir 'hooks: manteve o hook do usuario' ($ini.Count -eq 2 -and @($ini[0].hooks)[0].command -eq 'echo')
+    Conferir 'hooks: trocou a entrada antiga da equipe' ($ini.Count -eq 2 -and @($ini[1].hooks)[0].timeout -eq 15 -and [string](@(@($ini[1].hooks)[0].args)[0]) -notlike 'C:/velho/*')
+    Conferir 'hooks: manteve outro evento do usuario' (@(@($s.hooks.Stop)[0].hooks)[0].command -eq 'meu-stop')
+    Conferir 'hooks: um backup so, com bloqueios e hooks' (@(Get-ChildItem -LiteralPath $d3c -Filter 'settings.json.bak-*').Count -eq 1)
+    $r = Instalar $d3c
+    Conferir 'hooks: repeticao nao muda nada' ($r.texto -match 'hooks ja presentes')
+}
+
 # 4. JSON invalido: falha sem alterar o arquivo
 $d4 = Join-Path $base 'invalido'
 New-Item -ItemType Directory -Force -Path $d4 | Out-Null
@@ -109,6 +153,15 @@ $d5 = Join-Path $base 'sem-bloqueios'
 $r = Instalar $d5 @('-SemBloqueios')
 Conferir 'sem bloqueios: saiu com 0' ($r.codigo -eq 0)
 Conferir 'sem bloqueios: sem settings.json' (-not (Test-Path (Join-Path $d5 'settings.json')))
+Conferir 'sem bloqueios: skill copiada mesmo assim' (Test-Path (Join-Path $d5 'skills\retro-equipe\SKILL.md'))
+
+# 5b. -SemHooks: bloqueios sim, hooks nao
+$d5b = Join-Path $base 'sem-hooks'
+$r = Instalar $d5b @('-SemHooks')
+$s = Ler-Json (Join-Path $d5b 'settings.json')
+Conferir 'sem hooks: saiu com 0' ($r.codigo -eq 0)
+Conferir 'sem hooks: bloqueios gravados' (@($s.permissions.deny).Count -eq $nDeny)
+Conferir 'sem hooks: nenhum hook no settings.json' (-not $s.PSObject.Properties['hooks'])
 
 # 6. Caminho com espaco e aspa simples: o hook continua valido
 $d6 = Join-Path $base "pasta d'agua"
@@ -123,6 +176,12 @@ Conferir 'aspa: hook roda a guarda e libera git log' ($LASTEXITCODE -eq 0)
 $json = '{"tool_name":"Bash","tool_input":{"command":"rm -rf ."},"cwd":"."}'
 $null = $json | & $exe -NoProfile -ExecutionPolicy Bypass -Command $comando 2>&1
 Conferir 'aspa: hook roda a guarda e bloqueia rm' ($LASTEXITCODE -eq 2)
+if ($temNode) {
+    $s = Ler-Json (Join-Path $d6 'settings.json')
+    Conferir 'aspa: caminho do hook da equipe sem escape' ([string](@(@(@($s.hooks.SessionStart)[0].hooks)[0].args)[0]) -like "*pasta d'agua/hooks/equipe-boletim.mjs")
+    $skill = [System.IO.File]::ReadAllText((Join-Path $d6 'skills\retro-equipe\SKILL.md'), $utf8)
+    Conferir 'aspa: caminho da skill sem escape' ($skill.Contains("pasta d'agua/hooks/equipe-medir.mjs"))
+}
 
 # 7 a 11. -ComMapa: registra o codebase-memory no .claude.json (precisa do Node)
 if (Get-Command node -ErrorAction SilentlyContinue) {

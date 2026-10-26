@@ -33,6 +33,10 @@ jobs:
         if: ${{ !cancelled() }}
         shell: powershell
         run: ./testes/conferir-dart.ps1
+      - name: Hooks e medidor da equipe (Node)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: node --test testes/equipe-node.test.mjs
 
   dart:
     name: Dart ${{ matrix.sdk }}

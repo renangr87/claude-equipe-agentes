@@ -22,6 +22,11 @@
      sua conta Tailscale. Com -ApoioEmpresa (no outro computador): cria o atalho
      127.0.0.1:11435 para o Ollama de casa e registra o Apoio Local usando ele, com o
      Ollama deste computador como reserva. Os dois usam os scripts remoto\ do Apoio
+  10. Hooks da equipe no settings.json (precisam do Node.js): boletim do projeto no
+     inicio de cada sessao e contexto automatico para o Explore, o verificador e o
+     revisor. Copia a skill /retro-equipe e o medidor das sessoes, e grava a versao
+     instalada em <Destino>\equipe-versao.json. So ficam de fora com -SemHooks ou
+     -SemBloqueios
 
   O que faltar (Git, Node.js, Python 3.12, Ollama) e instalado pelo winget. Com
   -SemInstalar, nada e instalado nem baixado: so e registrado o que ja existe.
@@ -80,6 +85,10 @@
 .PARAMETER NomeCasa
   Nome do PC de casa no Tailscale, para -ApoioEmpresa. Padrao: o do script do Apoio.
 
+.PARAMETER SemHooks
+  Nao acrescenta os hooks da equipe ao settings.json (boletim de inicio e contexto dos
+  subagentes). Os scripts e a skill /retro-equipe sao copiados do mesmo jeito.
+
 .PARAMETER SemInstalar
   Nao instala programas (Git, Node.js, Python, Ollama, mapa do codigo), nao baixa nem
   atualiza o Apoio Local e nao baixa modelo. As dependencias Python do Apoio Local
@@ -109,7 +118,8 @@ param(
     [switch]$SemInstalar,
     [switch]$ApoioCasa,
     [switch]$ApoioEmpresa,
-    [string]$NomeCasa = ''
+    [string]$NomeCasa = '',
+    [switch]$SemHooks
 )
 
 $ErrorActionPreference = 'Stop'
@@ -260,13 +270,17 @@ New-Item -ItemType Directory -Force -Path $pastaAgentes | Out-Null
 New-Item -ItemType Directory -Force -Path $pastaRegras  | Out-Null
 New-Item -ItemType Directory -Force -Path $pastaHooks   | Out-Null
 
-# Caminho absoluto da pasta de configuracao, com barras normais, para o hook dos agentes.
-$pastaClaude = (Resolve-Path -LiteralPath $Destino).ProviderPath -replace '\\', '/'
-# O caminho vai entre aspas simples no comando do hook: aspa simples vira duas.
-$pastaClaude = $pastaClaude -replace "'", "''"
+# Caminho absoluto da pasta de configuracao, com barras normais. O bruto vai em arquivos
+# (skill, settings.json); o dos agentes vai entre aspas simples no comando do hook, onde
+# aspa simples vira duas.
+$pastaClaudeBruta = (Resolve-Path -LiteralPath $Destino).ProviderPath -replace '\\', '/'
+$pastaClaude = $pastaClaudeBruta -replace "'", "''"
 
-Write-Host "Guarda de terminal:"
+Write-Host "Guarda de terminal e scripts da equipe:"
 Copy-ComBackup (Join-Path (Join-Path $origem 'hooks') 'guarda-comandos.ps1') (Join-Path $pastaHooks 'guarda-comandos.ps1')
+foreach ($arquivo in (Get-ChildItem -LiteralPath (Join-Path $origem 'hooks') -Filter 'equipe-*.mjs' | Sort-Object Name)) {
+    Copy-ComBackup $arquivo.FullName (Join-Path $pastaHooks $arquivo.Name)
+}
 
 Write-Host "Subagentes:"
 $origemAgentes = Join-Path $origem 'agents'
@@ -278,6 +292,9 @@ foreach ($arquivo in (Get-ChildItem -LiteralPath $origemAgentes -Filter '*.md' |
 Write-Host "Regra global:"
 $origemRegra = Join-Path (Join-Path $origem 'rules') 'equipe-agentes.md'
 Copy-ComBackup $origemRegra (Join-Path $pastaRegras 'equipe-agentes.md')
+
+# Se o settings.json nasce nesta instalacao, nao ha o que guardar em backup depois.
+$settingsExistia = Test-Path -LiteralPath (Join-Path $Destino 'settings.json')
 
 if ($SemBloqueios) {
     Write-Host "Bloqueios: ignorados (-SemBloqueios)."
@@ -369,6 +386,117 @@ function Ler-Servidor([string]$nome) {
     $ErrorActionPreference = $eap
     if (-not $texto) { return $null }
     try { return ($texto | ConvertFrom-Json) } catch { return $null }
+}
+
+# ---------- Hooks, retrospectiva e versao instalada ----------
+
+# Grupo de hooks que e da equipe: algum comando aponta para hooks/equipe-*.mjs.
+function Test-GrupoDaEquipe($grupo) {
+    foreach ($h in @($grupo.hooks)) {
+        if ($null -eq $h) { continue }
+        $partes = @($h.command) + @($h.args)
+        foreach ($p in $partes) {
+            if ($p -is [string] -and $p -match '[\\/]hooks[\\/]equipe-[a-z]+\.mjs') { return $true }
+        }
+    }
+    return $false
+}
+
+# Acrescenta os hooks da equipe (settings\hooks.json) ao settings.json. Troca so os
+# grupos da propria equipe; os hooks que o usuario escreveu ficam.
+function Merge-Hooks([string]$arquivoModelo, [string]$arquivoDestino, [string]$node) {
+    $modelo = (Read-Texto $arquivoModelo) | ConvertFrom-Json
+    foreach ($evento in $modelo.hooks.PSObject.Properties) {
+        foreach ($grupo in @($evento.Value)) {
+            foreach ($h in @($grupo.hooks)) {
+                $h.command = $node
+                $h.args = @($h.args | ForEach-Object { $_.Replace('__PASTA_CLAUDE__', $pastaClaudeBruta) })
+            }
+        }
+    }
+    $atual = New-Object PSObject
+    if (Test-Path -LiteralPath $arquivoDestino) {
+        $texto = Read-Texto $arquivoDestino
+        if ($texto.Trim().Length -gt 0) { $atual = $texto | ConvertFrom-Json }
+    }
+    if (-not $atual.PSObject.Properties['hooks']) {
+        $atual | Add-Member -NotePropertyName 'hooks' -NotePropertyValue (New-Object PSObject)
+    }
+    $hooks = $atual.hooks
+    if ($null -eq $hooks -or $hooks -isnot [System.Management.Automation.PSCustomObject]) {
+        Write-Host "  nao instalados: a chave hooks de $arquivoDestino nao e um objeto. O arquivo nao foi alterado."
+        return
+    }
+    $antes = $hooks | ConvertTo-Json -Depth 32 -Compress
+    foreach ($evento in $modelo.hooks.PSObject.Properties) {
+        $grupos = @()
+        if ($hooks.PSObject.Properties[$evento.Name]) { $grupos = @($hooks.($evento.Name) | Where-Object { $null -ne $_ }) }
+        $outros = @($grupos | Where-Object { -not (Test-GrupoDaEquipe $_) })
+        $juntos = @($outros) + @($evento.Value)
+        if ($hooks.PSObject.Properties[$evento.Name]) {
+            $hooks.($evento.Name) = $juntos
+        } else {
+            $hooks | Add-Member -NotePropertyName $evento.Name -NotePropertyValue $juntos
+        }
+    }
+    if (($hooks | ConvertTo-Json -Depth 32 -Compress) -ceq $antes) {
+        Write-Host "  hooks ja presentes, mantido: $arquivoDestino"
+        return
+    }
+    # Na mesma instalacao, os bloqueios podem ter gravado o backup: a copia mais antiga fica.
+    # Arquivo criado por esta instalacao nao precisa de backup.
+    $bak = "$arquivoDestino.bak-$carimbo"
+    if ($settingsExistia -and (Test-Path -LiteralPath $arquivoDestino) -and -not (Test-Path -LiteralPath $bak)) {
+        Copy-Item -LiteralPath $arquivoDestino -Destination $bak
+        Write-Host "  copia de seguranca: $bak"
+    }
+    [System.IO.File]::WriteAllText($arquivoDestino, ($atual | ConvertTo-Json -Depth 32) + "`n", $utf8)
+    Write-Host "  hooks da equipe gravados (boletim de inicio e contexto dos subagentes): $arquivoDestino"
+}
+
+$nodeEquipe = Find-Node
+if (-not $nodeEquipe -and -not $SemBloqueios -and -not $SemHooks) {
+    Write-Host "Node.js (hooks e medicao da equipe):"
+    if (Instalar-ComWinget 'Node.js' 'OpenJS.NodeJS.LTS') { $nodeEquipe = Find-Node }
+}
+$nodeTexto = if ($nodeEquipe) { $nodeEquipe -replace '\\', '/' } else { 'node' }
+
+Write-Host "Skills da equipe:"
+$origemSkills = Join-Path $origem 'skills'
+if (Test-Path -LiteralPath $origemSkills) {
+    foreach ($pastaSkill in (Get-ChildItem -LiteralPath $origemSkills -Directory | Sort-Object Name)) {
+        $arquivoSkill = Join-Path $pastaSkill.FullName 'SKILL.md'
+        if (-not (Test-Path -LiteralPath $arquivoSkill)) { continue }
+        $destinoSkill = Join-Path (Join-Path $Destino 'skills') $pastaSkill.Name
+        New-Item -ItemType Directory -Force -Path $destinoSkill | Out-Null
+        $texto = (Read-Texto $arquivoSkill).Replace('__PASTA_CLAUDE__', $pastaClaudeBruta).Replace('__NODE__', $nodeTexto)
+        Write-ComBackup $texto (Join-Path $destinoSkill 'SKILL.md')
+    }
+}
+
+# Versao instalada: o boletim de inicio compara com o GitHub e avisa quando ha nova.
+$commitEquipe = $null
+$gitEquipe = Find-Git
+if ($gitEquipe -and (Test-Path -LiteralPath (Join-Path $origem '.git'))) {
+    $eap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $saidaGit = (& $gitEquipe -C $origem rev-parse HEAD 2>$null | Out-String).Trim()
+    $ErrorActionPreference = $eap
+    if ($LASTEXITCODE -eq 0 -and $saidaGit -match '^[0-9a-f]{40}$') { $commitEquipe = $saidaGit }
+}
+$versaoEquipe = [ordered]@{ commit = $commitEquipe; pasta = ($origem -replace '\\', '/'); instaladaEm = (Get-Date).ToString('s') }
+[System.IO.File]::WriteAllText((Join-Path $Destino 'equipe-versao.json'), ($versaoEquipe | ConvertTo-Json), $utf8)
+
+if ($SemBloqueios) {
+    Write-Host "Hooks: ignorados (-SemBloqueios nao mexe no settings.json)."
+} elseif ($SemHooks) {
+    Write-Host "Hooks: ignorados (-SemHooks)."
+} elseif (-not $nodeEquipe) {
+    Write-Host "Hooks:"
+    Write-Host "  ATENCAO: nao instalados, porque o Node.js nao foi encontrado. Instale o Node 20 ou mais novo e rode de novo."
+} else {
+    Write-Host "Hooks:"
+    Merge-Hooks (Join-Path (Join-Path $origem 'settings') 'hooks.json') (Join-Path $Destino 'settings.json') $nodeEquipe
 }
 
 # ---------- Mapa do codigo ----------

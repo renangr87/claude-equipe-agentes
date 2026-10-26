@@ -39,6 +39,9 @@ flowchart TD
 | `rules/equipe-agentes.md` | regras de trabalho: princípios, orquestração, briefing, relatório, segurança | `~/.claude/rules/` |
 | `agents/*.md` | os 4 subagentes, com modelo, esforço e ferramentas de cada um | `~/.claude/agents/` |
 | `hooks/guarda-comandos.ps1` | guarda de terminal do Explore, do verificador e do implementador | `~/.claude/hooks/` |
+| `hooks/equipe-*.mjs` | boletim de início de sessão, contexto automático dos subagentes e medidor das sessões (Node) | `~/.claude/hooks/` |
+| `skills/retro-equipe/` | skill `/retro-equipe`: retrospectiva com números e propostas testadas | `~/.claude/skills/` |
+| `settings/hooks.json` | registro dos hooks da equipe | mesclar em `~/.claude/settings.json` |
 | `settings/global.json` | bloqueios que valem em todo projeto | mesclar em `~/.claude/settings.json` |
 | `settings/retiradas.json` | regras que versões anteriores acrescentavam e o instalador agora remove | usado pelo instalador |
 | `projeto/mcp.supabase-leitura.json` | conexão do Supabase só de leitura, para consultas sem pedir aprovação | `.mcp.json` do projeto |
@@ -52,7 +55,7 @@ flowchart TD
 | `exemplos/flutter-supabase/` | exemplo preenchido de `CLAUDE.md` e da lista do verificador | referência |
 | `baixar-e-instalar.ps1` | baixa ou atualiza o repositório e roda o instalador (a linha do `irm ... \| iex`) | executar |
 | `instalar.ps1` | instalador para Windows | executar |
-| `testes/` | casos da guarda, teste do instalador e conferência das ferramentas do Dart, que rodam no Windows PowerShell 5.1 e no PowerShell 7 | executar |
+| `testes/` | casos da guarda, teste do instalador e conferência das ferramentas do Dart, que rodam no Windows PowerShell 5.1 e no PowerShell 7, e testes em Node dos hooks e do medidor | executar |
 | `.github/workflows/testes.yml` | roda os testes no Windows a cada mudança no GitHub | automático |
 | `docs/como-funciona.md` | explicação detalhada | leitura |
 | `docs/modelos.md` | preços e benchmarks oficiais dos modelos 5.5 e o motivo de cada escolha | leitura |
@@ -96,6 +99,7 @@ O que acontece, em ordem:
 4. **Mapa do código:** se o programa faltar, instala pelo instalador oficial, só o binário (`--skip-config`), e registra. Veja [Mapa do código](#mapa-do-código-obrigatório-em-projeto-médio-ou-grande).
 5. **Servidor do Dart:** se achar o Dart 3.13 ou mais novo, confere o servidor e registra. Sem Dart, pula. Veja [Servidor do Dart](#servidor-do-dart-opcional).
 6. **Apoio Local:** baixa ou atualiza o [apoio-local-ollama](https://github.com/renangr87/apoio-local-ollama) em `%USERPROFILE%\apoio-local-ollama`, cria o ambiente Python dele, liga o Ollama (instala se faltar), baixa o modelo se o Ollama não tiver nenhum e registra. Veja [Apoio local](#apoio-local).
+7. **Hooks e retrospectiva:** acrescenta ao `settings.json` o boletim de início de sessão e o contexto automático dos subagentes, copia a skill `/retro-equipe` e grava a versão instalada. Veja [Boletim, contexto automático e retrospectiva](#boletim-contexto-automático-e-retrospectiva).
 
 O que faltar no caminho (Node.js, Python 3.12, Git, Ollama) é instalado pelo winget. Um passo que falha não trava os outros: o instalador escreve `ATENCAO` ou `nao registrado` com o motivo e segue.
 
@@ -111,7 +115,8 @@ Opções:
 
 | Opção | O que faz |
 |---|---|
-| `-SemBloqueios` | não mexe no `settings.json` |
+| `-SemBloqueios` | não mexe no `settings.json` (nem nos bloqueios, nem nos hooks) |
+| `-SemHooks` | não acrescenta os hooks da equipe; o resto do `settings.json` é atualizado |
 | `-SemMapa`, `-SemDart`, `-SemApoio` | deixa de fora o mapa, o servidor do Dart ou o Apoio Local |
 | `-ApoioLocal <servidor.py>` | usa uma cópia do Apoio Local que você já tem, sem baixar |
 | `-PastaApoio <pasta>` | onde guardar o Apoio Local baixado |
@@ -148,7 +153,7 @@ Fora do Windows, a guarda precisa do PowerShell 7 (`pwsh`) instalado. Sem ele, o
 
 ### Conferir a instalação
 
-Abra uma sessão nova e faça três testes:
+Abra uma sessão nova e faça estes testes:
 
 1. Pergunte: **"Quais subagentes você tem disponíveis?"** Devem aparecer implementador, verificador e revisor. O Explore aparece de qualquer forma, porque já existe no Claude Code; o seu o substitui.
 2. Pergunte: **"Qual é a regra de commit da equipe?"** A resposta deve citar commit local pelo mestre, com os caminhos dos arquivos, e push só com o seu pedido.
@@ -156,6 +161,8 @@ Abra uma sessão nova e faça três testes:
 4. No mesmo repositório, peça: **"Use o Explore para rodar `git log -3 --oneline` e depois `git log -1 | sort`."** O primeiro deve funcionar e o segundo deve voltar com a mensagem "Bloqueado pela guarda (explore)". Se o segundo passar, a guarda não está rodando: confira o caminho em `~/.claude/agents/Explore.md`. Um caminho errado desliga a guarda sem aviso.
 5. Peça: **"Use o verificador para rodar `git status`."** Deve voltar bloqueado pela guarda (verificador), porque `git status` não está na lista do projeto.
 6. Peça: **"Use o implementador para rodar `dart format pasta-que-nao-existe/`."** Deve voltar bloqueado pela guarda (implementador), porque o formatador recebeu uma pasta. O teste é seguro mesmo sem a guarda: a pasta não existe.
+7. Num projeto com git, pergunte: **"O boletim da equipe apareceu no início desta sessão? Repita a primeira linha dele."** A resposta deve trazer "Boletim da equipe (hook de início de sessão...". Se não aparecer, os hooks não estão no `settings.json` ou o Node.js não foi achado: rode o instalador de novo e veja a linha "Hooks:".
+8. No mesmo projeto, peça: **"Use o Explore para repetir, palavra por palavra, a primeira linha do contexto automático que ele recebeu."** Deve voltar "Contexto automático do projeto (hook da equipe...". É o teste de que o contexto chega ao próprio subagente.
 
 ## Uso
 
@@ -227,7 +234,7 @@ Limites:
 - **O hook depende do `powershell.exe`.** Se ele não for encontrado ou se a guarda passar de 30 segundos, o Claude Code deixa o comando seguir. Os outros casos de falha (script ausente, caminho errado, política de execução) bloqueiam. Os testes 4, 5 e 6 da instalação confirmam que a guarda está ativa.
 - **A guarda do implementador pega formatadores conhecidos, não toda forma de reformatar.** Um script próprio que reescreve arquivos passa. Quem cobre isso é a comparação de `git status` antes do commit.
 - **A lista do verificador depende do git.** Se a pasta `.claude/` estiver no `.gitignore` do projeto, a checagem de commit não enxerga mudanças.
-- **Testes.** `testes/casos-guarda.txt` tem 114 casos e `testes/testar-guarda.ps1` roda todos do mesmo jeito que o hook, mais 5 cenários (entrada vazia, JSON inválido, script ausente, lista fora de commit, lista ausente). `testes/testar-instalador.ps1` faz 109 verificações em pastas temporárias, sem instalar nem baixar nada, com um `dart` falso para o servidor do Dart e um `python` falso (com `.venv` e `pip` simulados) para o Apoio Local. `testes/conferir-dart.ps1` confere os nomes das ferramentas do servidor do Dart. A cada mudança no GitHub, os três rodam no Windows com o PowerShell 5.1 e com o PowerShell 7, e o do Dart roda também com o servidor de verdade, nas versões 3.11.3, 3.12.0, 3.13.0 e na estável. Para rodar na sua máquina: `powershell -ExecutionPolicy Bypass -File .\testes\testar-guarda.ps1`. O app do Windows em si não é testado: os testes 4, 5 e 6 da instalação cobrem essa parte.
+- **Testes.** `testes/casos-guarda.txt` tem 114 casos e `testes/testar-guarda.ps1` roda todos do mesmo jeito que o hook, mais 5 cenários (entrada vazia, JSON inválido, script ausente, lista fora de commit, lista ausente). `testes/testar-instalador.ps1` faz 130 verificações em pastas temporárias, sem instalar nem baixar nada, com um `dart` falso para o servidor do Dart e um `python` falso (com `.venv` e `pip` simulados) para o Apoio Local. `testes/equipe-node.test.mjs` tem 15 testes em Node dos hooks e do medidor, com repositórios git e sessões falsas montados no formato real (inclusive um segredo plantado num pedido, para garantir que ele não aparece na medição). `testes/conferir-dart.ps1` confere os nomes das ferramentas do servidor do Dart. A cada mudança no GitHub, todos rodam no Windows com o PowerShell 5.1 e com o PowerShell 7, e o do Dart roda também com o servidor de verdade, nas versões 3.11.3, 3.12.0, 3.13.0 e na estável. Para rodar na sua máquina: `powershell -ExecutionPolicy Bypass -File .\testes\testar-guarda.ps1`. O app do Windows em si não é testado: os testes 4, 5 e 6 da instalação cobrem essa parte.
 
 ## Ferramentas de conectores
 
@@ -327,6 +334,49 @@ A resposta do modelo local é tratada como pista: antes de agir ou relatar, o ag
 
 O que esperar: a economia aparece nas leituras grandes, que hoje enchem o contexto do mestre (Opus). Em leitura pequena e em código não compensa, porque o modelo local leva de dezenas de segundos a minutos. As ferramentas `apoio-local` estão liberadas na lista (`allow`): leem só as pastas que o próprio servidor permite e só gravam arquivo novo na pasta temporária dele.
 
+## Boletim, contexto automático e retrospectiva
+
+Três peças que deixam a equipe menos dependente de o mestre lembrar das regras e permitem que ela melhore com números. Os scripts ficam em `hooks/equipe-*.mjs`, rodam no Node.js e só leem: não alteram o projeto, não bloqueiam nada e, se algo der errado, ficam em silêncio.
+
+**Boletim de início de sessão** (hook `SessionStart`). Numa pasta com git e código, a sessão começa com algumas linhas para o mestre: quantos arquivos de código e módulos o projeto tem e se o mapa é obrigatório, se o `CLAUDE.md` tem os comandos, se a lista do verificador existe e está em commit, quais notas de área existem e se há um plano em `.revisao/plano.md` com passos abertos. Depois de uma compactação, ele lembra de reler o plano. Numa sessão nova, avisa também quando há versão mais nova da equipe no GitHub (compara com o último `git fetch` da sua cópia; o fetch seguinte roda em segundo plano, no máximo uma vez a cada 20 horas) e quando a retrospectiva está pendente (7 dias e 10 sessões desde a última). Esses dois avisos são para você: o mestre diz uma vez, no fim de uma tarefa.
+
+**Contexto automático dos subagentes** (hook `SubagentStart`). O Explore, o verificador e o revisor não carregam o `CLAUDE.md` do projeto. Ao nascer, cada um recebe o que lhe falta:
+
+| Agente | Recebe |
+|---|---|
+| Explore | raiz e tamanho do projeto; conferir o índice do mapa e indexar se faltar, sem perguntar; quando usar o Apoio Local; notas de área; dizer no relatório o que usou |
+| revisor | conferir e atualizar o índice antes de `detect_changes`; a seção "Regras deste projeto" do `CLAUDE.md`; notas de área |
+| verificador | os comandos liberados em `.claude/verificador-comandos.txt` e se a lista está em commit |
+
+O briefing do mestre continua com objetivo, escopo, critério e as ferramentas a usar primeiro: o hook reforça, não substitui. Para conferir que o contexto chega ao subagente, faça o teste 8 de [Conferir a instalação](#conferir-a-instalação).
+
+**Retrospectiva: `/retro-equipe`.** Abra uma sessão, de preferência na pasta da sua cópia da equipe (`%USERPROFILE%\claude-equipe-agentes`), e digite `/retro-equipe`.
+
+1. **Medir:** o `equipe-medir.mjs` lê as sessões dos últimos 7 dias em `%USERPROFILE%\.claude\projects`. Tira só números:
+   - o custo de cada agente, em preço de API, que na assinatura serve como proporção do limite usado;
+   - a parte do mestre no custo e quantos arquivos ele leu sozinho;
+   - se o Explore consultou o mapa, indexou e usou o Apoio Local;
+   - os passos de Haiku acima de 100 mil tokens;
+   - o status dos relatórios: revisões reprovadas, tarefas incompletas, verificações com falha;
+   - as subidas de modelo, as compactações e os bloqueios da guarda;
+   - as esperas prováveis por aprovação (ferramenta instantânea que levou mais de 1 minuto) e as perguntas a você.
+2. **Propor:** a skill compara os números com uma tabela de sinais e propõe no máximo 5 mudanças. Cada uma traz o teste e o indicador que deve mudar.
+3. **Aplicar:** você escolhe quais entram, e a skill aplica com os testes. As propostas ficam guardadas.
+4. **Comparar:** na retrospectiva seguinte, a medição mostra os números lado a lado com os da anterior e as propostas daquela vez. É assim que se sabe se uma mudança funcionou.
+
+Detalhes que importam:
+
+- **Nada de conteúdo:** pedidos, código e documentos não saem da medição, nem para a tela nem para o diário (há um teste para isso). A exceção é o motivo de cada bloqueio da guarda, que pode citar um pedaço do comando barrado.
+- **O diário fica no seu computador,** em `%USERPROFILE%\.claude\equipe-diario`: uma medição por retrospectiva e as propostas.
+- **A equipe não muda sozinha.** Toda mudança passa pela sua escolha e pelos testes. Como o repositório da equipe é público, a skill não põe nele nome de projeto, caminho, código nem dado pessoal; lição de um projeto vai para a nota de área dele.
+- **Para medir sem a skill:** no PowerShell, `node "$HOME\.claude\hooks\equipe-medir.mjs" --dias 30` mostra o relatório de 30 dias sem guardar nada.
+
+Limites:
+
+- **O custo por agente é uma estimativa por baixo.** Compactações, o classificador do modo Auto e o resumo de páginas não aparecem nas mensagens. Quando o Claude Code grava o custo da sessão, a medição mostra os dois números.
+- **O formato das sessões é interno do Claude Code** e pode mudar numa versão nova. Se a medição vier zerada ou estranha depois de uma atualização, avise no repositório da equipe.
+- **As esperas por aprovação são prováveis, não certas:** uma edição que demorou por outro motivo também conta.
+
 ## Personalizar
 
 - **Modelo e esforço de um subagente**: mude `model` e `effort` no início do arquivo dele em `~/.claude/agents/`.
@@ -346,13 +396,14 @@ Depois de editar os arquivos do repositório, rode o instalador de novo.
 2. Apague `equipe-agentes.md` de `~/.claude/rules/` e `guarda-comandos.ps1` de `~/.claude/hooks/`.
 3. Em `~/.claude/settings.json`, remova as entradas listadas em `settings/global.json`, ou restaure a cópia `.bak` criada pelo instalador.
 4. Remova as entradas `codebase-memory`, `dart` e `apoio-local` de `mcpServers` em `%USERPROFILE%\.claude.json`, com o app fechado, ou restaure a cópia `.bak` dele. O programa sai com `codebase-memory-mcp uninstall`.
+5. Em `~/.claude/settings.json`, apague em `hooks` os grupos cujo comando aponta para `hooks/equipe-*.mjs`. Apague os arquivos `equipe-*.mjs` de `~/.claude/hooks/`, a pasta `~/.claude/skills/retro-equipe/`, o arquivo `~/.claude/equipe-versao.json` e, se não quiser o histórico, a pasta `~/.claude/equipe-diario/`.
 
 ## Limitações conhecidas
 
 - **Regra escrita é orientação.** O agente pode esquecer ou interpretar errado. O que trava de fato são as ferramentas de cada subagente e os bloqueios do `settings.json`, com os limites descritos acima. O revisor não tem terminal nem ferramenta de edição. O Explore e o verificador têm terminal, limitado pela guarda, e nenhum dos dois tem ferramenta de edição. O implementador tem tudo, menos formatador em pasta.
 - **Multiagente não reduz tokens por si só.** Cada subagente começa do zero e relê o que precisa. A economia vem do trabalho volumoso em modelo barato, do contexto enxuto do mestre e de não delegar tarefa pequena.
 - **Tudo passa pelo mestre.** Em sessões muito longas o contexto dele enche. Feche a rodada, deixe o estado anotado e abra uma sessão nova.
-- **Ainda não foi medido em uso real.** Os limites de revisão e a divisão de modelos são um ponto de partida. Compare custo e qualidade em uma tarefa antes de adotar em tudo.
+- **Os ajustes ainda são ponto de partida.** Os limites de revisão e a divisão de modelos não foram medidos em uso real. A `/retro-equipe` existe para isso: depois de uma ou duas semanas de uso, ela mostra onde o gasto e os erros estão.
 - **O que o instalador baixa não passa pelos testes.** Os testes rodam com `-SemInstalar` e programas falsos (`dart`, `python`, mapa): winget, o instalador oficial do mapa, o clone do Apoio Local e o download do modelo só rodam de verdade na sua máquina. Se um deles falhar, o instalador escreve o motivo e segue com o resto.
 - **O que cada subagente carrega.** Pela documentação, o subagente recebe o próprio prompt, não o do Claude Code. O implementador carrega também a regra global (uns 2 mil tokens, 800 deles de orquestração, que só serve ao mestre) e o `CLAUDE.md` do projeto. O Explore, o verificador e o revisor usam `omitClaudeMd: true` e, segundo a documentação, carregam só arquivos de política gerenciada: tudo o que precisam vem no briefing. Para conferir, peça ao Explore qual é a regra de commit da equipe: ele não deve saber.
 - **`isolation: worktree` não é o padrão para tarefas paralelas.** O worktree nasce do branch padrão, não do trabalho em andamento, e o resultado precisa ser trazido de volta depois.
