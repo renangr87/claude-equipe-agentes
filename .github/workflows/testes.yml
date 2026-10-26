@@ -36,7 +36,7 @@ jobs:
       - name: Hooks e medidor da equipe (Node)
         if: ${{ !cancelled() }}
         shell: pwsh
-        run: node --test testes/equipe-node.test.mjs
+        run: node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./testes/anotacoes-ci.mjs --test-reporter-destination=stdout testes/equipe-node.test.mjs
 
   dart:
     name: Dart ${{ matrix.sdk }}

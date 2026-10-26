@@ -76,12 +76,18 @@ export function lerJson(arquivo) {
   try { return JSON.parse(t); } catch { return null; }
 }
 
+// Caminho real: no Windows o mesmo lugar pode vir com nome curto (RUNNER~1) de um lado e
+// longo do outro, ou por uma junção; compara depois de resolver.
+const canonico = (p) => {
+  try { return fs.realpathSync.native(p); } catch { return path.resolve(p); }
+};
 const mesmoCaminho = (a, b) => {
-  const n = (p) => path.resolve(p).replace(/[\\/]+$/, '');
+  const n = (p) => canonico(p).replace(/[\\/]+$/, '');
   return process.platform === 'win32' ? n(a).toLowerCase() === n(b).toLowerCase() : n(a) === n(b);
 };
 const dentroDe = (filho, pai) => {
-  const rel = path.relative(path.resolve(pai), path.resolve(filho));
+  const baixo = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
+  const rel = path.relative(baixo(canonico(pai)), baixo(canonico(filho)));
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 };
 
