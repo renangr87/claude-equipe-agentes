@@ -9,8 +9,8 @@ O objetivo é gastar menos tokens sem abrir mão da qualidade e da segurança do
 | Agente | Modelo | Esforço | Papel |
 |---|---|---|---|
 | mestre (a sessão que você abre) | Opus | médio | entende o pedido, planeja, delega, integra, faz o commit e fala com você |
-| Explore (explorador) | Haiku | baixo | localiza e resume código; no terminal, só lê o histórico do git; consulta o mapa do código, se instalado |
-| implementador | Sonnet | médio | escreve o código dentro do escopo do briefing |
+| Explore (explorador) | Haiku | alto | localiza e resume código; no terminal, só lê o histórico do git; consulta o mapa do código, se instalado |
+| implementador | Sonnet | alto | escreve o código dentro do escopo do briefing |
 | verificador | Haiku | baixo | roda os comandos de teste, lint, tipos e build listados no projeto e resume as falhas |
 | revisor | Sonnet (Opus em área sensível) | alto | revisa o diff com contexto limpo, só leitura, sem terminal |
 
@@ -21,8 +21,8 @@ O explorador se chama `Explore` de propósito. O Claude Code já traz um subagen
 ```mermaid
 flowchart TD
     U["Você"] -->|pedido| M["mestre (Opus, médio)"]
-    M -->|busca| E["Explore (Haiku, baixo)"]
-    M -->|briefing| I["implementador (Sonnet, médio)"]
+    M -->|busca| E["Explore (Haiku, alto)"]
+    M -->|briefing| I["implementador (Sonnet, alto)"]
     M -->|testes| V["verificador (Haiku, baixo)"]
     M -->|arquivo com o diff| R["revisor (Sonnet alto ou Opus)"]
     E -->|resumo| M

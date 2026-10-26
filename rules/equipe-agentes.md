@@ -23,8 +23,8 @@ Em tarefa trivial, use o bom senso: estes princípios priorizam cautela sobre ve
 | Agente | Modelo | Esforço | Faz | Não faz |
 |---|---|---|---|---|
 | mestre (sessão principal) | opus | medium | entende o pedido, planeja, delega, integra, faz o commit, fala com o usuário | leitura em massa, rodar suíte de testes, implementação longa |
-| Explore (explorador) | haiku | low | localiza arquivos, símbolos e usos; resume como algo funciona; consulta o histórico do git | editar; no terminal, só `git log`, `blame`, `show`, `diff`, `status` e `ls-files` |
-| implementador | sonnet | medium | escreve código dentro do escopo do briefing e testa o que mudou | sair do escopo, commit, criar outros agentes |
+| Explore (explorador) | haiku | high | localiza arquivos, símbolos e usos; resume como algo funciona; consulta o histórico do git | editar; no terminal, só `git log`, `blame`, `show`, `diff`, `status` e `ls-files` |
+| implementador | sonnet | high | escreve código dentro do escopo do briefing e testa o que mudou | sair do escopo, commit, criar outros agentes |
 | verificador | haiku | low | roda testes, lint, tipos e build; resume só as falhas | corrigir, editar, instalar; rodar comando fora de `.claude/verificador-comandos.txt` |
 | revisor | sonnet (opus em área sensível e em migração de banco) | high | revisa o diff sem ter visto a implementação: correção, segurança, escopo | editar, rodar comandos, opinar sobre estilo |
 

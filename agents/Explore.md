@@ -3,7 +3,7 @@ name: Explore
 description: Busca somente-leitura no código. Use para localizar arquivos, símbolos e usos, ou para entender como algo funciona quando isso exige varrer pastas ou ler mais de 3 arquivos, e para consultar o histórico do git (log, blame, show, diff). Não edita nada.
 tools: Read, Grep, Glob, Bash, PowerShell, mcp__codebase-memory__index_status, mcp__codebase-memory__list_projects, mcp__codebase-memory__index_repository, mcp__codebase-memory__search_graph, mcp__codebase-memory__search_code, mcp__codebase-memory__trace_path, mcp__codebase-memory__query_graph, mcp__codebase-memory__get_graph_schema, mcp__codebase-memory__get_code_snippet, mcp__codebase-memory__get_architecture, mcp__codebase-memory__detect_changes, mcp__dart__analyze_files, mcp__dart__lsp, mcp__dart__pub_dev_search, mcp__dart__read_package_uris, mcp__dart__rip_grep_packages, mcp__apoio-local__status_local, mcp__apoio-local__resumir_arquivos, mcp__apoio-local__classificar_arquivos, mcp__apoio-local__extrair_de_arquivos
 model: haiku
-effort: low
+effort: high
 omitClaudeMd: true
 hooks:
   PreToolUse:

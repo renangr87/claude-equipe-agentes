@@ -2,7 +2,7 @@
 name: implementador
 description: Escreve ou altera código a partir de um briefing com escopo e critério de aceite definidos. Use para funcionalidades, correções e refatorações já planejadas. Uma tarefa por chamada.
 model: sonnet
-effort: medium
+effort: high
 disallowedTools: Agent, mcp__*
 hooks:
   PreToolUse:
