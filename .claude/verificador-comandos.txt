@@ -1,0 +1,9 @@
+# Comandos que o verificador pode rodar na pasta da equipe de agentes.
+# Uma linha por comando; cada linha libera o comando exato e o mesmo com argumentos a mais.
+powershell -ExecutionPolicy Bypass -File .\testes\testar-guarda.ps1
+powershell -ExecutionPolicy Bypass -File .\testes\testar-instalador.ps1
+powershell -ExecutionPolicy Bypass -File .\testes\conferir-dart.ps1
+pwsh -File ./testes/testar-guarda.ps1
+pwsh -File ./testes/testar-instalador.ps1
+pwsh -File ./testes/conferir-dart.ps1
+node --test testes/equipe-node.test.mjs

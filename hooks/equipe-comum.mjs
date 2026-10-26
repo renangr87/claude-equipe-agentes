@@ -38,11 +38,22 @@ export function lerEntrada() {
   }
 }
 
-export function git(args, cwd, timeout = 5000) {
+// Orçamento de tempo do processo inteiro: o hook tem 15 segundos no settings.json, e
+// os comandos do git não podem somar mais que isto. Acabou o tempo, o git devolve null
+// e o hook sai com o que já tem (ou em silêncio).
+const ORCAMENTO_MS = Number(process.env.EQUIPE_ORCAMENTO_MS) || 5000;
+const INICIO = Date.now();
+
+// --no-optional-locks: o status não pega a trava do índice, então não atrapalha um
+// git add ou commit que esteja rodando ao mesmo tempo.
+export function git(args, cwd, limite = 3000) {
+  const resta = ORCAMENTO_MS - (Date.now() - INICIO);
+  if (resta < 100) return null;
   try {
-    return execFileSync('git', args, {
-      cwd, encoding: 'utf8', timeout, windowsHide: true,
+    return execFileSync('git', ['--no-optional-locks', ...args], {
+      cwd, encoding: 'utf8', timeout: Math.min(limite, resta), windowsHide: true,
       stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 256 * 1024 * 1024,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' },
     }).replace(/\r?\n$/, '');
   } catch {
     return null;
@@ -65,6 +76,15 @@ export function lerJson(arquivo) {
   try { return JSON.parse(t); } catch { return null; }
 }
 
+const mesmoCaminho = (a, b) => {
+  const n = (p) => path.resolve(p).replace(/[\\/]+$/, '');
+  return process.platform === 'win32' ? n(a).toLowerCase() === n(b).toLowerCase() : n(a) === n(b);
+};
+const dentroDe = (filho, pai) => {
+  const rel = path.relative(path.resolve(pai), path.resolve(filho));
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+};
+
 // Extensões contadas como código (scripts e infraestrutura contam, como diz a regra).
 const EXT_CODIGO = new Set([
   'dart', 'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'vue', 'svelte', 'py', 'go', 'rs', 'java', 'kt', 'kts',
@@ -76,18 +96,83 @@ const GERADO = /\.(g|freezed|mocks|pb|pbenum|pbjson|pbserver|gr|config)\.dart$|\
 const PASTA_IGNORADA = /(^|\/)(node_modules|vendor|build|dist|\.dart_tool|Pods|\.gradle|coverage)\//;
 // Manifestos de módulo: cada pasta com um deles é um módulo (app, backend, pacote).
 const MANIFESTO = /(^|\/)(pubspec\.yaml|package\.json|pyproject\.toml|go\.mod|Cargo\.toml|composer\.json|Gemfile|[^/]+\.csproj|supabase\/config\.toml)$/;
+// Pastas de exemplo e de modelo: nem módulo do produto nem nota de área.
+const PASTA_EXEMPLO = /(^|\/)(example|examples|exemplo|exemplos|template|templates|modelo|modelos|test|tests|fixtures)(\/|$)/;
+// "<texto a preencher>" de um modelo que ainda não foi preenchido.
+const MARCA_MODELO = /<[^<>\n`]*\s[^<>\n`]*>/;
+
+// Pasta do projeto da sessão: a do CLAUDE_PROJECT_DIR, se estiver dentro do repositório
+// da pasta atual (sessão aberta numa subpasta); senão, a raiz desse repositório (um
+// worktree, por exemplo, é ele mesmo).
+function pastaDoProjeto(raizGit) {
+  const proj = process.env.CLAUDE_PROJECT_DIR;
+  if (proj && fs.existsSync(proj) && dentroDe(proj, raizGit)) return path.resolve(proj);
+  return raizGit;
+}
+
+// Mesma regra da guarda (perfil verificador): vale a lista do repositório da pasta atual,
+// se ela estiver no git e for o mesmo projeto da sessão (worktree incluído); senão, a da
+// pasta do projeto da sessão. "Em commit" quer dizer o que a guarda confere: o git status
+// não mostra mudança no arquivo.
+function listaDoVerificador(cwd, raizGit) {
+  let pasta = null;
+  if (raizGit) {
+    let mesmoProjeto = true;
+    const proj = process.env.CLAUDE_PROJECT_DIR;
+    if (proj) {
+      const comum = (dir) => {
+        const c = git(['rev-parse', '--git-common-dir'], dir);
+        return c ? path.resolve(dir, c) : null;
+      };
+      const a = comum(raizGit);
+      const b = fs.existsSync(proj) ? comum(proj) : null;
+      mesmoProjeto = Boolean(a && b && mesmoCaminho(a, b));
+    }
+    if (mesmoProjeto && git(['ls-files', '--error-unmatch', '--', '.claude/verificador-comandos.txt'], raizGit) !== null) {
+      pasta = raizGit;
+    }
+  }
+  if (!pasta) pasta = process.env.CLAUDE_PROJECT_DIR || cwd;
+  const texto = lerTexto(path.join(pasta, '.claude', 'verificador-comandos.txt'));
+  if (texto === null) return { comandos: null, emCommit: false };
+  const comandos = texto.split(/\r?\n/).map((l) => l.replace(/\s+/g, ' ').trim()).filter((l) => l && !l.startsWith('#'));
+  const mudanca = git(['status', '--porcelain', '--', '.claude/verificador-comandos.txt'], pasta);
+  // Como a guarda: sem resposta do git, ela não bloqueia.
+  return { comandos, emCommit: mudanca === null || mudanca === '' };
+}
+
+// CLAUDE.md que valem para a pasta do projeto, do mais próximo ao mais distante (o
+// Claude Code carrega os das pastas acima também), parando na raiz do repositório.
+function claudeMds(pastaProjeto, raizGit) {
+  const achados = [];
+  let atual = pastaProjeto;
+  for (let i = 0; i < 20; i++) {
+    const t = lerTexto(path.join(atual, 'CLAUDE.md'));
+    if (t !== null) achados.push(t);
+    if (mesmoCaminho(atual, raizGit)) break;
+    const acima = path.dirname(atual);
+    if (acima === atual) break;
+    atual = acima;
+  }
+  return achados;
+}
 
 // Fatos do projeto em que o hook rodou. null se a pasta não está num repositório git.
 export function fatosDoProjeto(cwd) {
   if (!cwd || !fs.existsSync(cwd)) return null;
-  const raiz = git(['rev-parse', '--show-toplevel'], cwd);
-  if (!raiz) return null;
-  const lista = git(['ls-files', '-z', '--cached', '--others', '--exclude-standard'], raiz, 15000);
+  const raizGit = git(['rev-parse', '--show-toplevel'], cwd);
+  if (!raizGit) return null;
+  const raiz = pastaDoProjeto(raizGit);
+
+  // Só o que está no git: rápido mesmo em repositório grande. Projeto sem nenhum commit
+  // ainda: os arquivos novos, com pouco tempo.
+  let lista = git(['ls-files', '-z'], raiz, 4000);
+  if (lista === '') lista = git(['ls-files', '-z', '--others', '--exclude-standard'], raiz, 1500);
   const arquivos = lista ? lista.split('\0').filter(Boolean) : [];
 
   let codigo = 0;
   const modulos = new Set();
-  const notas = [];
+  const candidatasNota = [];
   for (const a of arquivos) {
     if (PASTA_IGNORADA.test(a)) continue;
     const ext = a.includes('.') ? a.slice(a.lastIndexOf('.') + 1).toLowerCase() : '';
@@ -100,36 +185,35 @@ export function fatosDoProjeto(cwd) {
       if (nome === 'supabase/config.toml') pasta = pasta ? `${pasta}/supabase` : 'supabase';
       modulos.add(pasta || '.');
     }
-    if (/(^|\/)CLAUDE\.md$/.test(a) && a !== 'CLAUDE.md' && !a.startsWith('.claude/')) notas.push(a);
+    if (/(^|\/)CLAUDE\.md$/.test(a) && a !== 'CLAUDE.md' && !a.startsWith('.claude/') && !PASTA_EXEMPLO.test(a)) candidatasNota.push(a);
   }
-  // Exemplos de pacote (example/) não são módulos do produto.
-  const modulosReais = [...modulos].filter((m) => !/(^|\/)(example|examples|test|tests|fixtures)(\/|$)/.test(m)).sort();
+  const modulosReais = [...modulos].filter((m) => !PASTA_EXEMPLO.test(m)).sort();
+  // Nota que ainda é modelo (com "<texto a preencher>") não é nota de área.
+  const notas = candidatasNota.slice(0, 60).filter((n) => {
+    const t = lerTexto(path.join(raiz, n));
+    return t !== null && !MARCA_MODELO.test(t.replace(/`[^`]*`/g, ''));
+  }).sort();
 
-  const claudeMd = lerTexto(path.join(raiz, 'CLAUDE.md'));
-  const configurado = claudeMd !== null && /^##\s*Comandos/im.test(claudeMd) && !/<comando/.test(claudeMd);
-
-  const caminhoLista = path.join(raiz, '.claude', 'verificador-comandos.txt');
-  const textoLista = lerTexto(caminhoLista);
-  let comandos = null;
-  let listaEmCommit = false;
-  if (textoLista !== null) {
-    comandos = textoLista.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
-    const rastreada = git(['ls-files', '--', '.claude/verificador-comandos.txt'], raiz);
-    const mudanca = git(['status', '--porcelain', '--', '.claude/verificador-comandos.txt'], raiz);
-    listaEmCommit = Boolean(rastreada) && mudanca === '';
+  const mds = claudeMds(raiz, raizGit);
+  const configurado = mds.some((t) => /^##\s*Comandos/im.test(t) && !/<comando/.test(t));
+  let regras = null;
+  for (const t of mds) {
+    regras = secao(t, 'Regras deste projeto');
+    if (regras) break;
   }
+  const lista2 = listaDoVerificador(cwd, raizGit);
 
   return {
     raiz,
     codigo,
     modulos: modulosReais,
     mapaObrigatorio: codigo > 50 || modulosReais.length > 1,
-    notas: notas.sort(),
-    claudeMd: claudeMd !== null,
+    notas,
+    claudeMd: mds.length > 0,
     configurado,
-    regras: secao(claudeMd, 'Regras deste projeto'),
-    comandos,
-    listaEmCommit,
+    regras,
+    comandos: lista2.comandos,
+    listaEmCommit: lista2.emCommit,
     plano: lerPlano(raiz),
   };
 }
@@ -148,7 +232,7 @@ export function secao(texto, titulo, maxLinhas = 30) {
     corpo.push(linhas[i]);
   }
   // Linhas que ainda são do modelo (com "<texto a preencher>") não valem como regra.
-  const preenchidas = corpo.filter((l) => !/<[^<>\n`]*\s[^<>\n`]*>/.test(l.replace(/`[^`]*`/g, '')));
+  const preenchidas = corpo.filter((l) => !MARCA_MODELO.test(l.replace(/`[^`]*`/g, '')));
   const limpo = preenchidas.join('\n').trim();
   if (!limpo) return null;
   const cortado = limpo.split('\n').slice(0, maxLinhas).join('\n');
@@ -168,25 +252,13 @@ function lerPlano(raiz) {
 }
 
 // Versão instalada da equipe e se o GitHub tem uma mais nova. Não usa a rede aqui:
-// compara com o último fetch e, se ele tiver mais de 20 horas, dispara outro em
-// segundo plano (o resultado aparece no boletim seguinte).
+// compara com o último fetch e, se a última tentativa tiver mais de 20 horas, dispara
+// outra em segundo plano (o resultado aparece no boletim seguinte).
 export function versaoDaEquipe({ semRede = false } = {}) {
   const info = lerJson(path.join(pastaClaude(), 'equipe-versao.json'));
   if (!info || !info.commit || !info.pasta || !fs.existsSync(path.join(info.pasta, '.git'))) return null;
   const remoto = git(['rev-parse', '--verify', '-q', 'origin/main'], info.pasta);
-  if (!semRede && !process.env.EQUIPE_SEM_REDE) {
-    let idade = Infinity;
-    try { idade = Date.now() - fs.statSync(path.join(info.pasta, '.git', 'FETCH_HEAD')).mtimeMs; } catch { /* nunca buscou */ }
-    if (idade > 20 * 3600 * 1000) {
-      try {
-        const filho = spawn('git', ['-C', info.pasta, 'fetch', '-q', 'origin', 'main'], {
-          detached: true, stdio: 'ignore', windowsHide: true,
-        });
-        filho.on('error', () => {});
-        filho.unref();
-      } catch { /* sem git: fica para a próxima */ }
-    }
-  }
+  if (!semRede && !process.env.EQUIPE_SEM_REDE) buscarEmSegundoPlano(info.pasta);
   let atrasada = false;
   if (remoto && remoto !== info.commit) {
     // Só avisa se a instalada é ancestral da remota: commit local à frente não é atraso.
@@ -194,6 +266,26 @@ export function versaoDaEquipe({ semRede = false } = {}) {
     atrasada = r !== null;
   }
   return { instalada: info.commit, remota: remoto, atrasada, pasta: info.pasta };
+}
+
+// A marca da tentativa é gravada antes do fetch: sem rede, o FETCH_HEAD não muda, e
+// sem a marca o fetch rodaria em toda sessão.
+function buscarEmSegundoPlano(pasta) {
+  const marca = path.join(pastaDiario(), 'ultimo-fetch.txt');
+  const idade = (arquivo) => {
+    try { return Date.now() - fs.statSync(arquivo).mtimeMs; } catch { return Infinity; }
+  };
+  if (Math.min(idade(marca), idade(path.join(pasta, '.git', 'FETCH_HEAD'))) < 20 * 3600 * 1000) return;
+  try {
+    fs.mkdirSync(path.dirname(marca), { recursive: true });
+    fs.writeFileSync(marca, new Date().toISOString());
+    const filho = spawn('git', ['-C', pasta, 'fetch', '-q', 'origin', 'main'], {
+      detached: true, stdio: 'ignore', windowsHide: true,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' },
+    });
+    filho.on('error', () => {});
+    filho.unref();
+  } catch { /* sem git ou sem permissão: fica para a próxima */ }
 }
 
 // Sessões gravadas (arquivos .jsonl da sessão principal) depois de uma data.

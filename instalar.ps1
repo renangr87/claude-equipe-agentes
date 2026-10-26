@@ -390,20 +390,19 @@ function Ler-Servidor([string]$nome) {
 
 # ---------- Hooks, retrospectiva e versao instalada ----------
 
-# Grupo de hooks que e da equipe: algum comando aponta para hooks/equipe-*.mjs.
-function Test-GrupoDaEquipe($grupo) {
-    foreach ($h in @($grupo.hooks)) {
-        if ($null -eq $h) { continue }
-        $partes = @($h.command) + @($h.args)
-        foreach ($p in $partes) {
-            if ($p -is [string] -and $p -match '[\\/]hooks[\\/]equipe-[a-z]+\.mjs') { return $true }
-        }
+# Hook da equipe: o comando ou um argumento aponta para hooks/equipe-boletim.mjs ou
+# hooks/equipe-contexto.mjs, os dois que a equipe registra.
+function Test-HookDaEquipe($h) {
+    if ($null -eq $h) { return $false }
+    foreach ($p in (@($h.command) + @($h.args))) {
+        if ($p -is [string] -and $p -match '[\\/]hooks[\\/]equipe-(boletim|contexto)\.mjs$') { return $true }
     }
     return $false
 }
 
-# Acrescenta os hooks da equipe (settings\hooks.json) ao settings.json. Troca so os
-# grupos da propria equipe; os hooks que o usuario escreveu ficam.
+# Acrescenta os hooks da equipe (settings\hooks.json) ao settings.json. Tira so os hooks
+# da propria equipe, um por um: um hook do usuario no mesmo grupo fica, e o grupo so sai
+# se ficar vazio.
 function Merge-Hooks([string]$arquivoModelo, [string]$arquivoDestino, [string]$node) {
     $modelo = (Read-Texto $arquivoModelo) | ConvertFrom-Json
     foreach ($evento in $modelo.hooks.PSObject.Properties) {
@@ -431,7 +430,17 @@ function Merge-Hooks([string]$arquivoModelo, [string]$arquivoDestino, [string]$n
     foreach ($evento in $modelo.hooks.PSObject.Properties) {
         $grupos = @()
         if ($hooks.PSObject.Properties[$evento.Name]) { $grupos = @($hooks.($evento.Name) | Where-Object { $null -ne $_ }) }
-        $outros = @($grupos | Where-Object { -not (Test-GrupoDaEquipe $_) })
+        $outros = @()
+        foreach ($g in $grupos) {
+            if ($g -isnot [System.Management.Automation.PSCustomObject] -or -not $g.PSObject.Properties['hooks']) { $outros += $g; continue }
+            $todos = @($g.hooks | Where-Object { $null -ne $_ })
+            $resto = @($todos | Where-Object { -not (Test-HookDaEquipe $_) })
+            if ($resto.Count -eq $todos.Count) { $outros += $g; continue }
+            if ($resto.Count -gt 0) {
+                $g.hooks = $resto
+                $outros += $g
+            }
+        }
         $juntos = @($outros) + @($evento.Value)
         if ($hooks.PSObject.Properties[$evento.Name]) {
             $hooks.($evento.Name) = $juntos
@@ -484,8 +493,17 @@ if ($gitEquipe -and (Test-Path -LiteralPath (Join-Path $origem '.git'))) {
     $ErrorActionPreference = $eap
     if ($LASTEXITCODE -eq 0 -and $saidaGit -match '^[0-9a-f]{40}$') { $commitEquipe = $saidaGit }
 }
-$versaoEquipe = [ordered]@{ commit = $commitEquipe; pasta = ($origem -replace '\\', '/'); instaladaEm = (Get-Date).ToString('s') }
-[System.IO.File]::WriteAllText((Join-Path $Destino 'equipe-versao.json'), ($versaoEquipe | ConvertTo-Json), $utf8)
+$arquivoVersao = Join-Path $Destino 'equipe-versao.json'
+$pastaEquipe = $origem -replace '\\', '/'
+$versaoAtual = $null
+if (Test-Path -LiteralPath $arquivoVersao) {
+    try { $versaoAtual = (Read-Texto $arquivoVersao) | ConvertFrom-Json } catch { $versaoAtual = $null }
+}
+# So regrava quando a versao ou a pasta mudam: repetir a instalacao nao altera nada.
+if ($null -eq $versaoAtual -or [string]$versaoAtual.commit -ne [string]$commitEquipe -or [string]$versaoAtual.pasta -ne $pastaEquipe) {
+    $versaoEquipe = [ordered]@{ commit = $commitEquipe; pasta = $pastaEquipe; instaladaEm = (Get-Date).ToString('s') }
+    [System.IO.File]::WriteAllText($arquivoVersao, ($versaoEquipe | ConvertTo-Json), $utf8)
+}
 
 if ($SemBloqueios) {
     Write-Host "Hooks: ignorados (-SemBloqueios nao mexe no settings.json)."

@@ -6,13 +6,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const HOOKS = fileURLToPath(new URL('../hooks/', import.meta.url));
 const BOLETIM = path.join(HOOKS, 'equipe-boletim.mjs');
 const CONTEXTO = path.join(HOOKS, 'equipe-contexto.mjs');
 const MEDIR = path.join(HOOKS, 'equipe-medir.mjs');
+const GUARDA = path.join(HOOKS, 'guarda-comandos.ps1');
 
 const tmp = (nome) => fs.mkdtempSync(path.join(os.tmpdir(), `equipe-${nome}-`));
 const escrever = (arquivo, texto) => {
@@ -28,7 +29,7 @@ function rodar(script, entrada, env = {}) {
   const saida = execFileSync(process.execPath, [script], {
     input: typeof entrada === 'string' ? entrada : JSON.stringify(entrada),
     encoding: 'utf8',
-    env: { ...process.env, EQUIPE_SEM_REDE: '1', EQUIPE_PASTA_CLAUDE: claudeVazio, ...env },
+    env: { ...process.env, EQUIPE_SEM_REDE: '1', EQUIPE_PASTA_CLAUDE: claudeVazio, CLAUDE_PROJECT_DIR: '', ...env },
   });
   if (!saida.trim()) return '';
   const j = JSON.parse(saida);
@@ -228,7 +229,9 @@ test('medidor: junta a sessão espalhada, deduplica o uso e lê só os sinais ce
   assert.equal(r.porTipo.Explore.passosAcima100k, 1);
   assert.equal(r.porTipo.revisor.status.reprovado, 1);
   assert.deepEqual(r.bloqueios, { 'explore: sem pipe, redirecionamento.': 1 });
-  assert.equal(r.esperas.Edit.vezes, 1);
+  // Sessão sem os campos de decisão (versão antiga): espera estimada pela demora.
+  assert.equal(r.aprovacoes.Edit.vezes, 1);
+  assert.equal(r.estimado, true);
   assert.equal(r.perguntas, 1);
   assert.equal(r.recusas, 1);
   assert.equal(r.compactacoes, 1);
@@ -246,11 +249,14 @@ test('medidor: retrospectiva guarda a base, compara e mostra as propostas da ant
   const { claude } = sessoesFalsas();
   let t = medir(claude, '--retro');
   assert.match(t, /Primeira retrospectiva/);
-  const ultima = JSON.parse(fs.readFileSync(path.join(claude, 'equipe-diario', 'ultima-retro.json'), 'utf8'));
-  assert.ok(fs.existsSync(ultima.medicao));
+  const estado = () => JSON.parse(fs.readFileSync(path.join(claude, 'equipe-diario', 'ultima-retro.json'), 'utf8'));
+  assert.ok(fs.existsSync(estado().pendente.medicao), 'a medição fica pendente até as propostas');
+  assert.equal(estado().data, undefined, 'sem propostas, a retrospectiva não está concluída');
   const propostas = path.join(tmp('propostas'), 'retro-propostas.md');
   escrever(propostas, '1. Dividir as perguntas do Explore. Indicador: tokens por chamada.\n');
   medir(claude, '--guardar-propostas', propostas);
+  assert.ok(fs.existsSync(estado().medicao), 'com as propostas, a medição vira a base');
+  assert.equal(estado().pendente, null);
   t = medir(claude, '--retro');
   assert.match(t, /Desde a última retrospectiva/);
   assert.match(t, /\| Custo por sessão \|/);
@@ -269,4 +275,174 @@ test('comparação marca o que melhorou e o que piorou', async () => {
   const t = comparacao({ custo_por_sessao: 2, explore_mapa_pct: 10 }, { custo_por_sessao: 1, explore_mapa_pct: 5 });
   assert.match(t, /Custo por sessão \| US\$ 2,00 \| US\$ 1,00 \| melhorou/);
   assert.match(t, /consultaram o mapa \| 10% \| 5% \| piorou/);
+});
+
+
+// ---------- concordância com a guarda e casos que a revisão apontou ----------
+
+function powershell() {
+  for (const exe of process.platform === 'win32' ? ['powershell', 'pwsh'] : ['pwsh']) {
+    const r = spawnSync(exe, ['-NoProfile', '-Command', 'exit 0'], { stdio: 'ignore' });
+    if (r.status === 0) return exe;
+  }
+  return null;
+}
+const PS = powershell();
+
+function guardaLibera(cwd, projeto, comando) {
+  const r = spawnSync(PS, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', GUARDA, '-Perfil', 'verificador'], {
+    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: comando }, cwd }),
+    env: { ...process.env, CLAUDE_PROJECT_DIR: projeto },
+    encoding: 'utf8',
+  });
+  return r.status === 0;
+}
+
+test('hook e guarda concordam: projeto numa subpasta do repositório', { skip: !PS && 'sem PowerShell' }, () => {
+  const repo = tmp('mono');
+  git(repo, 'init', '-q');
+  const app = path.join(repo, 'app');
+  for (let i = 0; i < 3; i++) escrever(path.join(app, 'lib', `a${i}.dart`), '//\n');
+  escrever(path.join(app, 'CLAUDE.md'), '## Comandos\n\n- Testar: `flutter test`\n\n## Regras deste projeto\n\n- Produção: projeto XYZ.\n');
+  escrever(path.join(app, '.claude', 'verificador-comandos.txt'), 'flutter test\n');
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'x');
+  assert.equal(guardaLibera(app, app, 'flutter test'), true, 'a guarda deveria liberar');
+  const env = { CLAUDE_PROJECT_DIR: app };
+  const v = rodar(CONTEXTO, { agent_type: 'verificador', cwd: app }, env);
+  assert.match(v, /- flutter test/);
+  assert.match(v, /\(em commit\)/);
+  const b = rodar(BOLETIM, { cwd: app, source: 'startup' }, env);
+  assert.doesNotMatch(b, /não tem CLAUDE\.md|Projeto sem configuração/);
+  assert.match(rodar(CONTEXTO, { agent_type: 'revisor', cwd: app }, env), /Produção: projeto XYZ/);
+});
+
+test('hook e guarda concordam: .claude/ no .gitignore', { skip: !PS && 'sem PowerShell' }, () => {
+  const raiz = tmp('ignorado');
+  git(raiz, 'init', '-q');
+  escrever(path.join(raiz, '.gitignore'), '.claude/\n');
+  escrever(path.join(raiz, 'main.py'), 'print(1)\n');
+  escrever(path.join(raiz, '.claude', 'verificador-comandos.txt'), 'pytest\n');
+  git(raiz, 'add', '-A');
+  git(raiz, 'commit', '-q', '-m', 'x');
+  assert.equal(guardaLibera(raiz, raiz, 'pytest'), true, 'a guarda deveria liberar');
+  const v = rodar(CONTEXTO, { agent_type: 'verificador', cwd: raiz }, { CLAUDE_PROJECT_DIR: raiz });
+  assert.match(v, /- pytest/);
+  assert.match(v, /\(em commit\)/);
+  // Lista nova, fora do git e não ignorada: os dois bloqueiam.
+  const outro = tmp('naoignorado');
+  git(outro, 'init', '-q');
+  escrever(path.join(outro, 'main.py'), 'print(1)\n');
+  escrever(path.join(outro, '.claude', 'verificador-comandos.txt'), 'pytest\n');
+  assert.equal(guardaLibera(outro, outro, 'pytest'), false, 'a guarda deveria bloquear');
+  assert.match(rodar(CONTEXTO, { agent_type: 'verificador', cwd: outro }, { CLAUDE_PROJECT_DIR: outro }), /fora de commit/);
+});
+
+test('notas de área: pastas de exemplo e modelos sem preencher ficam de fora', () => {
+  const raiz = tmp('notas');
+  git(raiz, 'init', '-q');
+  escrever(path.join(raiz, 'a.js'), '//\n');
+  escrever(path.join(raiz, 'lib', 'pagamento', 'CLAUDE.md'), '# Pagamento\n\n## Armadilhas\n\n- o valor vem em centavos.\n');
+  escrever(path.join(raiz, 'exemplos', 'app', 'CLAUDE.md'), '# Exemplo\n');
+  escrever(path.join(raiz, 'projeto', 'CLAUDE.md'), '# CLAUDE.md\n\n- O que é: <uma frase>\n');
+  git(raiz, 'add', '-A');
+  git(raiz, 'commit', '-q', '-m', 'x');
+  const t = rodar(BOLETIM, { cwd: raiz, source: 'startup' });
+  assert.match(t, /Notas de área: lib\/pagamento\/CLAUDE\.md\./);
+  assert.doesNotMatch(t, /exemplos\/app|projeto\/CLAUDE/);
+});
+
+test('sem tempo para o git, os hooks saem em silêncio e rápido', () => {
+  const raiz = projetoGrande();
+  const inicio = Date.now();
+  assert.equal(rodar(BOLETIM, { cwd: raiz, source: 'startup' }, { EQUIPE_ORCAMENTO_MS: '1' }), '');
+  assert.equal(rodar(CONTEXTO, { agent_type: 'Explore', cwd: raiz }, { EQUIPE_ORCAMENTO_MS: '1' }), '');
+  assert.ok(Date.now() - inicio < 5000, 'demorou demais');
+});
+
+function sessaoComDecisoes() {
+  const claude = tmp('claude-decisoes');
+  const cwd = path.join(os.tmpdir(), 'outro-app');
+  const uso = { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+  const assistente = (uuid, min, id, nome) => linha({ type: 'assistant', uuid, timestamp: iso(min), cwd, message: { id: `m-${uuid}`, model: 'claude-opus-5-5', usage: uso, content: [{ type: 'tool_use', id, name: nome, input: {} }] } });
+  const resultado = (uuid, min, id, extra, conteudo = 'ok', erro = false) => linha({ type: 'user', uuid, timestamp: iso(min), cwd, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: conteudo, is_error: erro }] }, ...extra });
+  escrever(path.join(claude, 'projects', '-novo', 's2.jsonl'), [
+    assistente('a1', 0, 't1', 'WebFetch'),
+    resultado('u1', 3, 't1', { permissionDecision: { decision: 'accept', source: 'user_temporary', reasonType: 'rule' } }),
+    assistente('a2', 4, 't2', 'Bash'),
+    resultado('u2', 4, 't2', { toolDenialKind: 'automode-blocked', permissionDecision: { decision: 'reject', source: 'config', reasonType: 'classifier' } }, 'Permission for this action was denied by the Claude Code auto mode classifier. Reason: x', true),
+    assistente('a3', 5, 't3', 'Edit'),
+    resultado('u3', 9, 't3', { toolDenialKind: 'user-rejected' }, "The user doesn't want to proceed with this tool use.", true),
+    assistente('a4', 10, 't4', 'Bash'),
+    resultado('u4', 10, 't4', { permissionDecision: { decision: 'accept', source: 'config', reasonType: 'rule' } }, 'git@github.com: Permission denied (publickey).', true),
+    assistente('a5', 11, 't5', 'Bash'),
+    resultado('u5', 11, 't5', {}, "PreToolUse:Bash hook error: Bloqueado pela guarda (verificador): comando 'rm -rf segredo' fora da lista.", true),
+  ].join('\n') + '\n');
+  return claude;
+}
+
+test('medidor: usa os campos de decisão da sessão (aprovação, modo Auto, recusa)', () => {
+  const claude = sessaoComDecisoes();
+  const r = JSON.parse(medir(claude, '--json'));
+  assert.deepEqual(Object.keys(r.aprovacoes), ['WebFetch']);
+  assert.equal(r.aprovacoes.WebFetch.vezes, 1);
+  assert.equal(Math.round(r.aprovacoes.WebFetch.segundos), 180);
+  assert.deepEqual(r.barrados, { Bash: 1 });
+  assert.equal(r.recusas, 1, 'o "Permission denied (publickey)" do git não é recusa');
+  assert.equal(r.estimado, false);
+});
+
+test('medidor: o motivo do bloqueio da guarda sai sem o que estava entre aspas', () => {
+  const claude = sessaoComDecisoes();
+  const t = medir(claude);
+  assert.match(t, /verificador: comando '…' fora da lista/);
+  assert.doesNotMatch(t, /segredo/);
+});
+
+test('medidor: status do verificador pelo número de falhas', async () => {
+  const claude = tmp('claude-verif');
+  const dir = path.join(claude, 'projects', '-p');
+  escrever(path.join(dir, 's.jsonl'), linha({ type: 'assistant', uuid: 'x', timestamp: iso(0), cwd: '/p', message: { id: 'mx', model: 'claude-opus-5-5', usage: { input_tokens: 1, output_tokens: 1 }, content: [] } }) + '\n');
+  const relatorios = { v1: '42 passed, 0 failed', v2: 'flutter test: 3 falharam', v3: 'Nenhum teste falhou.', v4: 'O teste de login falhou.' };
+  for (const [id, texto] of Object.entries(relatorios)) {
+    escrever(path.join(dir, 's', 'subagents', `agent-${id}.meta.json`), JSON.stringify({ agentType: 'verificador' }));
+    escrever(path.join(dir, 's', 'subagents', `agent-${id}.jsonl`), linha({ type: 'assistant', uuid: id, isSidechain: true, timestamp: iso(1), message: { id: `m${id}`, model: 'claude-haiku-5-5', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'text', text: texto }] } }) + '\n');
+  }
+  const r = JSON.parse(medir(claude, '--json'));
+  assert.deepEqual(r.porTipo.verificador.status, { passou: 2, 'com falha': 2 });
+});
+
+test('medidor: repetir a retrospectiva não apaga a base nem as propostas', () => {
+  const { claude } = sessoesFalsas();
+  medir(claude, '--retro');
+  const propostas = path.join(tmp('prop'), 'p.md');
+  escrever(propostas, 'Proposta A. Indicador: tokens.\n');
+  medir(claude, '--guardar-propostas', propostas);
+  const estado1 = JSON.parse(fs.readFileSync(path.join(claude, 'equipe-diario', 'ultima-retro.json'), 'utf8'));
+  // Outra rodada com outro período e outra sem guardar propostas: a base continua.
+  let t = medir(claude, '--retro', '--dias', '3');
+  assert.match(t, /usou outro período ou outro projeto/);
+  assert.match(t, /Proposta A/);
+  t = medir(claude, '--retro');
+  assert.match(t, /Desde a última retrospectiva/);
+  assert.match(t, /Proposta A/);
+  const estado2 = JSON.parse(fs.readFileSync(path.join(claude, 'equipe-diario', 'ultima-retro.json'), 'utf8'));
+  assert.equal(estado2.medicao, estado1.medicao);
+  assert.equal(estado2.propostas, estado1.propostas);
+  assert.ok(estado2.pendente && estado2.pendente.medicao !== estado1.medicao);
+});
+
+test('medidor: roda também quando chamado por um atalho (symlink)', (t) => {
+  const pasta = tmp('atalho');
+  const atalho = path.join(pasta, 'hooks');
+  try {
+    fs.symlinkSync(HOOKS, atalho, 'junction');
+  } catch {
+    t.skip('sem permissão para criar atalho');
+    return;
+  }
+  const saida = execFileSync(process.execPath, [path.join(atalho, 'equipe-medir.mjs')], {
+    encoding: 'utf8', env: { ...process.env, EQUIPE_PASTA_CLAUDE: tmp('claude-atalho') },
+  });
+  assert.match(saida, /Nenhuma sessão encontrada/);
 });

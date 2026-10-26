@@ -41,6 +41,7 @@ flowchart TD
 | `hooks/guarda-comandos.ps1` | guarda de terminal do Explore, do verificador e do implementador | `~/.claude/hooks/` |
 | `hooks/equipe-*.mjs` | boletim de início de sessão, contexto automático dos subagentes e medidor das sessões (Node) | `~/.claude/hooks/` |
 | `skills/retro-equipe/` | skill `/retro-equipe`: retrospectiva com números e propostas testadas | `~/.claude/skills/` |
+| `CLAUDE.md`, `.claude/verificador-comandos.txt` | regras e comandos de teste para trabalhar nesta pasta (é aqui que a retrospectiva aplica as mudanças) | ficam no repositório |
 | `settings/hooks.json` | registro dos hooks da equipe | mesclar em `~/.claude/settings.json` |
 | `settings/global.json` | bloqueios que valem em todo projeto | mesclar em `~/.claude/settings.json` |
 | `settings/retiradas.json` | regras que versões anteriores acrescentavam e o instalador agora remove | usado pelo instalador |
@@ -234,7 +235,7 @@ Limites:
 - **O hook depende do `powershell.exe`.** Se ele não for encontrado ou se a guarda passar de 30 segundos, o Claude Code deixa o comando seguir. Os outros casos de falha (script ausente, caminho errado, política de execução) bloqueiam. Os testes 4, 5 e 6 da instalação confirmam que a guarda está ativa.
 - **A guarda do implementador pega formatadores conhecidos, não toda forma de reformatar.** Um script próprio que reescreve arquivos passa. Quem cobre isso é a comparação de `git status` antes do commit.
 - **A lista do verificador depende do git.** Se a pasta `.claude/` estiver no `.gitignore` do projeto, a checagem de commit não enxerga mudanças.
-- **Testes.** `testes/casos-guarda.txt` tem 114 casos e `testes/testar-guarda.ps1` roda todos do mesmo jeito que o hook, mais 5 cenários (entrada vazia, JSON inválido, script ausente, lista fora de commit, lista ausente). `testes/testar-instalador.ps1` faz 130 verificações em pastas temporárias, sem instalar nem baixar nada, com um `dart` falso para o servidor do Dart e um `python` falso (com `.venv` e `pip` simulados) para o Apoio Local. `testes/equipe-node.test.mjs` tem 15 testes em Node dos hooks e do medidor, com repositórios git e sessões falsas montados no formato real (inclusive um segredo plantado num pedido, para garantir que ele não aparece na medição). `testes/conferir-dart.ps1` confere os nomes das ferramentas do servidor do Dart. A cada mudança no GitHub, todos rodam no Windows com o PowerShell 5.1 e com o PowerShell 7, e o do Dart roda também com o servidor de verdade, nas versões 3.11.3, 3.12.0, 3.13.0 e na estável. Para rodar na sua máquina: `powershell -ExecutionPolicy Bypass -File .\testes\testar-guarda.ps1`. O app do Windows em si não é testado: os testes 4, 5 e 6 da instalação cobrem essa parte.
+- **Testes.** `testes/casos-guarda.txt` tem 144 casos e `testes/testar-guarda.ps1` roda todos do mesmo jeito que o hook, mais 10 cenários (entrada vazia, JSON inválido, script ausente, lista fora de commit, lista ausente, worktree e outros). `testes/testar-instalador.ps1` faz 133 verificações em pastas temporárias, sem instalar nem baixar nada, com um `dart` falso para o servidor do Dart e um `python` falso (com `.venv` e `pip` simulados) para o Apoio Local. `testes/equipe-node.test.mjs` tem 24 testes em Node dos hooks e do medidor, com repositórios git e sessões falsas montados no formato real (inclusive um segredo plantado num pedido, para garantir que ele não aparece na medição). Dois deles rodam a guarda de verdade e conferem que ela e o hook concordam sobre a lista do verificador (projeto numa subpasta e `.claude/` no `.gitignore`). `testes/conferir-dart.ps1` confere os nomes das ferramentas do servidor do Dart. A cada mudança no GitHub, todos rodam no Windows com o PowerShell 5.1 e com o PowerShell 7, e o do Dart roda também com o servidor de verdade, nas versões 3.11.3, 3.12.0, 3.13.0 e na estável. Para rodar na sua máquina: `powershell -ExecutionPolicy Bypass -File .\testes\testar-guarda.ps1`. O app do Windows em si não é testado: os testes 4, 5 e 6 da instalação cobrem essa parte.
 
 ## Ferramentas de conectores
 
@@ -359,10 +360,10 @@ O briefing do mestre continua com objetivo, escopo, critério e as ferramentas a
    - os passos de Haiku acima de 100 mil tokens;
    - o status dos relatórios: revisões reprovadas, tarefas incompletas, verificações com falha;
    - as subidas de modelo, as compactações e os bloqueios da guarda;
-   - as esperas prováveis por aprovação (ferramenta instantânea que levou mais de 1 minuto) e as perguntas a você.
+   - os pedidos de aprovação que você respondeu e quanto tempo a sessão ficou parada por eles, o que o modo Auto barrou, o que você recusou e as perguntas a você.
 2. **Propor:** a skill compara os números com uma tabela de sinais e propõe no máximo 5 mudanças. Cada uma traz o teste e o indicador que deve mudar.
 3. **Aplicar:** você escolhe quais entram, e a skill aplica com os testes. As propostas ficam guardadas.
-4. **Comparar:** na retrospectiva seguinte, a medição mostra os números lado a lado com os da anterior e as propostas daquela vez. É assim que se sabe se uma mudança funcionou.
+4. **Comparar:** na retrospectiva seguinte, a medição mostra os números lado a lado com os da anterior e as propostas daquela vez. É assim que se sabe se uma mudança funcionou. A base só muda quando as propostas são guardadas: medir de novo, ou com outro período ou projeto, não apaga a comparação.
 
 Detalhes que importam:
 
@@ -375,7 +376,7 @@ Limites:
 
 - **O custo por agente é uma estimativa por baixo.** Compactações, o classificador do modo Auto e o resumo de páginas não aparecem nas mensagens. Quando o Claude Code grava o custo da sessão, a medição mostra os dois números.
 - **O formato das sessões é interno do Claude Code** e pode mudar numa versão nova. Se a medição vier zerada ou estranha depois de uma atualização, avise no repositório da equipe.
-- **As esperas por aprovação são prováveis, não certas:** uma edição que demorou por outro motivo também conta.
+- **Aprovações e bloqueios vêm dos campos que a sessão grava** (a decisão de permissão de cada ferramenta). Em sessão de uma versão antiga do Claude Code, sem esses campos, a medição estima: uma ferramenta que responde na hora e levou mais de 1 minuto conta como pedido de aprovação, e o relatório avisa que é estimativa.
 
 ## Personalizar
 

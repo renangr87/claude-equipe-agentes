@@ -104,16 +104,19 @@ function textoDe(conteudo) {
   return '';
 }
 
-// Ferramentas que respondem na hora: se a resposta demorou mais de 1 minuto, quase
-// sempre foi um pedido de aprovação esperando o usuário.
+// Sessões de versões recentes do Claude Code gravam a decisão de permissão de cada
+// ferramenta (permissionDecision, toolDenialKind). Nas antigas, a medição estima: uma
+// ferramenta que responde na hora e levou mais de 1 minuto quase sempre esperou aprovação.
 const INSTANTANEAS = /^(Edit|Write|MultiEdit|NotebookEdit)$|__(execute_sql|apply_migration|deploy_edge_function|create_edge_function_secret|merge_branch|reset_branch|rebase_branch|delete_branch|pause_project|restore_project|create_project|upload_file|delete_project|manage_adr|ingest_traces|pub|vm_service|roots|dart_fix|dart_format|launch_app|stop_app|run_tests)$/;
-const RECUSA = /doesn't want to proceed|was rejected|permission[^.\n]{0,40}denied|denied by|has been denied|blocked by (the )?(auto|classifier)/i;
+const RECUSA = /doesn't want to proceed|tool use was rejected/i;
+const BARRADO = /denied by the Claude Code auto mode classifier/i;
 const MAPA_CONSULTA = /^mcp__codebase-memory__(search_graph|search_code|trace_path|query_graph|get_code_snippet|get_architecture|detect_changes)$/;
 
 function novaAnalise() {
   return {
     msgs: new Map(), ferramentas: {}, usos: new Map(), resultados: new Set(), vistos: new Set(),
     esperas: [], perguntas: [], bloqueios: [], recusas: 0, compactacoes: 0, errosApi: 0,
+    aprovacoes: [], barrados: [], recusasUsuario: 0, recusasTexto: 0, barradosTexto: [], temDecisoes: false,
     primeiro: null, ultimo: null, ultimoTs: null, cwd: null, custos: new Map(), ultimoTexto: '',
     agentes: [], tipoPorAgente: new Map(),
   };
@@ -164,23 +167,39 @@ function analisar(arquivo, desdeMs, r = novaAnalise()) {
       }
     }
     if (d.type === 'user' && d.message && Array.isArray(d.message.content)) {
+      const decisao = d.permissionDecision && typeof d.permissionDecision === 'object' ? d.permissionDecision : null;
+      if (decisao || d.toolDenialKind) r.temDecisoes = true;
+      let primeiro = true;
       for (const c of d.message.content) {
         if (!c || c.type !== 'tool_result' || r.resultados.has(c.tool_use_id)) continue;
         r.resultados.add(c.tool_use_id);
         const uso = r.usos.get(c.tool_use_id);
+        const nome = uso ? uso.nome : '?';
         const texto = textoDe(c.content);
-        if (uso && ts !== null && uso.ts !== null) {
-          const s = (ts - uso.ts) / 1000;
-          if (INSTANTANEAS.test(uso.nome) && s > 60) r.esperas.push({ nome: uso.nome, s });
+        const s = uso && ts !== null && uso.ts !== null ? (ts - uso.ts) / 1000 : null;
+        if (s !== null) {
+          if (INSTANTANEAS.test(uso.nome) && s > 60) r.esperas.push({ nome, s });
           if (uso.nome === 'AskUserQuestion') r.perguntas.push(s);
+        }
+        // A decisão vale para a ferramenta desta linha (uma por linha).
+        if (primeiro) {
+          primeiro = false;
+          if (d.toolDenialKind === 'user-rejected') r.recusasUsuario++;
+          else if (d.toolDenialKind) r.barrados.push(nome);
+          if (decisao && decisao.decision === 'accept' && /^user/.test(String(decisao.source || ''))) {
+            r.aprovacoes.push({ nome, s: s === null ? 0 : s });
+          }
         }
         // Bloqueio de verdade: o comando de terminal voltou com erro e a mensagem é curta.
         // Saída de teste ou arquivo lido que só cita a frase não conta.
         if (c.is_error && texto.length < 1500 && (!uso || /^(Bash|PowerShell)$/.test(uso.nome))) {
           const b = texto.match(/Bloqueado pela guarda \(([a-z]+)\):\s*([^\n]{0,90})/);
-          if (b) r.bloqueios.push({ perfil: b[1], motivo: b[2].replace(/["')\]\s]+$/, '').trim() });
+          if (b) r.bloqueios.push({ perfil: b[1], motivo: limparMotivo(b[2]) });
         }
-        if (c.is_error && texto.length < 800 && RECUSA.test(texto)) r.recusas++;
+        if (c.is_error && texto.length < 3000) {
+          if (RECUSA.test(texto)) r.recusasTexto++;
+          else if (BARRADO.test(texto)) r.barradosTexto.push(nome);
+        }
         if (uso && (uso.nome === 'Agent' || uso.nome === 'Task') && d.toolUseResult && d.toolUseResult.agentId) {
           r.tipoPorAgente.set(String(d.toolUseResult.agentId), uso.tipo || 'general-purpose');
         }
@@ -188,6 +207,21 @@ function analisar(arquivo, desdeMs, r = novaAnalise()) {
     }
   }
   return r;
+}
+
+// O motivo da guarda pode citar o comando barrado: o que vem entre aspas sai.
+export function limparMotivo(m) {
+  // Primeiro a sobra do texto em volta da mensagem (aspas e parêntese no fim), depois o
+  // que está entre aspas.
+  const sem = m.replace(/["'`)\]\s]+$/, '');
+  return sem.replace(/'[^']*'?/g, "'…'").replace(/"[^"]*"?/g, '"…"').trim();
+}
+
+// Pedidos de aprovação, bloqueios do modo Auto e recusas: pelos campos que a sessão grava
+// ou, em sessão de versão antiga, pela estimativa.
+function decisoes(a) {
+  if (a.temDecisoes) return { aprovacoes: a.aprovacoes, barrados: a.barrados, recusas: a.recusasUsuario, estimado: false };
+  return { aprovacoes: a.esperas, barrados: a.barradosTexto, recusas: a.recusasTexto, estimado: a.esperas.length > 0 };
 }
 
 function somarUso(msgs, filtro = () => true) {
@@ -222,9 +256,12 @@ function statusDoRelatorio(tipo, texto) {
     return m ? m[1].toLowerCase() : 'sem status';
   }
   if (tipo === 'verificador') {
-    if (/bloque/i.test(t) && !/passou|passaram/i.test(t)) return 'bloqueado';
-    const n = [...t.matchAll(/(\d+)\s+(falh|fail)/gi)].map((x) => Number(x[1]));
-    if (n.some((x) => x > 0) || /\b(falhou|falharam|failed)\b/i.test(t)) return 'com falha';
+    if (/bloque/i.test(t) && !/passou|passaram|passed/i.test(t)) return 'bloqueado';
+    // Com contagem ("3 falharam", "0 failed"), vale o número; sem contagem, a palavra.
+    const n = [...t.matchAll(/(\d+)\s+(?:testes?\s+|tests?\s+)?(falh|fail)/gi)].map((x) => Number(x[1]));
+    if (n.length) return n.some((x) => x > 0) ? 'com falha' : 'passou';
+    if (/\b(nenhum|nenhuma|sem|no)\b[^.\n]{0,20}(falh|fail)/i.test(t)) return 'passou';
+    if (/\b(falhou|falharam|failed|failures?)\b/i.test(t)) return 'com falha';
     return 'passou';
   }
   return '';
@@ -297,15 +334,14 @@ export function medir({ dias = 7, projeto = '', raiz = '' } = {}) {
           conferiuIndice: Boolean(f['mcp__codebase-memory__index_status']),
           usouApoio: nomesF.some((x) => x.startsWith('mcp__apoio-local__') && x !== 'mcp__apoio-local__status_local'),
           bloqueios: a.bloqueios,
-          esperas: a.esperas,
-          recusas: a.recusas,
+          ...decisoes(a),
           status: statusDoRelatorio(tipo, a.ultimoTexto),
         });
       }
       // Formato antigo: mensagens de subagente dentro do arquivo da sessão.
       const lado = somarUso(principal.msgs, (m) => m.lado);
       if (lado.passos > 0) {
-        agentes.push({ tipo: 'subagente', modelo: modeloPrincipal(lado.modelos), entrada: lado.entrada, saida: lado.saida, custo: lado.custo, passos: lado.passos, passosAcima100k: lado.passosAcima100k, segundos: 0, leituras: 0, buscas: 0, consultouMapa: false, indexou: false, conferiuIndice: false, usouApoio: false, bloqueios: [], esperas: [], recusas: 0, status: '' });
+        agentes.push({ tipo: 'subagente', modelo: modeloPrincipal(lado.modelos), entrada: lado.entrada, saida: lado.saida, custo: lado.custo, passos: lado.passos, passosAcima100k: lado.passosAcima100k, segundos: 0, leituras: 0, buscas: 0, consultouMapa: false, indexou: false, conferiuIndice: false, usouApoio: false, bloqueios: [], aprovacoes: [], barrados: [], recusas: 0, estimado: false, status: '' });
       }
 
       const mestre = somarUso(principal.msgs, (m) => !m.lado);
@@ -322,9 +358,8 @@ export function medir({ dias = 7, projeto = '', raiz = '' } = {}) {
         agentes,
         compactacoes: principal.compactacoes,
         errosApi: principal.errosApi,
-        esperas: principal.esperas,
+        ...decisoes(principal),
         perguntas: principal.perguntas,
-        recusas: principal.recusas,
         bloqueios: principal.bloqueios,
         // O custo que o próprio Claude Code registra é acumulado por execução, então só
         // entram as execuções que começaram dentro do período.
@@ -350,8 +385,10 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos }) {
   const porTipo = {};
   const projetos = {};
   const bloqueios = {};
-  const esperas = {};
+  const aprovacoes = {};
+  const barrados = {};
   const subidas = {};
+  let estimado = false;
   let custoMestre = 0;
   let compactacoes = 0;
   let errosApi = 0;
@@ -362,12 +399,15 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos }) {
   let sessoesComRegistro = 0;
   let leiturasMestre = 0;
 
-  const somarEsperas = (lista) => {
-    for (const e of lista) {
-      esperas[e.nome] = esperas[e.nome] || { vezes: 0, segundos: 0 };
-      esperas[e.nome].vezes++;
-      esperas[e.nome].segundos += e.s;
+  const somarDecisoes = (x) => {
+    for (const e of x.aprovacoes) {
+      aprovacoes[e.nome] = aprovacoes[e.nome] || { vezes: 0, segundos: 0 };
+      aprovacoes[e.nome].vezes++;
+      aprovacoes[e.nome].segundos += e.s;
     }
+    for (const nome of x.barrados) barrados[nome] = (barrados[nome] || 0) + 1;
+    recusas += x.recusas;
+    if (x.estimado) estimado = true;
   };
   const somarBloqueios = (lista) => {
     for (const b of lista) {
@@ -381,11 +421,10 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos }) {
     leiturasMestre += s.mestre.leituras;
     compactacoes += s.compactacoes;
     errosApi += s.errosApi;
-    recusas += s.recusas;
     perguntas += s.perguntas.length;
     segundosPerguntas += s.perguntas.reduce((a, b) => a + b, 0);
     if (s.custoRegistrado !== null && s.custoRegistrado !== undefined) { custoRegistrado += s.custoRegistrado; sessoesComRegistro++; }
-    somarEsperas(s.esperas);
+    somarDecisoes(s);
     somarBloqueios(s.bloqueios);
     const pj = projetos[s.projeto] = projetos[s.projeto] || { sessoes: 0, custo: 0, compactacoes: 0, agentes: 0 };
     pj.sessoes++;
@@ -400,9 +439,8 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos }) {
     for (const a of s.agentes) {
       pj.custo += a.custo;
       pj.agentes++;
-      somarEsperas(a.esperas);
+      somarDecisoes(a);
       somarBloqueios(a.bloqueios);
-      recusas += a.recusas;
       const t = porTipo[a.tipo] = porTipo[a.tipo] || {
         chamadas: 0, entrada: 0, saida: 0, custo: 0, segundos: 0, passosAcima100k: 0, leituras: 0,
         consultouMapa: 0, indexou: 0, conferiuIndice: 0, usouApoio: 0, status: {}, modelos: {},
@@ -426,8 +464,9 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos }) {
   const custoAgentes = Object.values(porTipo).reduce((x, t) => x + t.custo, 0);
   const custoTotal = custoMestre + custoAgentes;
   const n = sessoes.length || 1;
-  const totalEsperas = Object.values(esperas).reduce((x, e) => x + e.vezes, 0);
-  const segundosEspera = Object.values(esperas).reduce((x, e) => x + e.segundos, 0);
+  const totalAprovacoes = Object.values(aprovacoes).reduce((x, e) => x + e.vezes, 0);
+  const segundosAprovacao = Object.values(aprovacoes).reduce((x, e) => x + e.segundos, 0);
+  const totalBarrados = Object.values(barrados).reduce((x, v) => x + v, 0);
   const totalBloqueios = Object.values(bloqueios).reduce((x, b) => x + b, 0);
   const ex = porTipo.Explore;
   const rev = porTipo.revisor;
@@ -442,8 +481,9 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos }) {
     explore_mapa_pct: ex ? (100 * ex.consultouMapa) / ex.chamadas : 0,
     haiku_passos_acima_100k: Object.values(porTipo).reduce((x, t) => x + t.passosAcima100k, 0),
     bloqueios_por_sessao: totalBloqueios / n,
-    esperas_por_sessao: totalEsperas / n,
-    minutos_de_espera_por_sessao: segundosEspera / 60 / n,
+    aprovacoes_por_sessao: totalAprovacoes / n,
+    minutos_esperando_aprovacao_por_sessao: segundosAprovacao / 60 / n,
+    barrados_pelo_auto_por_sessao: totalBarrados / n,
     revisor_reprovado_pct: rev ? (100 * (rev.status.reprovado || 0)) / rev.chamadas : 0,
     implementador_incompleto_pct: imp ? (100 * (imp.chamadas - (imp.status.feito || 0) - (imp.status['feito com ressalvas'] || 0))) / imp.chamadas : 0,
     compactacoes_por_sessao: compactacoes / n,
@@ -456,7 +496,7 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos }) {
     sessoes: sessoes.length,
     custo: { total: custoTotal, mestre: custoMestre, agentes: custoAgentes, registradoPeloClaudeCode: sessoesComRegistro ? custoRegistrado : null, sessoesComRegistro },
     mestre: { leituras: leiturasMestre, modelos: contar(sessoes.map((s) => s.mestre.modelo)) },
-    porTipo, projetos, bloqueios, esperas, subidas,
+    porTipo, projetos, bloqueios, aprovacoes, barrados, estimado, subidas,
     compactacoes, errosApi, recusas, perguntas, segundosPerguntas,
     indicadores,
   };
@@ -521,10 +561,13 @@ export function texto(r) {
   const subidas = Object.entries(r.subidas);
   out.push(`- Subidas de modelo: ${subidas.length ? subidas.map(([k, v]) => `${k} (${v})`).join(', ') : 'nenhuma'}.`);
   out.push(`- Compactações: ${r.compactacoes} (${nf(1).format(i.compactacoes_por_sessao)} por sessão). Erros da API: ${r.errosApi}.`);
-  const esperas = Object.entries(r.esperas).sort((a, b) => b[1].segundos - a[1].segundos);
-  const totalEsperas = esperas.reduce((x, [, e]) => x + e.vezes, 0);
-  out.push(`- Esperas prováveis por aprovação (ferramenta instantânea que levou mais de 1 min): ${totalEsperas}${esperas.length ? `, somando ${minutos(esperas.reduce((x, [, e]) => x + e.segundos, 0))}: ` + esperas.slice(0, 6).map(([k, e]) => `${k} ${e.vezes}x (${minutos(e.segundos)})`).join(', ') : ''}.`);
-  out.push(`- Perguntas ao usuário: ${r.perguntas}${r.perguntas ? `, esperando ${minutos(r.segundosPerguntas)} no total` : ''}. Recusas de permissão: ${r.recusas}.`);
+  const aprov = Object.entries(r.aprovacoes).sort((a, b) => b[1].segundos - a[1].segundos);
+  const totalAprov = aprov.reduce((x, [, e]) => x + e.vezes, 0);
+  const comoMedido = r.estimado ? ' (estimado onde a sessão não grava as decisões: ferramenta instantânea que levou mais de 1 min)' : '';
+  out.push(`- Pedidos de aprovação que você respondeu${comoMedido}: ${totalAprov}${aprov.length ? `, com a sessão parada ${minutos(aprov.reduce((x, [, e]) => x + e.segundos, 0))} no total: ` + aprov.slice(0, 6).map(([k, e]) => `${k} ${e.vezes}x (${minutos(e.segundos)})`).join(', ') : ''}.`);
+  const barr = Object.entries(r.barrados).sort((a, b) => b[1] - a[1]);
+  out.push(`- Barrados pelo modo Auto: ${barr.reduce((x, [, v]) => x + v, 0)}${barr.length ? ` (${barr.slice(0, 6).map(([k, v]) => `${k} ${v}x`).join(', ')})` : ''}. Recusados por você: ${r.recusas}.`);
+  out.push(`- Perguntas ao usuário: ${r.perguntas}${r.perguntas ? `, esperando ${minutos(r.segundosPerguntas)} no total` : ''}.`);
   const bloqueios = Object.entries(r.bloqueios).sort((a, b) => b[1] - a[1]);
   const totalBloqueios = bloqueios.reduce((x, [, v]) => x + v, 0);
   out.push(`- Bloqueios da guarda: ${totalBloqueios}.`);
@@ -550,8 +593,9 @@ const ROTULOS = {
   explore_mapa_pct: ['Chamadas do Explore que consultaram o mapa', pct],
   haiku_passos_acima_100k: ['Passos de Haiku acima de 100 mil', (v) => nf(0).format(v)],
   bloqueios_por_sessao: ['Bloqueios da guarda por sessão', (v) => nf(1).format(v)],
-  esperas_por_sessao: ['Esperas por aprovação por sessão', (v) => nf(1).format(v)],
-  minutos_de_espera_por_sessao: ['Minutos de espera por sessão', (v) => nf(0).format(v)],
+  aprovacoes_por_sessao: ['Pedidos de aprovação por sessão', (v) => nf(1).format(v)],
+  minutos_esperando_aprovacao_por_sessao: ['Minutos parados esperando aprovação, por sessão', (v) => nf(0).format(v)],
+  barrados_pelo_auto_por_sessao: ['Barrados pelo modo Auto por sessão', (v) => nf(1).format(v)],
   revisor_reprovado_pct: ['Revisões reprovadas', pct],
   implementador_incompleto_pct: ['Tarefas do implementador não concluídas', pct],
   compactacoes_por_sessao: ['Compactações por sessão', (v) => nf(1).format(v)],
@@ -577,34 +621,54 @@ export function comparacao(antes, agora) {
 // ---------- diário ----------
 function carimbo() {
   const d = new Date();
-  const p = (x) => String(x).padStart(2, '0');
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+  const p = (x, n = 2) => String(x).padStart(n, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}-${p(d.getMilliseconds(), 3)}`;
 }
 
+// Nome que ainda não existe na pasta: duas rodadas no mesmo instante não se sobrescrevem.
+function arquivoNovo(pasta, prefixo, extensao) {
+  const base = `${prefixo}-${carimbo()}`;
+  let nome = path.join(pasta, `${base}${extensao}`);
+  for (let i = 2; fs.existsSync(nome); i++) nome = path.join(pasta, `${base}-${i}${extensao}`);
+  return nome;
+}
+
+// Estado das retrospectivas em ultima-retro.json:
+//   data, medicao, propostas, dias, filtro: a última retrospectiva concluída (com as
+//     propostas guardadas). É a base de comparação e a data que o boletim usa.
+//   pendente: a medição de uma retrospectiva em andamento. Só vira base quando as
+//     propostas são guardadas; repetir --retro, ou rodar com outro período ou projeto,
+//     não apaga a base nem as propostas anteriores.
 function principal() {
   const o = opcoes(process.argv.slice(2));
   const diario = pastaDiario();
-  const arquivoUltima = path.join(diario, 'ultima-retro.json');
+  const arquivoEstado = path.join(diario, 'ultima-retro.json');
+  const estado = lerJson(arquivoEstado) || {};
+  const gravarEstado = (e) => {
+    fs.mkdirSync(diario, { recursive: true });
+    fs.writeFileSync(arquivoEstado, JSON.stringify(e, null, 2));
+  };
 
   if (o.propostas) {
     const conteudo = lerTexto(o.propostas);
     if (conteudo === null) { console.error(`Não achei o arquivo ${o.propostas}.`); process.exit(1); }
     fs.mkdirSync(diario, { recursive: true });
-    const destino = path.join(diario, `retro-${carimbo()}-propostas.md`);
+    const destino = arquivoNovo(diario, 'retro-propostas', '.md');
     fs.writeFileSync(destino, conteudo);
-    const ultima = lerJson(arquivoUltima) || { data: new Date().toISOString() };
-    ultima.propostas = destino;
-    fs.writeFileSync(arquivoUltima, JSON.stringify(ultima, null, 2));
-    console.log(`Propostas guardadas em ${destino}.`);
+    const base = estado.pendente || { data: new Date().toISOString(), medicao: estado.medicao || null, dias: estado.dias ?? null, filtro: estado.filtro ?? null };
+    gravarEstado({ data: base.data, medicao: base.medicao, dias: base.dias, filtro: base.filtro, propostas: destino, pendente: null });
+    console.log(`Propostas guardadas em ${destino}. A próxima retrospectiva compara com esta.`);
     return;
   }
 
   if (o.ultima) {
-    const ultima = lerJson(arquivoUltima);
-    if (!ultima) { console.log('Nenhuma retrospectiva guardada ainda.'); return; }
-    console.log(`Última retrospectiva: ${data(ultima.data)}.`);
-    const prop = ultima.propostas ? lerTexto(ultima.propostas) : null;
-    console.log(prop ? `\n${prop.slice(0, 4000)}` : 'Sem propostas guardadas.');
+    if (!estado.data) { console.log('Nenhuma retrospectiva concluída ainda.'); }
+    else {
+      console.log(`Última retrospectiva concluída: ${data(estado.data)} (${estado.dias || '?'} dias${estado.filtro ? `, projeto "${estado.filtro}"` : ''}).`);
+      const prop = estado.propostas ? lerTexto(estado.propostas) : null;
+      console.log(prop ? `\n${prop.slice(0, 4000)}` : 'Sem propostas guardadas.');
+    }
+    if (estado.pendente) console.log(`\nHá uma medição de ${data(estado.pendente.data)} esperando as propostas (--guardar-propostas).`);
     return;
   }
 
@@ -618,36 +682,44 @@ function principal() {
       saida.push('');
       saida.push(`Cópia da equipe neste computador: ${versao.pasta}${versao.commit ? ` (instalada a partir do commit ${String(versao.commit).slice(0, 7)})` : ''}.`);
     }
-    const anterior = lerJson(arquivoUltima);
-    const medicaoAnterior = anterior && anterior.medicao ? lerJson(anterior.medicao) : null;
-    if (medicaoAnterior && medicaoAnterior.indicadores) {
+    const medicaoAnterior = estado.medicao ? lerJson(estado.medicao) : null;
+    const mesmaBase = (estado.dias ?? o.dias) === o.dias && (estado.filtro || null) === (o.projeto || null);
+    if (medicaoAnterior && medicaoAnterior.indicadores && mesmaBase) {
       saida.push('');
-      saida.push(`## Desde a última retrospectiva (${data(anterior.data)})`);
+      saida.push(`## Desde a última retrospectiva (${data(estado.data)})`);
       saida.push('');
       saida.push(comparacao(medicaoAnterior.indicadores, r.indicadores));
-      const prop = anterior.propostas ? lerTexto(anterior.propostas) : null;
-      if (prop) {
-        saida.push('');
-        saida.push('### Propostas daquela retrospectiva');
-        saida.push('');
-        saida.push(prop.slice(0, 4000));
-      }
+    } else if (medicaoAnterior) {
+      saida.push('');
+      saida.push(`A última retrospectiva (${data(estado.data)}) usou outro período ou outro projeto: sem comparação de números desta vez.`);
     } else {
       saida.push('');
-      saida.push('Primeira retrospectiva: esta medição vira a base de comparação da próxima.');
+      saida.push('Primeira retrospectiva: esta medição vira a base de comparação da próxima, quando as propostas forem guardadas.');
+    }
+    const prop = estado.propostas ? lerTexto(estado.propostas) : null;
+    if (prop) {
+      saida.push('');
+      saida.push('### Propostas da última retrospectiva');
+      saida.push('');
+      saida.push(prop.slice(0, 4000));
     }
     if (r.sessoes) {
       fs.mkdirSync(diario, { recursive: true });
-      const arq = path.join(diario, `medicao-${carimbo()}.json`);
+      const arq = arquivoNovo(diario, 'medicao', '.json');
       fs.writeFileSync(arq, JSON.stringify(r, null, 2));
-      fs.writeFileSync(arquivoUltima, JSON.stringify({ data: new Date().toISOString(), medicao: arq, propostas: null }, null, 2));
+      gravarEstado({ ...estado, pendente: { data: new Date().toISOString(), medicao: arq, dias: o.dias, filtro: o.projeto || null } });
       saida.push('');
-      saida.push(`Medição guardada em ${arq}.`);
+      saida.push(`Medição guardada em ${arq}. Ela vira a base quando as propostas forem guardadas (--guardar-propostas).`);
     }
   }
   console.log(saida.join('\n'));
 }
 
 // Só roda como programa; importado pelos testes, expõe as funções.
-const normalizar = (p) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
-if (process.argv[1] && normalizar(process.argv[1]) === normalizar(fileURLToPath(import.meta.url))) principal();
+// Compara o caminho real: chamado por um atalho (junção, symlink), também roda.
+const real = (p) => {
+  let r = path.resolve(p);
+  try { r = fs.realpathSync(r); } catch { /* fica o caminho dado */ }
+  return process.platform === 'win32' ? r.toLowerCase() : r;
+};
+if (process.argv[1] && real(process.argv[1]) === real(fileURLToPath(import.meta.url))) principal();

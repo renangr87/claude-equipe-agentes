@@ -88,9 +88,11 @@ if ($temNode) {
 }
 
 # 2. Repeticao: nada muda, nenhum backup novo
+$versaoAntes = [System.IO.File]::ReadAllText((Join-Path $d1 'equipe-versao.json'), $utf8)
 $r = Instalar $d1
 Conferir 'repeticao: saiu com 0' ($r.codigo -eq 0)
 Conferir 'repeticao: sem backup' (@(Get-ChildItem -LiteralPath $d1 -Recurse -Filter '*.bak-*').Count -eq 0)
+Conferir 'repeticao: versao instalada nao foi regravada' ([System.IO.File]::ReadAllText((Join-Path $d1 'equipe-versao.json'), $utf8) -ceq $versaoAntes)
 
 # 3. Mescla com settings.json existente
 $d3 = Join-Path $base 'mescla'
@@ -126,15 +128,20 @@ foreach ($regra in @($retiradas.ask)) { Conferir "retiradas: '$regra' nao esta e
 if ($temNode) {
     $d3c = Join-Path $base 'hooks-usuario'
     New-Item -ItemType Directory -Force -Path $d3c | Out-Null
-    $inicial = '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo","args":["oi"]}]},{"hooks":[{"type":"command","command":"node","args":["C:/velho/.claude/hooks/equipe-boletim.mjs"],"timeout":5}]}],"Stop":[{"hooks":[{"type":"command","command":"meu-stop"}]}]}}'
+    # Um hook do usuario foi acrescentado dentro do grupo antigo da equipe, e outro do
+    # usuario tem nome parecido com os da equipe: os dois ficam.
+    $inicial = '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo","args":["oi"]}]},{"hooks":[{"type":"command","command":"node","args":["C:/velho/.claude/hooks/equipe-boletim.mjs"],"timeout":5},{"type":"command","command":"meu-no-grupo"}]}],"Stop":[{"hooks":[{"type":"command","command":"node","args":["C:/meus/hooks/equipe-outro.mjs"]}]}]}}'
     [System.IO.File]::WriteAllText((Join-Path $d3c 'settings.json'), $inicial, $utf8)
     $r = Instalar $d3c
     $s = Ler-Json (Join-Path $d3c 'settings.json')
     $ini = @($s.hooks.SessionStart)
     Conferir 'hooks: saiu com 0' ($r.codigo -eq 0)
-    Conferir 'hooks: manteve o hook do usuario' ($ini.Count -eq 2 -and @($ini[0].hooks)[0].command -eq 'echo')
-    Conferir 'hooks: trocou a entrada antiga da equipe' ($ini.Count -eq 2 -and @($ini[1].hooks)[0].timeout -eq 15 -and [string](@(@($ini[1].hooks)[0].args)[0]) -notlike 'C:/velho/*')
-    Conferir 'hooks: manteve outro evento do usuario' (@(@($s.hooks.Stop)[0].hooks)[0].command -eq 'meu-stop')
+    Conferir 'hooks: manteve o hook do usuario' ($ini.Count -eq 3 -and @($ini[0].hooks)[0].command -eq 'echo')
+    Conferir 'hooks: manteve o hook do usuario que estava no grupo da equipe' ($ini.Count -eq 3 -and @($ini[1].hooks).Count -eq 1 -and @($ini[1].hooks)[0].command -eq 'meu-no-grupo')
+    Conferir 'hooks: trocou a entrada antiga da equipe' ($ini.Count -eq 3 -and @($ini[2].hooks)[0].timeout -eq 15 -and [string](@(@($ini[2].hooks)[0].args)[0]) -notlike 'C:/velho/*')
+    $todosArgs = @($ini | ForEach-Object { @($_.hooks) } | ForEach-Object { @($_.args) }) -join ' '
+    Conferir 'hooks: nenhuma entrada antiga da equipe sobrou' ($todosArgs -notmatch 'C:/velho/')
+    Conferir 'hooks: manteve o hook do usuario de nome parecido' ([string](@(@(@($s.hooks.Stop)[0].hooks)[0].args)[0]) -eq 'C:/meus/hooks/equipe-outro.mjs')
     Conferir 'hooks: um backup so, com bloqueios e hooks' (@(Get-ChildItem -LiteralPath $d3c -Filter 'settings.json.bak-*').Count -eq 1)
     $r = Instalar $d3c
     Conferir 'hooks: repeticao nao muda nada' ($r.texto -match 'hooks ja presentes')

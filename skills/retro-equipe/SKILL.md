@@ -32,7 +32,8 @@ Compare os números com a tabela abaixo. Os limites são pontos de partida, não
 | Mais de 20 leituras do mestre por sessão, ou mestre acima de 70% do custo | o mestre lê em vez de delegar; sessões longas | reforçar "Quando delegar"; sessões mais curtas |
 | Uma compactação ou mais por sessão | sessões longas demais | uma sessão por tarefa; plano em `.revisao/plano.md` |
 | O mesmo bloqueio da guarda 3 vezes ou mais | o agente não sabe o limite, ou o comando é legítimo e deveria passar | se for legítimo e seguro: caso de teste em `testes/casos-guarda.txt` e ajuste na guarda; se não: uma frase no prompt do agente dizendo o que fazer no lugar |
-| Esperas por aprovação | ação da lista de confirmação no meio da tarefa | levar a ação para o fim (regra "O que pede confirmação fica para o fim"); conexão só de leitura quando houver |
+| Pedidos de aprovação respondidos pelo usuário (a sessão parou esperando) | ação da lista de confirmação no meio da tarefa | levar a ação para o fim (regra "O que pede confirmação fica para o fim"); conexão só de leitura quando houver |
+| Muitas ações barradas pelo modo Auto | o agente tenta algo que o classificador considera arriscado ou fora do pedido | frase no prompt do agente dizendo o caminho certo; nunca liberar a ação sem o OK do usuário |
 | Mais de 30% das revisões reprovadas | briefing do implementador sem critério claro, ou item do checklist do revisor que o implementador não conhece | contrato de briefing; copiar o item do checklist para o prompt do implementador |
 | Mais de 20% das tarefas do implementador não concluídas | escopo ou contexto faltando no briefing | contrato de briefing; nota de área |
 | Subidas de modelo frequentes num agente | o modelo padrão é fraco para aquele projeto | agente próprio no projeto (`.claude/agents/<nome>.md`) com modelo maior |
@@ -79,4 +80,4 @@ Escreva as propostas, as aplicadas e as recusadas, cada uma com o indicador que 
 node "__PASTA_CLAUDE__/hooks/equipe-medir.mjs" --guardar-propostas .revisao/retro-propostas.md
 ```
 
-A próxima retrospectiva mostra essas propostas ao lado dos números novos. É assim que se sabe o que funcionou.
+Guarde sempre, mesmo que o usuário não aplique nenhuma proposta: é isso que conclui a retrospectiva. A medição deste passo só vira a base de comparação quando as propostas são guardadas. A próxima retrospectiva mostra essas propostas ao lado dos números novos, e é assim que se sabe o que funcionou.
