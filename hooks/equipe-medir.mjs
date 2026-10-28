@@ -60,7 +60,7 @@ function custo(modelo, u) {
 
 // ---------- leitura das transcrições ----------
 // Só as linhas que interessam são convertidas: o resto (pedidos, anexos) nem é lido.
-const INTERESSA = ['"assistant"', 'tool_result', 'compact_boundary', 'cost-state', 'isApiErrorMessage'];
+const INTERESSA = ['"assistant"', 'tool_result', 'compact_boundary', 'cost-state', 'isApiErrorMessage', 'agent-message'];
 
 // Lê em blocos de 4 MB: sessão longa pode passar do tamanho máximo de texto do Node.
 function* linhas(arquivo) {
@@ -112,13 +112,29 @@ const RECUSA = /doesn't want to proceed|tool use was rejected/i;
 const BARRADO = /denied by the Claude Code auto mode classifier/i;
 const MAPA_CONSULTA = /^mcp__codebase-memory__(search_graph|search_code|trace_path|query_graph|get_code_snippet|get_architecture|detect_changes)$/;
 
+// Agentes em segundo plano não devolvem o relatório no resultado da chamada: ele chega como
+// mensagem na fila da sessão principal (anexo "queued_command" e a linha "enqueue" da fila,
+// com o mesmo texto). Guarda o último relatório de cada agente; só a palavra-chave do status
+// sai daqui, nunca o texto.
+const MARCA_RELATORIO = 'The report follows:';
+function guardarRelatorios(texto, mapa) {
+  for (const m of texto.matchAll(/<agent-message from="([^"]+)">([\s\S]*?)(?=<agent-message from="|$)/g)) {
+    if (!m[2].includes('[Subagent hand-back]')) continue;
+    // Sem o marcador, o cabeçalho mudou de formato: não adivinha (o texto fixo poderia citar um status).
+    const i = m[2].indexOf(MARCA_RELATORIO);
+    if (i < 0) continue;
+    const relatorio = m[2].slice(i + MARCA_RELATORIO.length).replace(/<\/agent-message>\s*$/, '').replace(/^ {2}/gm, '').trim();
+    if (relatorio) mapa.set(m[1], relatorio);
+  }
+}
+
 function novaAnalise() {
   return {
     msgs: new Map(), ferramentas: {}, usos: new Map(), resultados: new Set(), vistos: new Set(),
     esperas: [], perguntas: [], bloqueios: [], recusas: 0, compactacoes: 0, errosApi: 0,
     aprovacoes: [], barrados: [], recusasUsuario: 0, recusasTexto: 0, barradosTexto: [], temDecisoes: false,
     primeiro: null, ultimo: null, ultimoTs: null, cwd: null, custos: new Map(), ultimoTexto: '',
-    agentes: [], tipoPorAgente: new Map(),
+    agentes: [], tipoPorAgente: new Map(), relatorios: new Map(),
   };
 }
 
@@ -146,6 +162,9 @@ function analisar(arquivo, desdeMs, r = novaAnalise()) {
       if (r.ultimo === null || ts > r.ultimo) r.ultimo = ts;
     }
     if (d.type === 'system' && d.subtype === 'compact_boundary') r.compactacoes++;
+    const fila = d.type === 'attachment' && d.attachment && d.attachment.type === 'queued_command' ? d.attachment.prompt
+      : d.type === 'queue-operation' && d.operation === 'enqueue' ? d.content : null;
+    if (typeof fila === 'string') guardarRelatorios(fila, r.relatorios);
     if (d.isApiErrorMessage) r.errosApi++;
     if (d.type === 'assistant' && d.message) {
       const m = d.message;
@@ -335,7 +354,8 @@ export function medir({ dias = 7, projeto = '', raiz = '' } = {}) {
           usouApoio: nomesF.some((x) => x.startsWith('mcp__apoio-local__') && x !== 'mcp__apoio-local__status_local'),
           bloqueios: a.bloqueios,
           ...decisoes(a),
-          status: statusDoRelatorio(tipo, a.ultimoTexto),
+          // Relatório entregue por mensagem (segundo plano) vale mais que o último texto do agente.
+          status: statusDoRelatorio(tipo, principal.relatorios.has(id) ? principal.relatorios.get(id) : a.ultimoTexto),
         });
       }
       // Formato antigo: mensagens de subagente dentro do arquivo da sessão.

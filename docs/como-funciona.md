@@ -121,7 +121,7 @@ Não. Pedido de opinião não é pedido de execução: a regra manda responder e
 Só quando você pedir, e o comando ainda pede a sua confirmação por causa do bloqueio `ask`.
 
 **O verificador pode rodar qualquer comando?**
-Não. Uma guarda confere cada comando contra `.claude/verificador-comandos.txt` do projeto e recusa o resto. A guarda só aceita a lista quando ela está em commit, então uma mudança feita por qualquer agente aparece no git antes de valer. Pelas ferramentas de arquivo, mudar a lista também pede a sua aprovação, porque `.claude/` é pasta protegida.
+Não. Uma guarda confere cada comando contra `.claude/verificador-comandos.txt` do projeto e recusa o resto. O comando tem de ser a linha da lista, caractere por caractere (o mestre a copia no briefing); se for barrado, o verificador roda a linha mais parecida da lista, sem improvisar. A guarda só aceita a lista quando ela está em commit, então uma mudança feita por qualquer agente aparece no git antes de valer. Pelas ferramentas de arquivo, mudar a lista também pede a sua aprovação, porque `.claude/` é pasta protegida.
 
 **Por que o diff do revisor fica em `.revisao/` e não numa pasta temporária?**
 Ler fora da pasta do projeto pede permissão, e escrever em `.claude/` também. `.revisao/` fica dentro do projeto e tem um `.gitignore` próprio com `*`, então não pede nada e não entra em commit.

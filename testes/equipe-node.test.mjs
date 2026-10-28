@@ -413,6 +413,50 @@ test('medidor: status do verificador pelo número de falhas', async () => {
   assert.deepEqual(r.porTipo.verificador.status, { passou: 2, 'com falha': 2 });
 });
 
+// Agente em segundo plano: o resultado da chamada só avisa que o relatório foi entregue como
+// mensagem; o texto está na fila da sessão principal (anexo e linha "enqueue", mesmo texto).
+function mensagemDeRelatorio(agente, relatorio) {
+  const cabecalho = '[Subagent hand-back] Este agente terminou. Texto fixo do cabeçalho, com a palavra status e veredito: aprovado. The report follows:\n';
+  return '<agent-message from="' + agente + '">\n' + cabecalho + relatorio.split('\n').map((l) => '  ' + l).join('\n');
+}
+
+test('medidor: lê o relatório de agente em segundo plano pela mensagem na fila da sessão', () => {
+  const claude = tmp('claude-handback');
+  const dir = path.join(claude, 'projects', '-p');
+  const cwd = path.join(os.tmpdir(), 'app-fila');
+  const uso = { input_tokens: 1, output_tokens: 1 };
+  const chamada = (uuid, min, id, tipo) => linha({ type: 'assistant', uuid, timestamp: iso(min), cwd, message: { id: 'm' + uuid, model: 'claude-opus-5-5', usage: uso, content: [{ type: 'tool_use', id, name: 'Agent', input: { subagent_type: tipo } }] } });
+  const aviso = (uuid, min, id, agente) => linha({ type: 'user', uuid, timestamp: iso(min), cwd, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'This agent\'s report was delivered to you as a message from "' + agente + '" (its SubagentHandback call).' }] }, toolUseResult: { agentId: agente } });
+  const entrega = (uuid, min, texto) => [
+    linha({ type: 'queue-operation', operation: 'enqueue', timestamp: iso(min), content: texto }),
+    linha({ type: 'attachment', uuid, timestamp: iso(min), cwd, attachment: { type: 'queued_command', prompt: texto } }),
+  ];
+  escrever(path.join(dir, 's.jsonl'), [
+    chamada('c1', 0, 't1', 'implementador'),
+    chamada('c2', 0, 't2', 'revisor'),
+    aviso('r1', 2, 't1', 'agimpl'),
+    aviso('r2', 2, 't2', 'agrev'),
+    ...entrega('q1', 3, mensagemDeRelatorio('agimpl', '- **Status**: feito com ressalvas\n- Arquivos: um.txt')),
+    // O revisor foi retomado: vale o último relatório. Depois dele, mensagens que não são
+    // relatório (sem o marcador de hand-back, ou sem "The report follows:") não podem trocá-lo.
+    ...entrega('q2', 4, mensagemDeRelatorio('agrev', '- Veredito: aprovado')),
+    ...entrega('q3', 5, mensagemDeRelatorio('agrev', 'Veredito: reprovado\nAchados: nenhum')),
+    ...entrega('q4', 6, '<agent-message from="agrev">\nconversa comum, sem relatório. Veredito: aprovado\n'),
+    ...entrega('q5', 7, '<agent-message from="agrev">\n[Subagent hand-back] cabeçalho novo, sem o marcador. Veredito: aprovado\n'),
+  ].join('\n') + '\n');
+  // Só o implementador é achado pelo mapa de agentes da sessão; o revisor, pelo .meta.json.
+  // Os dois arquivos de agente não têm status no último texto (o relatório não passa por ali).
+  const sub = path.join(dir, 's', 'subagents');
+  for (const id of ['agimpl', 'agrev']) {
+    if (id === 'agrev') escrever(path.join(sub, 'agent-agrev.meta.json'), JSON.stringify({ agentType: 'revisor' }));
+    escrever(path.join(sub, 'agent-' + id + '.jsonl'), linha({ type: 'assistant', uuid: 'x' + id, isSidechain: true, timestamp: iso(1), message: { id: 'mx' + id, model: 'claude-sonnet-5-5', usage: uso, content: [{ type: 'text', text: 'Terminei, o relatório vai por mensagem.' }] } }) + '\n');
+  }
+  const r = JSON.parse(medir(claude, '--json'));
+  assert.deepEqual(r.porTipo.implementador.status, { 'feito com ressalvas': 1 });
+  assert.deepEqual(r.porTipo.revisor.status, { reprovado: 1 });
+  assert.doesNotMatch(medir(claude), /um\.txt|Achados/);
+});
+
 test('medidor: repetir a retrospectiva não apaga a base nem as propostas', () => {
   const { claude } = sessoesFalsas();
   medir(claude, '--retro');
