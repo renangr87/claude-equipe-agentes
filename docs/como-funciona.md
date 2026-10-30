@@ -13,8 +13,8 @@ Um modelo caro é bom em decidir e ruim de desperdiçar. Buscar um arquivo, roda
 | Agente | Por que esse modelo e esse esforço |
 |---|---|
 | mestre: Opus, médio | um planejamento ruim gera briefing ruim, e todo o resto herda o erro. É onde a capacidade rende mais. O custo fica controlado porque ele não lê em massa. |
-| Explore: Haiku, alto | localizar e resumir é tarefa de volume. Não tem ferramenta de edição. O terminal serve só para o histórico do git, e uma guarda recusa o resto. Leva o nome do subagente embutido do Claude Code para substituí-lo: o embutido roda no modelo da sessão principal, que aqui é o Opus. |
-| implementador: Sonnet, alto | escrever código com escopo e critério definidos é o trabalho típico do Sonnet. Não pode criar outros agentes nem usar ferramentas de conectores, como as do Supabase. A guarda impede formatar a pasta inteira, e ele relata os arquivos que mudou, comparando o `git status` do começo e do fim. |
+| Explore: Haiku, alto | localizar e resumir é tarefa de volume. Não tem ferramenta de edição. O terminal serve só para o histórico do git, e uma guarda recusa o resto. Uma trava barra a leitura de mais de 300 linhas de uma vez e a 13ª leitura numa chamada: ele acha o trecho antes de ler. Leva o nome do subagente embutido do Claude Code para substituí-lo: o embutido roda no modelo da sessão principal, que aqui é o Opus. |
+| implementador: Sonnet, alto | escrever código com escopo e critério definidos é o trabalho típico do Sonnet. Não pode criar outros agentes nem usar ferramentas de conectores, como as do Supabase. A guarda impede formatar a pasta inteira e rodar comando que altera o banco (ele escreve a migração; quem aplica é o mestre, com a sua aprovação), e ele relata os arquivos que mudou, comparando o `git status` do começo e do fim. |
 | verificador: Haiku, baixo | rodar comandos e resumir falhas. A saída longa morre no contexto dele. A guarda só deixa passar os comandos da lista do projeto. Não carrega o `CLAUDE.md` nem as regras globais. |
 | revisor: Sonnet, alto | erro que passa pela revisão sai caro, então o esforço sobe aqui. Em área sensível e em migração de banco, o mestre chama em Opus. Não tem terminal: lê o diff que o mestre grava em `.revisao/diff.patch`. Não carrega o `CLAUDE.md` nem as regras globais: o briefing traz as regras do projeto que importam. |
 
@@ -86,11 +86,12 @@ O estado da rodada (onde paramos, o que falta) fica na memória do projeto ou em
 
 ## Como a equipe melhora com o uso
 
-Regra escrita depende de o agente lembrar dela. Por isso a equipe tem três mecanismos que não dependem de memória:
+Regra escrita depende de o agente lembrar dela. Por isso a equipe tem mecanismos que não dependem de memória:
 
 1. **Boletim de início:** um hook entrega ao mestre, no começo de cada sessão, os fatos do projeto (tamanho, mapa obrigatório, configuração, lista do verificador, notas de área, plano em andamento). Ele não gasta chamadas descobrindo isso.
 2. **Contexto dos subagentes:** outro hook entrega ao Explore, ao verificador e ao revisor o que eles não carregam do `CLAUDE.md`: como conferir e indexar o mapa, as notas de área, os comandos liberados, as regras do projeto. O briefing continua necessário, mas o essencial chega mesmo quando o mestre esquece.
-3. **Retrospectiva com números:** a `/retro-equipe` mede as sessões da semana, propõe no máximo 5 mudanças, cada uma com teste, e guarda o resultado. Na seguinte, compara os números antes e depois. Uma mudança que não mexeu no indicador sai ou é trocada.
+3. **Travas por hook:** o que mais custou na prática virou trava, não regra. A consulta que só lê não passa pela conexão do banco que escreve (cada uma pedia aprovação e parava a sessão), o Explore lê por trecho e tem teto de leituras, e o implementador não roda comando que altera o banco.
+4. **Retrospectiva com números:** a `/retro-equipe` mede as sessões da semana, propõe no máximo 5 mudanças, cada uma com teste, e guarda o resultado. Na seguinte, compara os números antes e depois. Uma mudança que não mexeu no indicador sai ou é trocada.
 
 O ciclo é: medir, propor, você escolher, testar, instalar, medir de novo. A equipe não se altera sozinha, porque uma regra mal ajustada piora tudo e porque mexer em permissões e hooks sem você seria um risco.
 

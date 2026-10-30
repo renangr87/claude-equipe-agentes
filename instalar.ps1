@@ -276,35 +276,6 @@ New-Item -ItemType Directory -Force -Path $pastaHooks   | Out-Null
 $pastaClaudeBruta = (Resolve-Path -LiteralPath $Destino).ProviderPath -replace '\\', '/'
 $pastaClaude = $pastaClaudeBruta -replace "'", "''"
 
-Write-Host "Guarda de terminal e scripts da equipe:"
-Copy-ComBackup (Join-Path (Join-Path $origem 'hooks') 'guarda-comandos.ps1') (Join-Path $pastaHooks 'guarda-comandos.ps1')
-foreach ($arquivo in (Get-ChildItem -LiteralPath (Join-Path $origem 'hooks') -Filter 'equipe-*.mjs' | Sort-Object Name)) {
-    Copy-ComBackup $arquivo.FullName (Join-Path $pastaHooks $arquivo.Name)
-}
-
-Write-Host "Subagentes:"
-$origemAgentes = Join-Path $origem 'agents'
-foreach ($arquivo in (Get-ChildItem -LiteralPath $origemAgentes -Filter '*.md' | Sort-Object Name)) {
-    $texto = (Read-Texto $arquivo.FullName).Replace('__PASTA_CLAUDE__', $pastaClaude)
-    Write-ComBackup $texto (Join-Path $pastaAgentes $arquivo.Name)
-}
-
-Write-Host "Regra global:"
-$origemRegra = Join-Path (Join-Path $origem 'rules') 'equipe-agentes.md'
-Copy-ComBackup $origemRegra (Join-Path $pastaRegras 'equipe-agentes.md')
-
-# Se o settings.json nasce nesta instalacao, nao ha o que guardar em backup depois.
-$settingsExistia = Test-Path -LiteralPath (Join-Path $Destino 'settings.json')
-
-if ($SemBloqueios) {
-    Write-Host "Bloqueios: ignorados (-SemBloqueios)."
-} else {
-    Write-Host "Bloqueios:"
-    $origemBloqueios = Join-Path (Join-Path $origem 'settings') 'global.json'
-    Merge-Bloqueios $origemBloqueios (Join-Path $Destino 'settings.json')
-}
-
-
 # ---------- Programas: PATH, winget e busca ----------
 
 # Recarrega o PATH do registro: programa recem-instalado nao aparece na sessao atual.
@@ -346,6 +317,46 @@ function Find-Node { return Find-Programa 'node' @($(if ($env:ProgramFiles) { Jo
 function Find-Git { return Find-Programa 'git' @($(if ($env:ProgramFiles) { Join-Path $env:ProgramFiles 'Git\cmd\git.exe' })) }
 function Find-Ollama { return Find-Programa 'ollama' @($(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama.exe' })) }
 function Find-Mapa { return Find-Programa 'codebase-memory-mcp' @($(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Programs\codebase-memory-mcp\codebase-memory-mcp.exe' })) }
+
+Write-Host "Guarda de terminal e scripts da equipe:"
+Copy-ComBackup (Join-Path (Join-Path $origem 'hooks') 'guarda-comandos.ps1') (Join-Path $pastaHooks 'guarda-comandos.ps1')
+foreach ($arquivo in (Get-ChildItem -LiteralPath (Join-Path $origem 'hooks') -Filter 'equipe-*.mjs' | Sort-Object Name)) {
+    Copy-ComBackup $arquivo.FullName (Join-Path $pastaHooks $arquivo.Name)
+}
+
+Write-Host "Regra global:"
+$origemRegra = Join-Path (Join-Path $origem 'rules') 'equipe-agentes.md'
+Copy-ComBackup $origemRegra (Join-Path $pastaRegras 'equipe-agentes.md')
+
+$nodeEquipe = Find-Node
+if (-not $nodeEquipe -and -not $SemBloqueios -and -not $SemHooks) {
+    Write-Host "Node.js (hooks e medicao da equipe):"
+    if (Instalar-ComWinget 'Node.js' 'OpenJS.NodeJS.LTS') { $nodeEquipe = Find-Node }
+}
+$nodeTexto = if ($nodeEquipe) { $nodeEquipe -replace '\\', '/' } else { 'node' }
+
+# Os agentes vem depois do Node: o hook de leitura do Explore roda no Node.
+# Nos hooks em Node, o caminho vai cru (argumento de programa); na guarda, vai entre aspas
+# simples do PowerShell, onde aspa simples vira duas.
+Write-Host "Subagentes:"
+$origemAgentes = Join-Path $origem 'agents'
+foreach ($arquivo in (Get-ChildItem -LiteralPath $origemAgentes -Filter '*.md' | Sort-Object Name)) {
+    $texto = (Read-Texto $arquivo.FullName).Replace('"__PASTA_CLAUDE__/hooks/equipe-', '"' + $pastaClaudeBruta + '/hooks/equipe-')
+    $texto = $texto.Replace('__PASTA_CLAUDE__', $pastaClaude).Replace('__NODE__', $nodeTexto)
+    Write-ComBackup $texto (Join-Path $pastaAgentes $arquivo.Name)
+}
+
+# Se o settings.json nasce nesta instalacao, nao ha o que guardar em backup depois.
+$settingsExistia = Test-Path -LiteralPath (Join-Path $Destino 'settings.json')
+
+if ($SemBloqueios) {
+    Write-Host "Bloqueios: ignorados (-SemBloqueios)."
+} else {
+    Write-Host "Bloqueios:"
+    $origemBloqueios = Join-Path (Join-Path $origem 'settings') 'global.json'
+    Merge-Bloqueios $origemBloqueios (Join-Path $Destino 'settings.json')
+}
+
 
 # ---------- Registro no .claude.json ----------
 
@@ -390,12 +401,12 @@ function Ler-Servidor([string]$nome) {
 
 # ---------- Hooks, retrospectiva e versao instalada ----------
 
-# Hook da equipe: o comando ou um argumento aponta para hooks/equipe-boletim.mjs ou
-# hooks/equipe-contexto.mjs, os dois que a equipe registra.
+# Hook da equipe: o comando ou um argumento aponta para um dos scripts que a equipe
+# registra no settings.json. Script do usuario com nome parecido fica.
 function Test-HookDaEquipe($h) {
     if ($null -eq $h) { return $false }
     foreach ($p in (@($h.command) + @($h.args))) {
-        if ($p -is [string] -and $p -match '[\\/]hooks[\\/]equipe-(boletim|contexto)\.mjs$') { return $true }
+        if ($p -is [string] -and $p -match '[\\/]hooks[\\/]equipe-(boletim|contexto|sql)\.mjs$') { return $true }
     }
     return $false
 }
@@ -427,6 +438,23 @@ function Merge-Hooks([string]$arquivoModelo, [string]$arquivoDestino, [string]$n
         return
     }
     $antes = $hooks | ConvertTo-Json -Depth 32 -Compress
+    # Evento que a equipe deixou de usar: sai o hook da equipe, fica o do usuario.
+    $eventosModelo = @($modelo.hooks.PSObject.Properties | ForEach-Object { $_.Name })
+    foreach ($nome in @($hooks.PSObject.Properties | ForEach-Object { $_.Name })) {
+        if ($eventosModelo -contains $nome) { continue }
+        $mantidos = @()
+        $mudou = $false
+        foreach ($g in @($hooks.$nome | Where-Object { $null -ne $_ })) {
+            if ($g -isnot [System.Management.Automation.PSCustomObject] -or -not $g.PSObject.Properties['hooks']) { $mantidos += $g; continue }
+            $todos = @($g.hooks | Where-Object { $null -ne $_ })
+            $resto = @($todos | Where-Object { -not (Test-HookDaEquipe $_) })
+            if ($resto.Count -eq $todos.Count) { $mantidos += $g; continue }
+            $mudou = $true
+            if ($resto.Count -gt 0) { $g.hooks = $resto; $mantidos += $g }
+        }
+        if (-not $mudou) { continue }
+        if ($mantidos.Count -gt 0) { $hooks.$nome = $mantidos } else { $hooks.PSObject.Properties.Remove($nome) }
+    }
     foreach ($evento in $modelo.hooks.PSObject.Properties) {
         $grupos = @()
         if ($hooks.PSObject.Properties[$evento.Name]) { $grupos = @($hooks.($evento.Name) | Where-Object { $null -ne $_ }) }
@@ -460,15 +488,9 @@ function Merge-Hooks([string]$arquivoModelo, [string]$arquivoDestino, [string]$n
         Write-Host "  copia de seguranca: $bak"
     }
     [System.IO.File]::WriteAllText($arquivoDestino, ($atual | ConvertTo-Json -Depth 32) + "`n", $utf8)
-    Write-Host "  hooks da equipe gravados (boletim de inicio e contexto dos subagentes): $arquivoDestino"
+    Write-Host "  hooks da equipe gravados (boletim de inicio, contexto dos subagentes e trava de SQL): $arquivoDestino"
 }
 
-$nodeEquipe = Find-Node
-if (-not $nodeEquipe -and -not $SemBloqueios -and -not $SemHooks) {
-    Write-Host "Node.js (hooks e medicao da equipe):"
-    if (Instalar-ComWinget 'Node.js' 'OpenJS.NodeJS.LTS') { $nodeEquipe = Find-Node }
-}
-$nodeTexto = if ($nodeEquipe) { $nodeEquipe -replace '\\', '/' } else { 'node' }
 
 Write-Host "Skills da equipe:"
 $origemSkills = Join-Path $origem 'skills'

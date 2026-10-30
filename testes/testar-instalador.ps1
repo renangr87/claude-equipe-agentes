@@ -53,16 +53,20 @@ $r = Instalar $d1
 Conferir 'limpa: saiu com 0' ($r.codigo -eq 0)
 foreach ($a in 'Explore', 'implementador', 'revisor', 'verificador') {
     $texto = [System.IO.File]::ReadAllText((Join-Path $d1 "agents\$a.md"), $utf8)
-    Conferir "limpa: $a.md sem marcador" (-not $texto.Contains('__PASTA_CLAUDE__'))
+    Conferir "limpa: $a.md sem marcador" (-not $texto.Contains('__PASTA_CLAUDE__') -and -not $texto.Contains('__NODE__'))
 }
+$explore = [System.IO.File]::ReadAllText((Join-Path $d1 'agents\Explore.md'), $utf8)
+$destinoBruto = (Resolve-Path -LiteralPath $d1).ProviderPath -replace '\\', '/'
+Conferir 'limpa: Explore com a trava de leitura no caminho real' ($explore.Contains('"' + $destinoBruto + '/hooks/equipe-leitura.mjs"'))
 Conferir 'limpa: guarda copiada' (Test-Path (Join-Path $d1 'hooks\guarda-comandos.ps1'))
 Conferir 'limpa: regra copiada' (Test-Path (Join-Path $d1 'rules\equipe-agentes.md'))
 $s = Ler-Json (Join-Path $d1 'settings.json')
 Conferir 'limpa: todas as regras deny' (@($s.permissions.deny).Count -eq $nDeny)
 Conferir 'limpa: todas as regras ask' (@($s.permissions.ask).Count -eq $nAsk)
+Conferir 'limpa: comando de banco no terminal pede aprovacao' ((@($s.permissions.ask) -contains 'Bash(*supabase db push*)') -and (@($s.permissions.ask) -contains 'PowerShell(*psql *)'))
 
 # 1b. Scripts, skill da retrospectiva, versao instalada e hooks da equipe
-foreach ($n in 'equipe-comum.mjs', 'equipe-boletim.mjs', 'equipe-contexto.mjs', 'equipe-medir.mjs') {
+foreach ($n in 'equipe-comum.mjs', 'equipe-boletim.mjs', 'equipe-contexto.mjs', 'equipe-medir.mjs', 'equipe-sql.mjs', 'equipe-leitura.mjs') {
     Conferir "limpa: $n copiado" (Test-Path (Join-Path $d1 "hooks\$n"))
 }
 $caminhoSkill = Join-Path $d1 'skills\retro-equipe\SKILL.md'
@@ -130,7 +134,8 @@ if ($temNode) {
     New-Item -ItemType Directory -Force -Path $d3c | Out-Null
     # Um hook do usuario foi acrescentado dentro do grupo antigo da equipe, e outro do
     # usuario tem nome parecido com os da equipe: os dois ficam.
-    $inicial = '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo","args":["oi"]}]},{"hooks":[{"type":"command","command":"node","args":["C:/velho/.claude/hooks/equipe-boletim.mjs"],"timeout":5},{"type":"command","command":"meu-no-grupo"}]}],"Stop":[{"hooks":[{"type":"command","command":"node","args":["C:/meus/hooks/equipe-outro.mjs"]}]}]}}'
+    # Num evento que a equipe deixou de usar, sai so o hook da equipe.
+    $inicial = '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo","args":["oi"]}]},{"hooks":[{"type":"command","command":"node","args":["C:/velho/.claude/hooks/equipe-boletim.mjs"],"timeout":5},{"type":"command","command":"meu-no-grupo"}]}],"Stop":[{"hooks":[{"type":"command","command":"node","args":["C:/meus/hooks/equipe-outro.mjs"]}]}],"SubagentStop":[{"hooks":[{"type":"command","command":"node","args":["C:/velho/.claude/hooks/equipe-contexto.mjs"]},{"type":"command","command":"meu-stop"}]},{"hooks":[{"type":"command","command":"node","args":["C:/velho/.claude/hooks/equipe-boletim.mjs"]}]}],"Notification":[{"hooks":[{"type":"command","command":"node","args":["C:/velho/.claude/hooks/equipe-sql.mjs"]}]}]}}'
     [System.IO.File]::WriteAllText((Join-Path $d3c 'settings.json'), $inicial, $utf8)
     $r = Instalar $d3c
     $s = Ler-Json (Join-Path $d3c 'settings.json')
@@ -142,6 +147,11 @@ if ($temNode) {
     $todosArgs = @($ini | ForEach-Object { @($_.hooks) } | ForEach-Object { @($_.args) }) -join ' '
     Conferir 'hooks: nenhuma entrada antiga da equipe sobrou' ($todosArgs -notmatch 'C:/velho/')
     Conferir 'hooks: manteve o hook do usuario de nome parecido' ([string](@(@(@($s.hooks.Stop)[0].hooks)[0].args)[0]) -eq 'C:/meus/hooks/equipe-outro.mjs')
+    $parado = @($s.hooks.SubagentStop)
+    Conferir 'hooks: evento retirado perdeu so o hook da equipe' ($parado.Count -eq 1 -and @($parado[0].hooks).Count -eq 1 -and @($parado[0].hooks)[0].command -eq 'meu-stop')
+    Conferir 'hooks: evento retirado so com hook da equipe saiu' ($null -eq $s.hooks.PSObject.Properties['Notification'])
+    $sql = @(@($s.hooks.PreToolUse) | Where-Object { $_.matcher -eq 'mcp__.*__execute_sql' })
+    Conferir 'hooks: hook de SQL registrado' ($sql.Count -eq 1 -and [string](@(@($sql[0].hooks)[0].args)[0]) -like '*/hooks/equipe-sql.mjs')
     Conferir 'hooks: um backup so, com bloqueios e hooks' (@(Get-ChildItem -LiteralPath $d3c -Filter 'settings.json.bak-*').Count -eq 1)
     $r = Instalar $d3c
     Conferir 'hooks: repeticao nao muda nada' ($r.texto -match 'hooks ja presentes')

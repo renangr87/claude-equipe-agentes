@@ -23,8 +23,9 @@
                    a um. Pasta, '.', curinga, variavel ou nenhum arquivo sao bloqueados,
                    em qualquer parte de um comando composto. Scripts de formatacao
                    (npm run format e parecidos) sao bloqueados. Tambem bloqueia o git que
-                   descarta trabalho (checkout, restore, reset, stash, clean, switch) e
-                   git show/cat-file gravado em arquivo.
+                   descarta trabalho (checkout, restore, reset, stash, clean, switch),
+                   git show/cat-file gravado em arquivo e os comandos que alteram o banco
+                   remoto ou apagam dados (supabase db push, psql, prisma migrate reset...).
 
   Compativel com Windows PowerShell 5.1 e PowerShell 7. Os casos de teste ficam em
   testes/casos-guarda.txt.
@@ -228,6 +229,41 @@ function Testar-Descarte([string]$texto) {
     }
 }
 
+# Comandos de terminal que alteram o banco remoto ou apagam dados (so o mestre, com o OK do
+# usuario). O texto comparado comeca no programa, em minusculas: "supabase db push --linked".
+# O implementador escreve a migracao; quem aplica e o mestre.
+# ( -\S+( [^-\s]\S*)?)* pula opcoes globais, com ou sem valor (--workdir pasta, --debug).
+$bancoSempre = '^(supabase( -\S+( [^-\s]\S*)?)* (db (push|remote)|migration (repair|squash)|functions (deploy|delete)|secrets (set|unset)|projects (create|delete)|branches (create|delete|update|pause)|storage (rm|mv|cp))|psql|dropdb|pg_restore|prisma( -\S+( [^-\s]\S*)?)* (migrate (reset|deploy|resolve)|db (push|execute))|drizzle-kit (push|drop|migrate))( |$)'
+# Estes so mexem no banco local, a menos que apontem para o remoto.
+$bancoRemoto = '^supabase( -\S+( [^-\s]\S*)?)* (db reset|migration (up|down))( .*)? --?(linked|db-url|project-ref)( |=|$)'
+$programasBanco = '^(supabase|psql|dropdb|pg_restore|prisma|drizzle-kit)$'
+
+function Testar-Banco([string]$texto) {
+    foreach ($parte in ($texto -split '&&|\|\||[;&|\r\n]')) {
+        $seg = ($parte -replace '\s+', ' ').Trim()
+        if (-not $seg) { continue }
+        $tokens = Separar-Tokens $seg
+        if ($tokens.Count -eq 0) { continue }
+        $nomes = @($tokens | ForEach-Object { Nome-Programa $_ })
+        # Mensagem de commit, busca e eco so citam o comando.
+        if ($nomes[0] -match $comandosDeTexto) { continue }
+        foreach ($t in $tokens) {
+            # Texto entre aspas pode ser outro comando (bash -c "...").
+            if ($t -match '\s') { Testar-Banco $t }
+        }
+        for ($i = 0; $i -lt $tokens.Count; $i++) {
+            if ($nomes[$i] -notmatch $programasBanco) { continue }
+            $resto = @()
+            if ($i + 1 -lt $tokens.Count) { $resto = @($tokens[($i + 1)..($tokens.Count - 1)]) }
+            $linha = ((@($nomes[$i]) + $resto) -join ' ').ToLowerInvariant()
+            if ($linha -match $bancoSempre -or $linha -match $bancoRemoto) {
+                Bloquear "comando que altera o banco ou aponta para o banco remoto ('$($nomes[$i])'). Escreva a migracao ou o script e relate ao mestre: quem aplica e ele, com o OK do usuario."
+            }
+            break
+        }
+    }
+}
+
 try {
     # Le a entrada em bytes e detecta a codificacao: o Windows PowerShell 5.1 nao
     # usa UTF-8 por padrao no console.
@@ -265,6 +301,7 @@ try {
     if ($Perfil -eq 'implementador') {
         Testar-Formatadores $comando ([string]$entrada.cwd)
         Testar-Descarte $comando
+        Testar-Banco $comando
         exit 0
     }
 

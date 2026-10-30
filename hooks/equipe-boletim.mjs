@@ -7,6 +7,7 @@
 // a retrospectiva está pendente. Só lê; nunca bloqueia; qualquer erro vira silêncio.
 import path from 'node:path';
 import { fatosDoProjeto, lerEntrada, lerJson, pastaDiario, saidaContexto, sessoesDesde, versaoDaEquipe } from './equipe-comum.mjs';
+import { CONEXAO_LEITURA, leituraDeclarada } from './equipe-sql.mjs';
 
 const DIAS_RETRO = 7;
 const SESSOES_RETRO = 10;
@@ -39,6 +40,12 @@ function linhasDoProjeto(fatos, origem, l) {
     l.push('- .claude/verificador-comandos.txt tem mudança fora de commit (ou não está no git): a guarda bloqueia o verificador até o commit.');
   } else {
     l.push(`- Verificador: ${fatos.comandos.length} comando(s) liberado(s) em .claude/verificador-comandos.txt, em commit.`);
+  }
+
+  // Sem a conexão só de leitura, o hook de SQL barra toda consulta ao banco: o usuário
+  // precisa saber logo, uma vez.
+  if (origem === 'startup' && fatos.modulos.some((m) => m === 'supabase' || m.endsWith('/supabase')) && !leituraDeclarada(fatos.raiz)) {
+    l.push(`- Projeto com Supabase sem a conexão só de leitura (${CONEXAO_LEITURA}): consulta ao banco pela conexão que escreve é barrada pela equipe. Avise o usuário uma vez, no fim da primeira tarefa, para configurá-la (README da equipe, "Consultas ao banco sem pedir aprovação").`);
   }
 
   if (fatos.notas.length) {

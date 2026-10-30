@@ -28,11 +28,11 @@ Compare os números com a tabela abaixo. Os limites são pontos de partida, não
 | Sinal | Causa provável | Mudança que costuma resolver |
 |---|---|---|
 | Explore consultou o mapa em menos da metade das chamadas, em projeto médio ou grande | contexto automático não chegou (hooks não instalados) ou o Explore ignora | conferir se o boletim aparece no início da sessão; reforçar o prompt do Explore; em último caso, Explore em `sonnet` só naquele projeto |
-| Mais de 150 mil tokens de entrada por chamada do Explore, ou passos de Haiku acima de 100 mil | perguntas grandes demais, leitura de arquivos inteiros | dividir as perguntas; nota de área dizendo por onde começar |
+| Mais de 150 mil tokens de entrada por chamada do Explore, ou passos de Haiku acima de 100 mil | perguntas grandes demais, leitura de arquivos inteiros | dividir as perguntas; nota de área dizendo por onde começar; apertar a trava de leitura (`EQUIPE_EXPLORE_LEITURAS`, `EQUIPE_EXPLORE_LINHAS`) |
 | Mais de 20 leituras do mestre por sessão, ou mestre acima de 70% do custo | o mestre lê em vez de delegar; sessões longas | reforçar "Quando delegar"; sessões mais curtas |
 | Uma compactação ou mais por sessão | sessões longas demais | uma sessão por tarefa; plano em `.revisao/plano.md` |
 | O mesmo bloqueio da guarda 3 vezes ou mais | o agente não sabe o limite, ou o comando é legítimo e deveria passar | se for legítimo e seguro: caso de teste em `testes/casos-guarda.txt` e ajuste na guarda; se não: uma frase no prompt do agente dizendo o que fazer no lugar |
-| Pedidos de aprovação respondidos pelo usuário (a sessão parou esperando) | ação da lista de confirmação no meio da tarefa | levar a ação para o fim (regra "O que pede confirmação fica para o fim"); conexão só de leitura quando houver |
+| Pedidos de aprovação respondidos pelo usuário (a sessão parou esperando) | ação da lista de confirmação no meio da tarefa | levar a ação para o fim (regra "O que pede confirmação fica para o fim"); se for `execute_sql`, conferir se o projeto tem a `supabase-leitura` configurada e autenticada (a trava de SQL só redireciona) |
 | Muitas ações barradas pelo modo Auto | o agente tenta algo que o classificador considera arriscado ou fora do pedido | frase no prompt do agente dizendo o caminho certo; nunca liberar a ação sem o OK do usuário |
 | Mais de 30% das revisões reprovadas | briefing do implementador sem critério claro, ou item do checklist do revisor que o implementador não conhece | contrato de briefing; copiar o item do checklist para o prompt do implementador |
 | Mais de 20% das tarefas do implementador não concluídas | escopo ou contexto faltando no briefing | contrato de briefing; nota de área |

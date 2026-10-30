@@ -155,3 +155,32 @@ implementador	0	Bash	git log --grep checkout
 implementador	0	Bash	git -C app log -1
 implementador	0	Bash	echo git reset --hard
 implementador	0	Bash	grep -rn "git checkout" lib
+# --- implementador: bloqueia comando que altera o banco remoto ou apaga dados
+implementador	2	Bash	supabase db push
+implementador	2	Bash	npx supabase db push --linked
+implementador	2	Bash	supabase --workdir app db push
+implementador	2	PowerShell	supabase db reset --linked
+implementador	2	Bash	supabase db reset --db-url=postgres://u@h/db
+implementador	2	Bash	supabase migration up --linked
+implementador	2	Bash	supabase migration repair --status applied 20260101
+implementador	2	Bash	supabase functions deploy enviar-email
+implementador	2	Bash	supabase secrets set CHAVE=valor
+implementador	2	Bash	cd app && supabase db push
+implementador	2	Bash	psql -h db.exemplo.supabase.co -c "drop table t"
+implementador	2	PowerShell	psql.exe -c "select 1"
+implementador	2	Bash	dropdb app_dev
+implementador	2	Bash	npx prisma migrate reset --force
+implementador	2	Bash	pnpm dlx prisma db push
+implementador	2	Bash	npx drizzle-kit push
+implementador	2	Bash	bash -c "supabase db push"
+# --- implementador: passa (banco local, comandos que so leem ou so citam)
+implementador	0	Bash	supabase db reset
+implementador	0	Bash	supabase start
+implementador	0	Bash	supabase migration new criar_pedidos
+implementador	0	Bash	supabase gen types typescript --local
+implementador	0	Bash	supabase migration list --linked
+implementador	0	Bash	npx prisma migrate dev --name inicial
+implementador	0	Bash	npx prisma generate
+implementador	0	Bash	echo supabase db push
+implementador	0	Bash	git commit -m "supabase db push depois"
+implementador	0	Bash	grep -rn "psql" scripts

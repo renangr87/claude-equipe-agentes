@@ -457,6 +457,40 @@ test('medidor: lê o relatório de agente em segundo plano pela mensagem na fila
   assert.doesNotMatch(medir(claude), /um\.txt|Achados/);
 });
 
+// Formato atual do Claude Code: o subagente termina chamando SubagentHandback com o relatório
+// em "message" (primeiro e segundo plano). O último texto do agente não é o relatório.
+test('medidor: lê o status do relatório entregue pelo SubagentHandback', () => {
+  const claude = tmp('claude-entrega');
+  const dir = path.join(claude, 'projects', '-p');
+  const uso = { input_tokens: 1, output_tokens: 1 };
+  escrever(path.join(dir, 's.jsonl'), linha({ type: 'assistant', uuid: 'x', timestamp: iso(0), cwd: '/p', message: { id: 'mx', model: 'claude-opus-5-5', usage: uso, content: [] } }) + '\n');
+  const sub = path.join(dir, 's', 'subagents');
+  let n = 0;
+  const texto = (min, t) => linha({ type: 'assistant', uuid: `t${++n}`, isSidechain: true, timestamp: iso(min), message: { id: `mt${n}`, model: 'claude-sonnet-5-5', usage: uso, content: [{ type: 'text', text: t }] } });
+  const entrega = (min, relatorio) => [
+    linha({ type: 'assistant', uuid: `e${++n}`, isSidechain: true, timestamp: iso(min), message: { id: `me${n}`, model: 'claude-sonnet-5-5', usage: uso, content: [{ type: 'tool_use', id: `h${n}`, name: 'SubagentHandback', input: { message: relatorio } }] } }),
+    linha({ type: 'user', uuid: `u${n}`, isSidechain: true, timestamp: iso(min), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `h${n}`, content: [{ type: 'text', text: '{"success":true,"message":"Report delivered to your caller."}' }] }] } }),
+  ];
+  const agentes = {
+    // O texto intermediário cita outro status; vale o da entrega.
+    imp: ['implementador', [texto(1, 'Vou rodar os testes. Status: parcial por enquanto.'), ...entrega(2, '- **Status**: feito\n- Arquivos: SEGREDO-imp.txt')]],
+    // Revisor retomado: entregou duas vezes, vale a última.
+    rev: ['revisor', [...entrega(1, '- **Veredito**: REPROVADO\n- Achados: SEGREDO-rev'), ...entrega(3, '- **Veredito**: APROVADO COM RESSALVAS')]],
+    ver: ['verificador', [texto(1, 'Rodando a lista.'), ...entrega(2, 'flutter test: 41 passed, 2 failed')]],
+    // Sem entrega nem texto: não pode virar "passou".
+    mudo: ['verificador', [linha({ type: 'assistant', uuid: 'm1', isSidechain: true, timestamp: iso(1), message: { id: 'mm1', model: 'claude-haiku-5-5', usage: uso, content: [{ type: 'tool_use', id: 'b1', name: 'Bash', input: { command: 'flutter test' } }] } })]],
+  };
+  for (const [id, [tipo, linhas]] of Object.entries(agentes)) {
+    escrever(path.join(sub, `agent-${id}.meta.json`), JSON.stringify({ agentType: tipo }));
+    escrever(path.join(sub, `agent-${id}.jsonl`), linhas.join('\n') + '\n');
+  }
+  const r = JSON.parse(medir(claude, '--json'));
+  assert.deepEqual(r.porTipo.implementador.status, { feito: 1 });
+  assert.deepEqual(r.porTipo.revisor.status, { 'aprovado com ressalvas': 1 });
+  assert.deepEqual(r.porTipo.verificador.status, { 'com falha': 1, 'sem status': 1 });
+  assert.doesNotMatch(medir(claude), /SEGREDO/);
+});
+
 test('medidor: repetir a retrospectiva não apaga a base nem as propostas', () => {
   const { claude } = sessoesFalsas();
   medir(claude, '--retro');
@@ -490,4 +524,164 @@ test('medidor: roda também quando chamado por um atalho (symlink)', (t) => {
     encoding: 'utf8', env: { ...process.env, EQUIPE_PASTA_CLAUDE: tmp('claude-atalho') },
   });
   assert.match(saida, /Nenhuma sessão encontrada/);
+});
+
+// ---------- hook de SQL: leitura não vai pela conexão que escreve ----------
+const SQL = path.join(HOOKS, 'equipe-sql.mjs');
+
+// Roda um hook de decisão (PreToolUse) e devolve o JSON da saída, ou null se ficou calado.
+function decisao(script, entrada, env = {}) {
+  const r = spawnSync(process.execPath, [script], {
+    input: typeof entrada === 'string' ? entrada : JSON.stringify(entrada),
+    encoding: 'utf8',
+    env: { ...process.env, CLAUDE_PROJECT_DIR: '', ...env },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  return r.stdout.trim() ? JSON.parse(r.stdout) : null;
+}
+
+test('sql: separa consulta só de leitura do resto', async () => {
+  const { somenteLeitura } = await import(pathToFileURL(SQL).href);
+  const leitura = [
+    'select * from pedidos',
+    "  SELECT count(*) FROM pedidos WHERE status = 'delete' -- update depois\n",
+    'with x as (select 1 as a) select * from x',
+    'explain select * from t',
+    "select jsonb_set(dados, '{a}', '1') from t",
+    '/* insert */ select 1; select 2;',
+    'show search_path',
+    'select "update" from t',
+    'select $$delete from t$$',
+  ];
+  const resto = [
+    '', '   ', null,
+    'insert into t values (1)',
+    'update t set a = 1',
+    'delete from t',
+    'with d as (delete from t returning *) select * from d',
+    'select * into novo from t',
+    'explain analyze delete from t',
+    'explain (analyze, buffers) select 1',
+    'select 1; drop table t',
+    'create table x (a int)',
+    'select * from t for update',
+    'select * from t for no key update',
+    'select * from t for share',
+    "select nextval('seq')",
+    'select pg_terminate_backend(1)',
+    "select set_config('role', 'x', false)",
+    'do $$ begin delete from t; end $$',
+    'vacuum', 'set role postgres', 'truncate t', 'grant all on t to x', 'call proc()', 'copy t to stdout',
+  ];
+  for (const s of leitura) assert.equal(somenteLeitura(s), true, `devia ser leitura: ${s}`);
+  for (const s of resto) assert.equal(somenteLeitura(s), false, `não devia ser leitura: ${s}`);
+});
+
+test('sql: barra leitura pela conexão que escreve e diz o caminho certo', () => {
+  const raiz = tmp('sql-proj');
+  const casa = tmp('sql-casa');
+  const env = { CLAUDE_PROJECT_DIR: raiz, HOME: casa, USERPROFILE: casa, CLAUDE_CONFIG_DIR: '' };
+  const chamada = (tool_name, query) => ({ hook_event_name: 'PreToolUse', cwd: raiz, tool_name, tool_input: { project_id: 'abc', query } });
+
+  // Sem a conexão de leitura configurada: barra e manda configurar.
+  let d = decisao(SQL, chamada('mcp__Supabase__execute_sql', 'select * from tabela_secreta'), env);
+  assert.equal(d.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(d.hookSpecificOutput.permissionDecisionReason, /mcp__supabase-leitura__execute_sql/);
+  assert.match(d.hookSpecificOutput.permissionDecisionReason, /ainda não tem a conexão/);
+  // O SQL nunca vai para a mensagem.
+  assert.doesNotMatch(d.hookSpecificOutput.permissionDecisionReason, /tabela_secreta/);
+
+  // Com a conexão declarada no .mcp.json do projeto: manda autenticar.
+  escrever(path.join(raiz, '.mcp.json'), JSON.stringify({ mcpServers: { 'supabase-leitura': { type: 'http', url: 'https://exemplo' } } }));
+  d = decisao(SQL, chamada('mcp__claude_ai_Supabase__execute_sql', 'with a as (select 1) select * from a'), env);
+  assert.equal(d.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(d.hookSpecificOutput.permissionDecisionReason, /falta autenticar/);
+
+  // Declarada no .claude.json do usuário, para este projeto.
+  fs.rmSync(path.join(raiz, '.mcp.json'));
+  escrever(path.join(casa, '.claude.json'), JSON.stringify({ projects: { [raiz.replace(/\\/g, '/')]: { mcpServers: { 'supabase-leitura': {} } } } }));
+  d = decisao(SQL, chamada('mcp__supabase__execute_sql', 'select 1'), env);
+  assert.match(d.hookSpecificOutput.permissionDecisionReason, /falta autenticar/);
+
+  // Escrita, a própria conexão de leitura, outra ferramenta e entrada quebrada: calado.
+  assert.equal(decisao(SQL, chamada('mcp__Supabase__execute_sql', 'update pedidos set a = 1'), env), null);
+  assert.equal(decisao(SQL, chamada('mcp__supabase-leitura__execute_sql', 'select 1'), env), null);
+  assert.equal(decisao(SQL, chamada('mcp__Supabase__apply_migration', 'select 1'), env), null);
+  assert.equal(decisao(SQL, '{quebrado', env), null);
+});
+
+test('boletim: avisa quando o projeto com Supabase não tem a conexão só de leitura', () => {
+  const raiz = projetoGrande();
+  const casa = tmp('casa-boletim');
+  const env = { HOME: casa, USERPROFILE: casa, CLAUDE_CONFIG_DIR: '' };
+  let t = rodar(BOLETIM, { source: 'startup', cwd: raiz }, env);
+  assert.match(t, /sem a conexão só de leitura \(supabase-leitura\)/);
+  // Na retomada não repete.
+  t = rodar(BOLETIM, { source: 'resume', cwd: raiz }, env);
+  assert.doesNotMatch(t, /sem a conexão só de leitura/);
+  // Com a conexão no .mcp.json do projeto, não avisa.
+  escrever(path.join(raiz, '.mcp.json'), JSON.stringify({ mcpServers: { 'supabase-leitura': { type: 'http', url: 'https://exemplo' } } }));
+  t = rodar(BOLETIM, { source: 'startup', cwd: raiz }, env);
+  assert.doesNotMatch(t, /sem a conexão só de leitura/);
+});
+
+// ---------- trava de leitura do Explore ----------
+const LEITURA = path.join(HOOKS, 'equipe-leitura.mjs');
+
+test('leitura do Explore: arquivo grande só por trecho', () => {
+  const claude = tmp('claude-leitura');
+  const pasta = tmp('leitura-arquivos');
+  const grande = path.join(pasta, 'grande.dart');
+  const pequeno = path.join(pasta, 'pequeno.dart');
+  escrever(grande, Array.from({ length: 500 }, (_, i) => `linha ${i + 1}`).join('\n') + '\n');
+  escrever(pequeno, 'a\nb\nc\n');
+  escrever(path.join(pasta, 'foto.png'), 'x'.repeat(10));
+  const env = { EQUIPE_PASTA_CLAUDE: claude };
+  const ler = (input) => decisao(LEITURA, { tool_name: 'Read', session_id: 's1', tool_input: input }, env);
+
+  const d = ler({ file_path: grande });
+  assert.equal(d.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(d.hookSpecificOutput.permissionDecisionReason, /mais de 300 linhas/);
+  assert.equal(ler({ file_path: grande, offset: 100, limit: 120 }), null);
+  assert.equal(ler({ file_path: grande, offset: 450 }), null); // só 51 linhas a partir daí
+  assert.equal(ler({ file_path: grande, limit: 1000 })?.hookSpecificOutput.permissionDecision, 'deny');
+  assert.equal(ler({ file_path: pequeno, limit: 1000 }), null);
+  assert.equal(ler({ file_path: pequeno }), null);
+  assert.equal(ler({ file_path: path.join(pasta, 'foto.png') }), null);
+  assert.equal(ler({ file_path: path.join(pasta, 'nao-existe.dart') }), null);
+  // Limite configurável.
+  assert.equal(decisao(LEITURA, { tool_name: 'Read', tool_input: { file_path: grande } }, { ...env, EQUIPE_EXPLORE_LINHAS: '600' }), null);
+  // Outra ferramenta e entrada quebrada: calado.
+  assert.equal(decisao(LEITURA, { tool_name: 'Grep', tool_input: { pattern: 'x' } }, env), null);
+  assert.equal(decisao(LEITURA, '{quebrado', env), null);
+});
+
+test('leitura do Explore: teto de leituras por chamada, contado por agente', () => {
+  const claude = tmp('claude-teto');
+  const pasta = tmp('teto-arquivos');
+  const arq = path.join(pasta, 'a.dart');
+  escrever(arq, 'a\n');
+  const env = { EQUIPE_PASTA_CLAUDE: claude, EQUIPE_EXPLORE_LEITURAS: '3' };
+  const ler = (extra) => decisao(LEITURA, { tool_name: 'Read', session_id: 'sess', tool_input: { file_path: arq }, ...extra }, env);
+
+  // Com o id do agente na entrada.
+  for (let i = 0; i < 3; i++) assert.equal(ler({ agent_id: 'ag1' }), null);
+  const d = ler({ agent_id: 'ag1' });
+  assert.match(d.hookSpecificOutput.permissionDecisionReason, /Teto de 3 leituras/);
+  // Outro Explore na mesma sessão tem a própria conta.
+  assert.equal(ler({ agent_id: 'ag2' }), null);
+
+  // Sem o id: acha o agente pela transcrição que contém esta chamada de ferramenta.
+  const dirProj = path.join(claude, 'projects', '-p');
+  const transcricao = path.join(dirProj, 'sess2.jsonl');
+  escrever(transcricao, '');
+  const sub = path.join(dirProj, 'sess2', 'subagents');
+  escrever(path.join(sub, 'agent-x9.jsonl'), linha({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'toolu_A', name: 'Read' }, { type: 'tool_use', id: 'toolu_B', name: 'Read' }, { type: 'tool_use', id: 'toolu_C', name: 'Read' }, { type: 'tool_use', id: 'toolu_D', name: 'Read' }] } }) + '\n');
+  const porTranscricao = (id) => decisao(LEITURA, { tool_name: 'Read', session_id: 'sess2', transcript_path: transcricao, tool_use_id: id, tool_input: { file_path: arq } }, env);
+  assert.equal(porTranscricao('toolu_A'), null);
+  assert.equal(porTranscricao('toolu_B'), null);
+  assert.equal(porTranscricao('toolu_C'), null);
+  assert.match(porTranscricao('toolu_D').hookSpecificOutput.permissionDecisionReason, /Teto de 3/);
+  // Sem como saber quem é: não conta (a leitura por trecho continua valendo).
+  for (let i = 0; i < 5; i++) assert.equal(decisao(LEITURA, { tool_name: 'Read', session_id: 'sess3', tool_input: { file_path: arq } }, env), null);
 });

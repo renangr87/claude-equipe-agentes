@@ -134,8 +134,20 @@ function novaAnalise() {
     esperas: [], perguntas: [], bloqueios: [], recusas: 0, compactacoes: 0, errosApi: 0,
     aprovacoes: [], barrados: [], recusasUsuario: 0, recusasTexto: 0, barradosTexto: [], temDecisoes: false,
     primeiro: null, ultimo: null, ultimoTs: null, cwd: null, custos: new Map(), ultimoTexto: '',
+    entrega: '', entregaTs: null,
     agentes: [], tipoPorAgente: new Map(), relatorios: new Map(),
   };
+}
+
+// O subagente termina chamando a ferramenta SubagentHandback, com o relatório no campo
+// "message". É a fonte mais segura do relatório: vale para agente em primeiro e em segundo
+// plano e não depende de como a sessão principal recebe a mensagem.
+const ENTREGA = /^SubagentHandback$/;
+function textoDaEntrega(entrada) {
+  if (!entrada || typeof entrada !== 'object') return '';
+  if (typeof entrada.message === 'string') return entrada.message;
+  // Formato diferente do esperado: junta os textos que houver, sem adivinhar o campo.
+  return Object.values(entrada).map((v) => (typeof v === 'string' ? v : textoDe(v))).filter(Boolean).join('\n');
 }
 
 // Lê um arquivo de transcrição e soma em r. Uma sessão pode estar espalhada em mais de
@@ -177,6 +189,11 @@ function analisar(arquivo, desdeMs, r = novaAnalise()) {
           r.usos.set(c.id, { nome: c.name, ts, tipo: c.input && c.input.subagent_type });
           if (c.name === 'Agent' || c.name === 'Task') {
             r.agentes.push({ tipo: (c.input && c.input.subagent_type) || 'general-purpose', modelo: (c.input && c.input.model) || null });
+          }
+          if (ENTREGA.test(c.name) && (ts === null || r.entregaTs === null || ts >= r.entregaTs)) {
+            // Agente retomado entrega de novo: vale a última entrega.
+            const t = textoDaEntrega(c.input);
+            if (t) { r.entrega = t; r.entregaTs = ts; }
           }
         } else if (c.type === 'text' && c.text && (ts === null || r.ultimoTs === null || ts >= r.ultimoTs)) {
           // Guardado só para ler o status do relatório final; nunca vai para a saída.
@@ -266,6 +283,8 @@ function modeloPrincipal(modelos) {
 // Status do relatório final de cada agente (só a palavra-chave, nunca o texto).
 function statusDoRelatorio(tipo, texto) {
   const t = texto || '';
+  // Sem relatório não há status: nunca contar como "passou".
+  if (!t.trim()) return tipo === 'revisor' ? 'sem veredito' : tipo === 'implementador' || tipo === 'verificador' ? 'sem status' : '';
   if (tipo === 'revisor') {
     const m = t.match(/veredito\W{0,6}(aprovado com ressalvas|aprovado|reprovado)/i);
     return m ? m[1].toLowerCase() : 'sem veredito';
@@ -354,8 +373,9 @@ export function medir({ dias = 7, projeto = '', raiz = '' } = {}) {
           usouApoio: nomesF.some((x) => x.startsWith('mcp__apoio-local__') && x !== 'mcp__apoio-local__status_local'),
           bloqueios: a.bloqueios,
           ...decisoes(a),
-          // Relatório entregue por mensagem (segundo plano) vale mais que o último texto do agente.
-          status: statusDoRelatorio(tipo, principal.relatorios.has(id) ? principal.relatorios.get(id) : a.ultimoTexto),
+          // Ordem: a entrega do próprio agente (SubagentHandback); a mensagem que chegou na fila
+          // da sessão principal; o último texto do agente (versões antigas do Claude Code).
+          status: statusDoRelatorio(tipo, a.entrega || principal.relatorios.get(id) || a.ultimoTexto),
         });
       }
       // Formato antigo: mensagens de subagente dentro do arquivo da sessão.

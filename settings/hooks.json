@@ -24,6 +24,19 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "mcp__.*__execute_sql",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__NODE__",
+            "args": ["__PASTA_CLAUDE__/hooks/equipe-sql.mjs"],
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
