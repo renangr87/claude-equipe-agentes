@@ -18,13 +18,20 @@ export const CONEXAO_LEITURA = 'supabase-leitura';
 const INICIO_LEITURA = /^(select|with|explain|show|table|values)\b/i;
 // Dentro de uma consulta que começa como leitura, o que ainda pode escrever ou mexer no
 // servidor: CTE que altera dados, SELECT INTO, trava de linha, sequência e funções com efeito.
+// Função com schema na frente (public.criar_pedido(), cron.schedule(), net.http_post())
+// pode escrever: só as do catálogo do Postgres contam como leitura.
 const ESCRITA = /\b(insert|update|delete|merge|upsert|into|create|alter|drop|truncate|grant|revoke|nextval|setval|set_config|pg_notify|pg_terminate_backend|pg_cancel_backend|pg_reload_conf|pg_advisory\w*|lo_\w+|dblink\w*)\b|\bfor\s+(no\s+key\s+|key\s+)?(update|share)\b/i;
+
+const FUNCAO_COM_SCHEMA = /\b(?!pg_catalog\.|information_schema\.)[a-z_][a-z0-9_$]*\s*\.\s*[a-z_][a-z0-9_$]*\s*\(/i;
+// Saída explícita: SQL que começa com /* escrita */ é escrita declarada (função que grava, por
+// exemplo) e segue o fluxo normal, com aprovação.
+const ESCRITA_DECLARADA = /^\s*\/\*\s*escrita\s*\*\//i;
 
 // true só quando a consulta inteira (todos os comandos) só lê. Errar para os dois lados é
 // seguro: leitura tida como escrita só pede aprovação, como antes; escrita tida como
 // leitura é barrada aqui e falharia na conexão só de leitura.
 export function somenteLeitura(sql) {
-  if (typeof sql !== 'string') return false;
+  if (typeof sql !== 'string' || ESCRITA_DECLARADA.test(sql)) return false;
   const limpo = sql
     .replace(/--[^\n]*/g, ' ')
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
@@ -33,7 +40,7 @@ export function somenteLeitura(sql) {
     .replace(/"(?:[^"]|"")*"/g, '""');
   const comandos = limpo.split(';').map((c) => c.trim()).filter(Boolean);
   if (!comandos.length) return false;
-  return comandos.every((c) => INICIO_LEITURA.test(c) && !(/^explain\b/i.test(c) && /\banalyze\b/i.test(c)) && !ESCRITA.test(c));
+  return comandos.every((c) => INICIO_LEITURA.test(c) && !(/^explain\b/i.test(c) && /\banalyze\b/i.test(c)) && !ESCRITA.test(c) && !FUNCAO_COM_SCHEMA.test(c));
 }
 
 // A conexão só de leitura está declarada para este projeto? No .mcp.json da raiz ou no
@@ -64,7 +71,8 @@ export function leituraDeclarada(raiz) {
 export function decidir(entrada) {
   const nome = String((entrada && entrada.tool_name) || '');
   const m = nome.match(/^mcp__(.+)__execute_sql$/);
-  if (!m || m[1] === CONEXAO_LEITURA) return null;
+  // Só a conexão do Supabase que escreve: outro banco (postgres, sqlite) não tem a supabase-leitura.
+  if (!m || m[1] === CONEXAO_LEITURA || !/supabase/i.test(m[1])) return null;
   const ti = (entrada && entrada.tool_input) || {};
   const sql = typeof ti.query === 'string' ? ti.query : ti.sql;
   if (!somenteLeitura(sql)) return null;
@@ -82,7 +90,7 @@ export function decidir(entrada) {
         `Barrado pela equipe: consulta só de leitura não vai pela conexão que escreve (${m[1]}), porque cada chamada dela pede aprovação e para a sessão.`,
         `Rode o mesmo SQL em mcp__${CONEXAO_LEITURA}__execute_sql, que só lê e não pede aprovação.`,
         falta,
-        'Até lá, faça o que não depende do banco e não tente de novo pela conexão de escrita. Escrita (insert, update, migração) continua pela conexão normal, com aprovação.',
+        'Até lá, faça o que não depende do banco e não tente de novo pela conexão de escrita. Escrita (insert, update, migração) continua pela conexão normal, com aprovação; se a consulta escreve por meio de uma função, comece o SQL com /* escrita */ e ela segue para a aprovação.',
       ].join(' '),
     },
   };

@@ -63,10 +63,9 @@ Conferir 'limpa: regra copiada' (Test-Path (Join-Path $d1 'rules\equipe-agentes.
 $s = Ler-Json (Join-Path $d1 'settings.json')
 Conferir 'limpa: todas as regras deny' (@($s.permissions.deny).Count -eq $nDeny)
 Conferir 'limpa: todas as regras ask' (@($s.permissions.ask).Count -eq $nAsk)
-Conferir 'limpa: comando de banco no terminal pede aprovacao' ((@($s.permissions.ask) -contains 'Bash(*supabase db push*)') -and (@($s.permissions.ask) -contains 'PowerShell(*psql *)'))
 
 # 1b. Scripts, skill da retrospectiva, versao instalada e hooks da equipe
-foreach ($n in 'equipe-comum.mjs', 'equipe-boletim.mjs', 'equipe-contexto.mjs', 'equipe-medir.mjs', 'equipe-sql.mjs', 'equipe-leitura.mjs') {
+foreach ($n in 'equipe-comum.mjs', 'equipe-boletim.mjs', 'equipe-contexto.mjs', 'equipe-medir.mjs', 'equipe-sql.mjs', 'equipe-leitura.mjs', 'equipe-banco.mjs') {
     Conferir "limpa: $n copiado" (Test-Path (Join-Path $d1 "hooks\$n"))
 }
 $caminhoSkill = Join-Path $d1 'skills\retro-equipe\SKILL.md'
@@ -152,6 +151,8 @@ if ($temNode) {
     Conferir 'hooks: evento retirado so com hook da equipe saiu' ($null -eq $s.hooks.PSObject.Properties['Notification'])
     $sql = @(@($s.hooks.PreToolUse) | Where-Object { $_.matcher -eq 'mcp__.*__execute_sql' })
     Conferir 'hooks: hook de SQL registrado' ($sql.Count -eq 1 -and [string](@(@($sql[0].hooks)[0].args)[0]) -like '*/hooks/equipe-sql.mjs')
+    $banco = @(@($s.hooks.PreToolUse) | Where-Object { $_.matcher -eq 'Bash|PowerShell' })
+    Conferir 'hooks: hook de banco no terminal registrado' ($banco.Count -eq 1 -and [string](@(@($banco[0].hooks)[0].args)[0]) -like '*/hooks/equipe-banco.mjs')
     Conferir 'hooks: um backup so, com bloqueios e hooks' (@(Get-ChildItem -LiteralPath $d3c -Filter 'settings.json.bak-*').Count -eq 1)
     $r = Instalar $d3c
     Conferir 'hooks: repeticao nao muda nada' ($r.texto -match 'hooks ja presentes')

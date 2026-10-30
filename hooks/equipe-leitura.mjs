@@ -18,7 +18,7 @@ const numero = (v, padrao) => (Number.isInteger(Number(v)) && Number(v) > 0 ? Nu
 export const TETO = () => numero(process.env.EQUIPE_EXPLORE_LEITURAS, 12);
 export const MAX_LINHAS = () => numero(process.env.EQUIPE_EXPLORE_LINHAS, 300);
 // Imagem, PDF e notebook não são lidos por linha.
-const SEM_LINHAS = /\.(png|jpe?g|gif|webp|bmp|ico|svg|pdf|ipynb)$/i;
+const SEM_LINHAS = /\.(png|jpe?g|gif|webp|bmp|ico|pdf|ipynb)$/i;
 
 // Conta as linhas, parando assim que passar de "ate" (arquivo enorme não é lido todo).
 function contarLinhas(arquivo, ate) {
@@ -107,7 +107,18 @@ function registrarLeitura(chave) {
 
 const negar = (motivo) => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: motivo } });
 
+// Fim da chamada (Stop no arquivo do agente vira SubagentStop): zera a conta, para que o
+// Explore retomado com o mesmo id comece de novo.
+function zerar(entrada) {
+  const chave = chaveDoAgente(entrada);
+  if (chave) fs.rmSync(path.join(pastaContagem(), `${chave}.txt`), { force: true });
+}
+
 export function decidir(entrada) {
+  if (entrada && /^(SubagentStop|Stop)$/.test(String(entrada.hook_event_name || ''))) {
+    zerar(entrada);
+    return null;
+  }
   if (!entrada || entrada.tool_name !== 'Read') return null;
   const max = MAX_LINHAS();
   const teto = TETO();

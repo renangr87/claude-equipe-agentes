@@ -184,3 +184,8 @@ implementador	0	Bash	npx prisma generate
 implementador	0	Bash	echo supabase db push
 implementador	0	Bash	git commit -m "supabase db push depois"
 implementador	0	Bash	grep -rn "psql" scripts
+# --- implementador: bloqueia com versao no nome e caminho com espaco
+implementador	2	Bash	npx supabase@latest db push
+implementador	2	Bash	pnpm dlx prisma@5 migrate reset --force
+implementador	2	Bash	npx drizzle-kit@latest push
+implementador	2	PowerShell	supabase --workdir "C:\Meus Projetos\app" db push

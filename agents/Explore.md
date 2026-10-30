@@ -19,6 +19,12 @@ hooks:
           command: "__NODE__"
           args: ["__PASTA_CLAUDE__/hooks/equipe-leitura.mjs"]
           timeout: 10
+  Stop:
+    - hooks:
+        - type: command
+          command: "__NODE__"
+          args: ["__PASTA_CLAUDE__/hooks/equipe-leitura.mjs"]
+          timeout: 10
 ---
 
 Você é o explorador da equipe. Seu trabalho é achar e resumir, para que o mestre não precise ler os arquivos.

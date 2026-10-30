@@ -685,3 +685,80 @@ test('leitura do Explore: teto de leituras por chamada, contado por agente', () 
   // Sem como saber quem é: não conta (a leitura por trecho continua valendo).
   for (let i = 0; i < 5; i++) assert.equal(decisao(LEITURA, { tool_name: 'Read', session_id: 'sess3', tool_input: { file_path: arq } }, env), null);
 });
+
+// ---------- hook de banco no terminal ----------
+const BANCO = path.join(HOOKS, 'equipe-banco.mjs');
+
+test('banco: acha o comando que altera o banco e ignora o que só cita', async () => {
+  const { comandoDeBanco } = await import(pathToFileURL(BANCO).href);
+  const altera = [
+    'supabase db push', 'npx supabase@latest db push --linked', 'supabase --workdir "C:\\Meus Projetos\\app" db push',
+    'supabase db --debug push', 'supabase db reset --linked', 'supabase migration up --db-url=postgres://x',
+    'supabase functions deploy enviar', 'supabase secrets set A=1', 'supabase storage rm ss:///b/a.png',
+    'supabase backups restore --timestamp 1', 'supabase config push', 'supabase seed buckets --linked',
+    'cd app && supabase db push', 'bash -c "supabase db push"', 'DEBUG=1 supabase db push',
+    'psql -h db.x.supabase.co -c "drop table t"', '& "C:\\Program Files\\PostgreSQL\\bin\\psql.exe" -c "select 1"',
+    'dropdb app', 'pnpm dlx prisma@5 migrate reset --force', 'npx prisma db push', 'npx prisma migrate resolve --applied 1',
+    'npx drizzle-kit@latest push', 'npx drizzle-kit migrate', 'npm run db:push', 'pnpm db:reset', 'yarn migrate:deploy',
+  ];
+  const passa = [
+    'supabase db reset', 'supabase start', 'supabase migration new pedidos', 'supabase migration list --linked',
+    'supabase gen types typescript --local', 'npx supabase db push --help', 'psql --version', 'pg_restore --list x.dump',
+    'which psql', 'Get-Command psql', 'mkdir -p tools/psql', 'echo supabase db push', 'git commit -m "supabase db push depois"',
+    'grep -rn "psql " scripts', 'npx prisma migrate dev --name x', 'npx prisma generate', 'npm run build', 'npm test',
+    'flutter test', 'git status',
+  ];
+  for (const c of altera) assert.ok(comandoDeBanco(c), `devia achar: ${c}`);
+  for (const c of passa) assert.equal(comandoDeBanco(c), null, `não devia achar: ${c}`);
+});
+
+test('banco: barra no implementador, pede aprovação no mestre, calado no Explore', () => {
+  const chamada = (agent_type, command, tool_name = 'Bash') => ({ hook_event_name: 'PreToolUse', tool_name, agent_type, tool_input: { command } });
+  let d = decisao(BANCO, chamada('implementador', 'npx supabase db push'));
+  assert.equal(d.hookSpecificOutput.permissionDecision, 'deny');
+  d = decisao(BANCO, chamada(undefined, 'supabase db push', 'PowerShell'));
+  assert.equal(d.hookSpecificOutput.permissionDecision, 'ask');
+  assert.equal(decisao(BANCO, chamada('Explore', 'supabase db push')), null);
+  assert.equal(decisao(BANCO, chamada(undefined, 'supabase start')), null);
+  assert.equal(decisao(BANCO, '{quebrado'), null);
+});
+
+test('sql: só a conexão do Supabase, e escrita por função não é leitura', async () => {
+  const { somenteLeitura } = await import(pathToFileURL(SQL).href);
+  for (const s of ["select cron.schedule('x', '0 3 * * *', $$delete from logs$$)", "select net.http_post('https://x')", 'select public.criar_pedido(1)', '/* escrita */ select algo()']) {
+    assert.equal(somenteLeitura(s), false, s);
+  }
+  assert.equal(somenteLeitura('select pg_catalog.now(), count(*) from information_schema.tables'), true);
+  const casa = tmp('sql-outros');
+  const env = { CLAUDE_PROJECT_DIR: casa, HOME: casa, USERPROFILE: casa, CLAUDE_CONFIG_DIR: '' };
+  for (const nome of ['mcp__postgres__execute_sql', 'mcp__dbhub__execute_sql', 'mcp__sqlite__execute_sql']) {
+    assert.equal(decisao(SQL, { tool_name: nome, cwd: casa, tool_input: { sql: 'select 1' } }, env), null, nome);
+  }
+});
+
+test('leitura do Explore: a conta zera quando a chamada termina (agente retomado)', () => {
+  const claude = tmp('claude-zera');
+  const arq = path.join(tmp('zera'), 'a.dart');
+  escrever(arq, 'a\n');
+  const env = { EQUIPE_PASTA_CLAUDE: claude, EQUIPE_EXPLORE_LEITURAS: '2' };
+  const ler = () => decisao(LEITURA, { tool_name: 'Read', session_id: 's', agent_id: 'ag', tool_input: { file_path: arq } }, env);
+  assert.equal(ler(), null);
+  assert.equal(ler(), null);
+  assert.ok(ler());
+  assert.equal(decisao(LEITURA, { hook_event_name: 'SubagentStop', session_id: 's', agent_id: 'ag' }, env), null);
+  assert.equal(ler(), null);
+});
+
+test('medidor: verificador sem resultado não conta como passou', () => {
+  const claude = tmp('claude-semres');
+  const dir = path.join(claude, 'projects', '-p');
+  const uso = { input_tokens: 1, output_tokens: 1 };
+  escrever(path.join(dir, 's.jsonl'), linha({ type: 'assistant', uuid: 'x', timestamp: iso(0), cwd: '/p', message: { id: 'mx', model: 'claude-opus-5-5', usage: uso, content: [] } }) + '\n');
+  const textos = { a: 'Não consegui rodar o flutter test: o comando não foi encontrado.', b: 'Rodando flutter test agora.', c: 'Tudo ok: 12 testes.' };
+  for (const [id, t] of Object.entries(textos)) {
+    escrever(path.join(dir, 's', 'subagents', `agent-${id}.meta.json`), JSON.stringify({ agentType: 'verificador' }));
+    escrever(path.join(dir, 's', 'subagents', `agent-${id}.jsonl`), linha({ type: 'assistant', uuid: id, isSidechain: true, timestamp: iso(1), message: { id: `m${id}`, model: 'claude-haiku-5-5', usage: uso, content: [{ type: 'text', text: t }] } }) + '\n');
+  }
+  const r = JSON.parse(medir(claude, '--json'));
+  assert.deepEqual(r.porTipo.verificador.status, { 'sem status': 2, passou: 1 });
+});

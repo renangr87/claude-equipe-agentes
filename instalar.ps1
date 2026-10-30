@@ -406,7 +406,7 @@ function Ler-Servidor([string]$nome) {
 function Test-HookDaEquipe($h) {
     if ($null -eq $h) { return $false }
     foreach ($p in (@($h.command) + @($h.args))) {
-        if ($p -is [string] -and $p -match '[\\/]hooks[\\/]equipe-(boletim|contexto|sql)\.mjs$') { return $true }
+        if ($p -is [string] -and $p -match '[\\/]hooks[\\/]equipe-(boletim|contexto|sql|banco)\.mjs$') { return $true }
     }
     return $false
 }
@@ -488,7 +488,7 @@ function Merge-Hooks([string]$arquivoModelo, [string]$arquivoDestino, [string]$n
         Write-Host "  copia de seguranca: $bak"
     }
     [System.IO.File]::WriteAllText($arquivoDestino, ($atual | ConvertTo-Json -Depth 32) + "`n", $utf8)
-    Write-Host "  hooks da equipe gravados (boletim de inicio, contexto dos subagentes e trava de SQL): $arquivoDestino"
+    Write-Host "  hooks da equipe gravados (boletim de inicio, contexto dos subagentes e travas de banco): $arquivoDestino"
 }
 
 

@@ -300,7 +300,9 @@ function statusDoRelatorio(tipo, texto) {
     if (n.length) return n.some((x) => x > 0) ? 'com falha' : 'passou';
     if (/\b(nenhum|nenhuma|sem|no)\b[^.\n]{0,20}(falh|fail)/i.test(t)) return 'passou';
     if (/\b(falhou|falharam|failed|failures?)\b/i.test(t)) return 'com falha';
-    return 'passou';
+    // "passou" só com sinal de sucesso; relatório sem resultado não conta como sucesso.
+    if (/\b(passou|passaram|passed|sucesso|tudo ok|ok)\b/i.test(t)) return 'passou';
+    return 'sem status';
   }
   return '';
 }

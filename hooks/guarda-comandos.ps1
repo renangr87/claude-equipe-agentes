@@ -244,7 +244,8 @@ function Testar-Banco([string]$texto) {
         if (-not $seg) { continue }
         $tokens = Separar-Tokens $seg
         if ($tokens.Count -eq 0) { continue }
-        $nomes = @($tokens | ForEach-Object { Nome-Programa $_ })
+        # Versao no nome (npx supabase@latest) nao muda o programa.
+        $nomes = @($tokens | ForEach-Object { (Nome-Programa $_) -replace '(?<=.)@[^@]*$', '' })
         # Mensagem de commit, busca e eco so citam o comando.
         if ($nomes[0] -match $comandosDeTexto) { continue }
         foreach ($t in $tokens) {
@@ -254,7 +255,8 @@ function Testar-Banco([string]$texto) {
         for ($i = 0; $i -lt $tokens.Count; $i++) {
             if ($nomes[$i] -notmatch $programasBanco) { continue }
             $resto = @()
-            if ($i + 1 -lt $tokens.Count) { $resto = @($tokens[($i + 1)..($tokens.Count - 1)]) }
+            # Caminho entre aspas com espaco ("C:\Meus Projetos") continua uma palavra so.
+            if ($i + 1 -lt $tokens.Count) { $resto = @($tokens[($i + 1)..($tokens.Count - 1)] | ForEach-Object { $_ -replace '\s', '_' }) }
             $linha = ((@($nomes[$i]) + $resto) -join ' ').ToLowerInvariant()
             if ($linha -match $bancoSempre -or $linha -match $bancoRemoto) {
                 Bloquear "comando que altera o banco ou aponta para o banco remoto ('$($nomes[$i])'). Escreva a migracao ou o script e relate ao mestre: quem aplica e ele, com o OK do usuario."

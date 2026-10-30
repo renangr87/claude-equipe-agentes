@@ -36,6 +36,17 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__NODE__",
+            "args": ["__PASTA_CLAUDE__/hooks/equipe-banco.mjs"],
+            "timeout": 10
+          }
+        ]
       }
     ]
   }
