@@ -56,7 +56,8 @@ export function pastaLocal(entrada) {
   const comumBruto = tentar(() => git(['rev-parse', '--git-common-dir'], cwd));
   const comum = comumBruto ? path.resolve(cwd, comumBruto) : null;
   const raizPrincipal = comum ? path.dirname(comum) : tentar(() => git(['rev-parse', '--show-toplevel'], cwd));
-  const codificar = (p) => path.resolve(p).replace(/[^A-Za-z0-9]/g, '-');
+  // Caminho real e longo: no Windows a pasta temporária pode vir com nome curto (RUNNER~1).
+  const codificar = (p) => { let r = path.resolve(p); try { r = fs.realpathSync.native(r); } catch { /* fica */ } return r.replace(/[^A-Za-z0-9]/g, '-'); };
   const candidatas = [];
   if (raizPrincipal) candidatas.push(path.join(projetos, codificar(raizPrincipal), 'memory'));
   if (entrada.transcript_path) candidatas.push(path.join(path.dirname(String(entrada.transcript_path)), 'memory'));
