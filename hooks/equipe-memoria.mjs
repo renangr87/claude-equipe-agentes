@@ -1,0 +1,170 @@
+#!/usr/bin/env node
+// Hook da equipe: a memória automática do Claude Code (auto memory) de cada projeto,
+// sincronizada entre os seus computadores por um repositório git privado.
+//
+// - SessionStart: atualiza o repositório (git pull) e traz para este computador o que o
+//   outro gravou.
+// - Stop e SessionEnd: leva para o repositório o que mudou aqui e envia (commit e push em
+//   segundo plano, para não segurar a sessão).
+// O projeto é reconhecido pelo endereço do git (origin), igual nos dois computadores, mesmo
+// com a pasta em lugar diferente. Configuração: <pasta do Claude>/equipe-memoria.json
+// ({"pasta": "<clone do repositório de memória>"}), feita pelo instalador com -Memoria.
+// Os dois lados mudaram o mesmo arquivo: fica o daqui, com o do outro acrescentado no fim.
+// Erro, rede ou login faltando: silêncio; a sessão segue com a memória local.
+import { execFileSync, spawn } from 'node:child_process';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { lerEntrada, lerJson, pastaClaude } from './equipe-comum.mjs';
+
+const ESTADO = '.equipe-sync.json';
+
+function git(args, cwd, limite = 8000) {
+  return execFileSync('git', args, {
+    cwd, encoding: 'utf8', timeout: limite, stdio: ['ignore', 'pipe', 'ignore'],
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' },
+  }).trim();
+}
+const tentar = (f) => { try { return f(); } catch { return null; } };
+
+export function configuracao() {
+  const cfg = lerJson(path.join(pastaClaude(), 'equipe-memoria.json'));
+  const pasta = cfg && typeof cfg.pasta === 'string' ? cfg.pasta : '';
+  return pasta && fs.existsSync(path.join(pasta, '.git')) ? pasta : null;
+}
+
+// Nome do projeto igual em todo computador: o endereço do origin, sem protocolo e sem login.
+export function idDoProjeto(cwd) {
+  const raiz = tentar(() => git(['rev-parse', '--show-toplevel'], cwd));
+  if (!raiz) return null;
+  const origem = tentar(() => git(['remote', 'get-url', 'origin'], raiz));
+  let id;
+  if (origem) {
+    id = origem.replace(/^[a-z+]+:\/\//i, '').replace(/^[^@/]+@/, '').replace(/:(?!\d)/, '/').replace(/\.git$/i, '').replace(/\/+$/, '');
+  } else {
+    id = `local/${path.basename(raiz)}`;
+  }
+  return id.toLowerCase().replace(/[^a-z0-9._-]+/g, '_');
+}
+
+// Pasta da memória automática deste projeto neste computador.
+export function pastaLocal(entrada) {
+  const projetos = path.join(pastaClaude(), 'projects');
+  const cwd = entrada.cwd || process.cwd();
+  // --git-common-dir vem relativo à pasta atual no git antigo (sem --path-format).
+  const comumBruto = tentar(() => git(['rev-parse', '--git-common-dir'], cwd));
+  const comum = comumBruto ? path.resolve(cwd, comumBruto) : null;
+  const raizPrincipal = comum ? path.dirname(comum) : tentar(() => git(['rev-parse', '--show-toplevel'], cwd));
+  const codificar = (p) => path.resolve(p).replace(/[^A-Za-z0-9]/g, '-');
+  const candidatas = [];
+  if (raizPrincipal) candidatas.push(path.join(projetos, codificar(raizPrincipal), 'memory'));
+  if (entrada.transcript_path) candidatas.push(path.join(path.dirname(String(entrada.transcript_path)), 'memory'));
+  return candidatas.find((c) => fs.existsSync(c)) || candidatas[0] || null;
+}
+
+const hash = (arq) => tentar(() => crypto.createHash('sha1').update(fs.readFileSync(arq)).digest('hex'));
+const mds = (pasta) => tentar(() => fs.readdirSync(pasta).filter((n) => n.endsWith('.md'))) || [];
+
+function lerEstado(local) { return lerJson(path.join(local, ESTADO)) || {}; }
+function gravarEstado(local, estado) {
+  fs.mkdirSync(local, { recursive: true });
+  fs.writeFileSync(path.join(local, ESTADO), JSON.stringify(estado, null, 1));
+}
+
+// Do repositório para este computador.
+export function baixar(local, guardada) {
+  const base = lerEstado(local);
+  let mudou = false;
+  for (const nome of new Set([...mds(local), ...mds(guardada)])) {
+    const l = hash(path.join(local, nome));
+    const g = hash(path.join(guardada, nome));
+    const b = base[nome] || null;
+    if (l === g) { if (l) base[nome] = l; else delete base[nome]; continue; }
+    if (g === b) continue; // só este computador mudou: sobe no fim
+    if (l === b) {
+      // Só o outro mudou: traz (ou apaga, se ele apagou).
+      if (g) { fs.mkdirSync(local, { recursive: true }); fs.copyFileSync(path.join(guardada, nome), path.join(local, nome)); base[nome] = g; }
+      else { fs.rmSync(path.join(local, nome), { force: true }); delete base[nome]; }
+      mudou = true;
+      continue;
+    }
+    // Os dois mudaram: fica o daqui, com o do outro no fim, para nada se perder.
+    if (g) {
+      const outro = fs.readFileSync(path.join(guardada, nome), 'utf8');
+      fs.appendFileSync(path.join(local, nome), `\n\n<!-- Versão do outro computador (as duas mudaram ao mesmo tempo) -->\n${outro}`);
+      mudou = true;
+    }
+    base[nome] = g || b;
+  }
+  if (mudou || fs.existsSync(local)) gravarEstado(local, base);
+  return mudou;
+}
+
+// Deste computador para o repositório. Devolve true se algo mudou.
+export function subir(local, guardada) {
+  const base = lerEstado(local);
+  let mudou = false;
+  for (const nome of new Set([...mds(local), ...Object.keys(base)])) {
+    const l = hash(path.join(local, nome));
+    if (l === (base[nome] || null) && l === hash(path.join(guardada, nome))) continue;
+    if (l) {
+      fs.mkdirSync(guardada, { recursive: true });
+      fs.copyFileSync(path.join(local, nome), path.join(guardada, nome));
+      base[nome] = l;
+    } else {
+      fs.rmSync(path.join(guardada, nome), { force: true });
+      delete base[nome];
+    }
+    mudou = true;
+  }
+  if (mudou) gravarEstado(local, base);
+  return mudou;
+}
+
+export function enviar(repo, id) {
+  git(['add', '-A', '--', path.join('projetos', id)], repo);
+  if (!git(['status', '--porcelain', '--', path.join('projetos', id)], repo)) return;
+  git(['-c', 'user.name=Claude Code', '-c', 'user.email=noreply@anthropic.com', 'commit', '-q', '-m', `memória: ${id} (${os.hostname()})`], repo);
+  // Mesmo trecho mudado nos dois lados: fica o daqui (a cópia do outro já foi anexada antes).
+  tentar(() => git(['-c', 'user.name=Claude Code', '-c', 'user.email=noreply@anthropic.com', 'pull', '-q', '--no-rebase', '--no-edit', '-X', 'ours'], repo, 30000));
+  // -u origin HEAD: o primeiro envio de um repositório recém-criado ainda não tem destino.
+  git(['push', '-q', '-u', 'origin', 'HEAD'], repo, 30000);
+}
+
+export function tratar(entrada) {
+  const repo = configuracao();
+  if (!repo) return null;
+  const id = idDoProjeto(entrada.cwd || process.cwd());
+  const local = pastaLocal(entrada);
+  if (!id || !local) return null;
+  const guardada = path.join(repo, 'projetos', id);
+  const evento = String(entrada.hook_event_name || '');
+  if (evento === 'SessionStart') {
+    tentar(() => git(['pull', '-q', '--ff-only'], repo));
+    return baixar(local, guardada) ? 'baixou' : 'em dia';
+  }
+  if (evento === 'Stop' || evento === 'SessionEnd') {
+    if (!subir(local, guardada)) return 'sem mudança';
+    if (process.env.EQUIPE_MEMORIA_SINCRONO) { enviar(repo, id); return 'enviou'; }
+    // Em segundo plano: o push pode demorar e a sessão não espera.
+    const p = spawn(process.execPath, [fileURLToPath(import.meta.url), '--enviar', repo, id], { detached: true, stdio: 'ignore', windowsHide: true });
+    p.unref();
+    return 'enviando';
+  }
+  return null;
+}
+
+function principal() {
+  const i = process.argv.indexOf('--enviar');
+  if (i > 0) { tentar(() => enviar(process.argv[i + 1], process.argv[i + 2])); return; }
+  tentar(() => tratar(lerEntrada()));
+}
+
+const real = (p) => {
+  let r = path.resolve(p);
+  try { r = fs.realpathSync(r); } catch { /* fica o caminho dado */ }
+  return process.platform === 'win32' ? r.toLowerCase() : r;
+};
+if (process.argv[1] && real(process.argv[1]) === real(fileURLToPath(import.meta.url))) principal();

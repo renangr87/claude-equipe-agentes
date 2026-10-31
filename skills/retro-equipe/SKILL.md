@@ -19,7 +19,9 @@ Se o `node` não for encontrado, use o caminho completo `"__NODE__"` no lugar de
 
 A saída traz o gasto por agente, os sinais, a divisão por projeto, a pasta da cópia da equipe e, a partir da segunda retrospectiva, a comparação com a anterior e as propostas daquela vez. O custo vem em preço de API: na assinatura ele serve como proporção do limite usado, não como conta.
 
-Trabalhe só com essa saída. Não abra as transcrições das sessões: elas têm código e dados pessoais do usuário, e a medição já traz o que importa.
+Se existir um resultado dos testes de comportamento (`__PASTA_CLAUDE__/equipe-diario/comportamento-*.json`, o mais recente), leia também: cada checagem que falhou é um sinal direto e entra no diagnóstico ao lado dos números. Se o último tiver mais de 7 dias ou não existir, sugira rodar `node testes/comportamento/rodar.mjs` na pasta da equipe antes de aplicar mudanças.
+
+Trabalhe só com essa saída e com esse resultado. Não abra as transcrições das sessões: elas têm código e dados pessoais do usuário, e a medição já traz o que importa.
 
 ## 2. Diagnosticar
 

@@ -65,7 +65,7 @@ Conferir 'limpa: todas as regras deny' (@($s.permissions.deny).Count -eq $nDeny)
 Conferir 'limpa: todas as regras ask' (@($s.permissions.ask).Count -eq $nAsk)
 
 # 1b. Scripts, skill da retrospectiva, versao instalada e hooks da equipe
-foreach ($n in 'equipe-comum.mjs', 'equipe-boletim.mjs', 'equipe-contexto.mjs', 'equipe-medir.mjs', 'equipe-sql.mjs', 'equipe-leitura.mjs', 'equipe-banco.mjs') {
+foreach ($n in 'equipe-comum.mjs', 'equipe-boletim.mjs', 'equipe-contexto.mjs', 'equipe-medir.mjs', 'equipe-sql.mjs', 'equipe-leitura.mjs', 'equipe-banco.mjs', 'equipe-segredos.mjs', 'equipe-aviso.mjs', 'equipe-memoria.mjs') {
     Conferir "limpa: $n copiado" (Test-Path (Join-Path $d1 "hooks\$n"))
 }
 $caminhoSkill = Join-Path $d1 'skills\retro-equipe\SKILL.md'
@@ -134,7 +134,7 @@ if ($temNode) {
     # Um hook do usuario foi acrescentado dentro do grupo antigo da equipe, e outro do
     # usuario tem nome parecido com os da equipe: os dois ficam.
     # Num evento que a equipe deixou de usar, sai so o hook da equipe.
-    $inicial = '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo","args":["oi"]}]},{"hooks":[{"type":"command","command":"node","args":["C:/velho/.claude/hooks/equipe-boletim.mjs"],"timeout":5},{"type":"command","command":"meu-no-grupo"}]}],"Stop":[{"hooks":[{"type":"command","command":"node","args":["C:/meus/hooks/equipe-outro.mjs"]}]}],"SubagentStop":[{"hooks":[{"type":"command","command":"node","args":["C:/velho/.claude/hooks/equipe-contexto.mjs"]},{"type":"command","command":"meu-stop"}]},{"hooks":[{"type":"command","command":"node","args":["C:/velho/.claude/hooks/equipe-boletim.mjs"]}]}],"Notification":[{"hooks":[{"type":"command","command":"node","args":["C:/velho/.claude/hooks/equipe-sql.mjs"]}]}]}}'
+    $inicial = '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo","args":["oi"]}]},{"hooks":[{"type":"command","command":"node","args":["C:/velho/.claude/hooks/equipe-boletim.mjs"],"timeout":5},{"type":"command","command":"meu-no-grupo"}]}],"Stop":[{"hooks":[{"type":"command","command":"node","args":["C:/meus/hooks/equipe-outro.mjs"]}]}],"SubagentStop":[{"hooks":[{"type":"command","command":"node","args":["C:/velho/.claude/hooks/equipe-contexto.mjs"]},{"type":"command","command":"meu-stop"}]},{"hooks":[{"type":"command","command":"node","args":["C:/velho/.claude/hooks/equipe-boletim.mjs"]}]}],"PreCompact":[{"hooks":[{"type":"command","command":"node","args":["C:/velho/.claude/hooks/equipe-sql.mjs"]}]}]}}'
     [System.IO.File]::WriteAllText((Join-Path $d3c 'settings.json'), $inicial, $utf8)
     $r = Instalar $d3c
     $s = Ler-Json (Join-Path $d3c 'settings.json')
@@ -148,7 +148,15 @@ if ($temNode) {
     Conferir 'hooks: manteve o hook do usuario de nome parecido' ([string](@(@(@($s.hooks.Stop)[0].hooks)[0].args)[0]) -eq 'C:/meus/hooks/equipe-outro.mjs')
     $parado = @($s.hooks.SubagentStop)
     Conferir 'hooks: evento retirado perdeu so o hook da equipe' ($parado.Count -eq 1 -and @($parado[0].hooks).Count -eq 1 -and @($parado[0].hooks)[0].command -eq 'meu-stop')
-    Conferir 'hooks: evento retirado so com hook da equipe saiu' ($null -eq $s.hooks.PSObject.Properties['Notification'])
+    Conferir 'hooks: evento retirado so com hook da equipe saiu' ($null -eq $s.hooks.PSObject.Properties['PreCompact'])
+    $argsDe = { param($evento) (@($s.hooks.$evento) | ForEach-Object { @($_.hooks) } | ForEach-Object { @($_.args) }) -join ' ' }
+    Conferir 'hooks: aviso no celular registrado' ((& $argsDe 'Notification') -match '/hooks/equipe-aviso\.mjs')
+    Conferir 'hooks: memoria registrada no inicio e no fim' (((& $argsDe 'SessionStart') -match '/hooks/equipe-memoria\.mjs') -and ((& $argsDe 'Stop') -match '/hooks/equipe-memoria\.mjs') -and ((& $argsDe 'SessionEnd') -match '/hooks/equipe-memoria\.mjs'))
+    $edicao = @(@($s.hooks.PreToolUse) | Where-Object { $_.matcher -eq 'Write|Edit|MultiEdit|NotebookEdit' })
+    Conferir 'hooks: trava de segredos nas edicoes e no terminal' ($edicao.Count -eq 1 -and ((& $argsDe 'PreToolUse') -match 'equipe-segredos\.mjs.*equipe-segredos\.mjs'))
+    $aviso = Join-Path $d3c 'equipe-aviso.json'
+    Conferir 'aviso: topico secreto criado' ((Test-Path $aviso) -and ([string]((Ler-Json $aviso).ntfy) -match '^https://ntfy\.sh/equipe-[0-9a-f]{20}$'))
+    $topicoAntes = [System.IO.File]::ReadAllText($aviso, $utf8)
     $sql = @(@($s.hooks.PreToolUse) | Where-Object { $_.matcher -eq 'mcp__.*__execute_sql' })
     Conferir 'hooks: hook de SQL registrado' ($sql.Count -eq 1 -and [string](@(@($sql[0].hooks)[0].args)[0]) -like '*/hooks/equipe-sql.mjs')
     $banco = @(@($s.hooks.PreToolUse) | Where-Object { $_.matcher -eq 'Bash|PowerShell' })
@@ -156,6 +164,13 @@ if ($temNode) {
     Conferir 'hooks: um backup so, com bloqueios e hooks' (@(Get-ChildItem -LiteralPath $d3c -Filter 'settings.json.bak-*').Count -eq 1)
     $r = Instalar $d3c
     Conferir 'hooks: repeticao nao muda nada' ($r.texto -match 'hooks ja presentes')
+    Conferir 'aviso: repeticao mantem o topico' ([System.IO.File]::ReadAllText($aviso, $utf8) -ceq $topicoAntes)
+    # Memoria: com a pasta de um clone, grava a configuracao apontando para ela.
+    $clone = Join-Path $base 'memoria-clone'
+    New-Item -ItemType Directory -Force -Path (Join-Path $clone '.git') | Out-Null
+    $r = Instalar $d3c @('-Memoria', $clone)
+    $cfgMem = Join-Path $d3c 'equipe-memoria.json'
+    Conferir 'memoria: configuracao gravada' ((Test-Path $cfgMem) -and ([string]((Ler-Json $cfgMem).pasta) -eq ((Resolve-Path $clone).ProviderPath -replace '\\', '/')))
 }
 
 # 4. JSON invalido: falha sem alterar o arquivo
@@ -178,6 +193,7 @@ $d5b = Join-Path $base 'sem-hooks'
 $r = Instalar $d5b @('-SemHooks')
 $s = Ler-Json (Join-Path $d5b 'settings.json')
 Conferir 'sem hooks: saiu com 0' ($r.codigo -eq 0)
+Conferir 'sem hooks: sem aviso no celular' (-not (Test-Path (Join-Path $d5b 'equipe-aviso.json')))
 Conferir 'sem hooks: bloqueios gravados' (@($s.permissions.deny).Count -eq $nDeny)
 Conferir 'sem hooks: nenhum hook no settings.json' (-not $s.PSObject.Properties['hooks'])
 

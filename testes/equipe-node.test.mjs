@@ -762,3 +762,237 @@ test('medidor: verificador sem resultado não conta como passou', () => {
   const r = JSON.parse(medir(claude, '--json'));
   assert.deepEqual(r.porTipo.verificador.status, { 'sem status': 2, passou: 1 });
 });
+
+// ---------- trava de segredos ----------
+// As chaves de teste são montadas em pedaços: assim este arquivo não tem nenhuma chave
+// inteira (nem a própria trava nem a varredura do GitHub reclamam dele).
+const SEGREDOS = path.join(HOOKS, 'equipe-segredos.mjs');
+const jwt = (carga) => ['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9', Buffer.from(JSON.stringify(carga)).toString('base64url'), 'x'.repeat(43)].join('.');
+const FALSAS = {
+  servico: jwt({ iss: 'supabase', role: 'service' + '_role' }),
+  anon: jwt({ iss: 'supabase', role: 'anon' }),
+  sbSecreta: 'sb_' + 'secret_' + 'a1B2c3D4e5F6g7H8i9J0k1L2',
+  sbPublica: 'sb_' + 'publishable_' + 'a1B2c3D4e5F6g7H8i9J0k1L2',
+  anthropic: 'sk-' + 'ant-' + 'api03-' + 'x'.repeat(40),
+  github: 'gh' + 'p_' + 'A'.repeat(36),
+  aws: 'AK' + 'IA' + 'ABCDEFGHIJKLMNOP',
+  firebase: 'AI' + 'za' + 'SyA' + 'x'.repeat(32),
+  privada: '-----BEGIN ' + 'PRIVATE KEY-----',
+  pgRemoto: 'postgres' + 'ql://postgres.abc:' + 'S3nh4Forte!x' + '@aws-0-sa-east-1.pooler.supabase.com:6543/postgres',
+  pgLocal: 'postgres' + 'ql://postgres:postgres@127.0.0.1:54322/postgres',
+};
+
+test('segredos: acha chave secreta e deixa passar a pública', async () => {
+  const { acharSegredo } = await import(pathToFileURL(SEGREDOS).href);
+  for (const k of ['servico', 'sbSecreta', 'anthropic', 'github', 'aws', 'privada', 'pgRemoto']) {
+    assert.ok(acharSegredo(`const x = "${FALSAS[k]}";`), `devia achar: ${k}`);
+  }
+  for (const k of ['anon', 'sbPublica', 'firebase', 'pgLocal']) {
+    assert.equal(acharSegredo(`const x = "${FALSAS[k]}";`), null, `não devia achar: ${k}`);
+  }
+  assert.equal(acharSegredo('const url = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");'), null);
+});
+
+test('segredos: barra gravar e commitar a chave; arquivo ignorado pelo git passa', () => {
+  const raiz = tmp('segredos');
+  git(raiz, 'init', '-q');
+  escrever(path.join(raiz, '.gitignore'), 'local.json\n');
+  escrever(path.join(raiz, 'a.ts'), 'export const a = 1;\n');
+  git(raiz, 'add', '.gitignore', 'a.ts');
+  git(raiz, 'commit', '-q', '-m', 'inicio');
+
+  let d = decisao(SEGREDOS, { tool_name: 'Write', cwd: raiz, tool_input: { file_path: path.join(raiz, 'config.ts'), content: `export const k = "${FALSAS.servico}";` } });
+  assert.equal(d.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(d.hookSpecificOutput.permissionDecisionReason, /service_role/);
+  assert.ok(!d.hookSpecificOutput.permissionDecisionReason.includes(FALSAS.servico.slice(-20)));
+  d = decisao(SEGREDOS, { tool_name: 'Edit', cwd: raiz, tool_input: { file_path: path.join(raiz, 'a.ts'), old_string: '1', new_string: `"${FALSAS.sbSecreta}"` } });
+  assert.equal(d.hookSpecificOutput.permissionDecision, 'deny');
+  assert.equal(decisao(SEGREDOS, { tool_name: 'Write', cwd: raiz, tool_input: { file_path: path.join(raiz, 'local.json'), content: FALSAS.sbSecreta } }), null);
+  assert.equal(decisao(SEGREDOS, { tool_name: 'Write', cwd: raiz, tool_input: { file_path: path.join(raiz, 'b.ts'), content: `const k = "${FALSAS.anon}";` } }), null);
+
+  // Commit: com a chave no índice barra; com a chave só em arquivo fora do commit, passa.
+  escrever(path.join(raiz, 'b.ts'), `const k = "${FALSAS.github}";\n`);
+  escrever(path.join(raiz, 'c.ts'), 'const c = 2;\n');
+  git(raiz, 'add', 'b.ts');
+  d = decisao(SEGREDOS, { tool_name: 'Bash', cwd: raiz, tool_input: { command: 'git commit -m "novo" -- b.ts' } });
+  assert.match(d.hookSpecificOutput.permissionDecisionReason, /commit acrescenta.*GitHub/);
+  git(raiz, 'reset', '-q');
+  assert.equal(decisao(SEGREDOS, { tool_name: 'PowerShell', cwd: raiz, tool_input: { command: 'git commit -m "so c" -- c.ts' } }), null);
+  // Arquivo já no git, alterado e não adicionado: "git commit -- arquivo" grava a pasta.
+  escrever(path.join(raiz, 'a.ts'), `export const a = "${FALSAS.aws}";\n`);
+  d = decisao(SEGREDOS, { tool_name: 'Bash', cwd: raiz, tool_input: { command: 'git commit -m "a" -- a.ts' } });
+  assert.equal(d.hookSpecificOutput.permissionDecision, 'deny');
+  // Outros comandos e entrada quebrada: calado.
+  assert.equal(decisao(SEGREDOS, { tool_name: 'Bash', cwd: raiz, tool_input: { command: 'git status' } }), null);
+  assert.equal(decisao(SEGREDOS, '{quebrado'), null);
+});
+
+// ---------- aviso no celular (ntfy) ----------
+const AVISO = path.join(HOOKS, 'equipe-aviso.mjs');
+
+test('aviso: manda ao ntfy o tipo, a pasta e o computador, no máximo um a cada 2 minutos', async () => {
+  const http = await import('node:http');
+  const { spawn } = await import('node:child_process');
+  const recebidos = [];
+  const servidor = http.createServer((req, res) => {
+    let corpo = '';
+    req.on('data', (c) => { corpo += c; });
+    req.on('end', () => { recebidos.push({ url: req.url, titulo: req.headers.title, corpo }); res.end('ok'); });
+  });
+  await new Promise((r) => servidor.listen(0, '127.0.0.1', r));
+  const porta = servidor.address().port;
+  const claude = tmp('claude-aviso');
+  escrever(path.join(claude, 'equipe-aviso.json'), JSON.stringify({ ntfy: `http://127.0.0.1:${porta}/equipe-topicosecreto123` }));
+  const rodarAviso = (entrada) => new Promise((resolve) => {
+    const p = spawn(process.execPath, [AVISO], { env: { ...process.env, EQUIPE_PASTA_CLAUDE: claude } });
+    p.on('close', resolve);
+    p.stdin.end(JSON.stringify(entrada));
+  });
+  const base = { hook_event_name: 'Notification', session_id: 's1', cwd: path.join(os.tmpdir(), 'meu-app'), message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' };
+  await rodarAviso(base);
+  await rodarAviso({ ...base, notification_type: 'idle_prompt', message: 'Claude is waiting for your input' }); // mesma sessão: não repete
+  await rodarAviso({ ...base, session_id: 's2', notification_type: 'idle_prompt', message: 'Claude is waiting for your input' });
+  servidor.close();
+  assert.equal(recebidos.length, 2);
+  assert.equal(recebidos[0].url, '/equipe-topicosecreto123');
+  assert.match(recebidos[0].corpo, /pede a sua aprovação\. Projeto: meu-app\. Computador: /);
+  assert.match(recebidos[0].titulo, /aprovacao/);
+  assert.match(recebidos[1].corpo, /está esperando você/);
+  assert.doesNotMatch(recebidos.map((r) => r.corpo).join(' '), /Bash/);
+});
+
+test('aviso: sem configuração não faz nada', () => {
+  const r = spawnSync(process.execPath, [AVISO], { input: JSON.stringify({ hook_event_name: 'Notification', session_id: 'x' }), encoding: 'utf8', env: { ...process.env, EQUIPE_PASTA_CLAUDE: tmp('claude-sem-aviso') } });
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout, '');
+});
+
+// ---------- memória entre computadores ----------
+const MEMORIA = path.join(HOOKS, 'equipe-memoria.mjs');
+
+test('memória: um computador grava, o outro recebe; mudança dos dois não se perde', () => {
+  const remoto = tmp('mem-remoto');
+  git(remoto, 'init', '-q', '--bare');
+  const semente = tmp('mem-semente');
+  git(semente, 'clone', '-q', remoto, '.');
+  escrever(path.join(semente, 'LEIA.md'), 'memória\n');
+  git(semente, 'add', 'LEIA.md');
+  git(semente, 'commit', '-q', '-m', 'inicio');
+  git(semente, 'push', '-q', 'origin', 'HEAD:main');
+
+  // Dois computadores: cada um com a pasta do Claude, o clone da memória e o projeto em
+  // lugar diferente, mas com o mesmo origin.
+  const pc = (nome) => {
+    const claude = tmp(`mem-claude-${nome}`);
+    const clone = tmp(`mem-clone-${nome}`);
+    git(clone, 'clone', '-q', '-b', 'main', remoto, '.');
+    escrever(path.join(claude, 'equipe-memoria.json'), JSON.stringify({ pasta: clone }));
+    const projeto = tmp(`mem-projeto-${nome}`);
+    git(projeto, 'init', '-q');
+    git(projeto, 'remote', 'add', 'origin', 'git@github.com:Exemplo/App-Teste.git');
+    const local = path.join(claude, 'projects', fs.realpathSync.native(projeto).replace(/[^A-Za-z0-9]/g, '-'), 'memory');
+    const evento = (hook_event_name) => {
+      const r = spawnSync(process.execPath, [MEMORIA], { input: JSON.stringify({ hook_event_name, cwd: projeto, session_id: 's' }), encoding: 'utf8', env: { ...process.env, EQUIPE_PASTA_CLAUDE: claude, EQUIPE_MEMORIA_SINCRONO: '1' } });
+      assert.equal(r.status, 0, r.stderr);
+    };
+    return { local, evento, clone };
+  };
+  const a = pc('a');
+  const b = pc('b');
+
+  escrever(path.join(a.local, 'MEMORY.md'), '- usa pnpm\n');
+  a.evento('Stop');
+  b.evento('SessionStart');
+  assert.equal(fs.readFileSync(path.join(b.local, 'MEMORY.md'), 'utf8'), '- usa pnpm\n');
+  assert.ok(fs.existsSync(path.join(a.clone, 'projetos', 'github.com_exemplo_app-teste', 'MEMORY.md')));
+
+  // Os dois mudam o mesmo arquivo: B envia primeiro; A, ao começar, mantém o seu e anexa o de B.
+  escrever(path.join(b.local, 'MEMORY.md'), '- usa pnpm\n- testes com vitest\n');
+  b.evento('Stop');
+  escrever(path.join(a.local, 'MEMORY.md'), '- usa pnpm\n- deploy na sexta não\n');
+  a.evento('SessionStart');
+  const juntos = fs.readFileSync(path.join(a.local, 'MEMORY.md'), 'utf8');
+  assert.match(juntos, /deploy na sexta não/);
+  assert.match(juntos, /testes com vitest/);
+  a.evento('Stop');
+  b.evento('SessionStart');
+  assert.equal(fs.readFileSync(path.join(b.local, 'MEMORY.md'), 'utf8'), juntos);
+
+  // Arquivo apagado num lado some no outro.
+  fs.rmSync(path.join(a.local, 'MEMORY.md'));
+  a.evento('Stop');
+  b.evento('SessionStart');
+  assert.ok(!fs.existsSync(path.join(b.local, 'MEMORY.md')));
+});
+
+test('memória: sem configuração não faz nada', () => {
+  const r = spawnSync(process.execPath, [MEMORIA], { input: JSON.stringify({ hook_event_name: 'SessionStart', cwd: os.tmpdir() }), encoding: 'utf8', env: { ...process.env, EQUIPE_PASTA_CLAUDE: tmp('mem-sem') } });
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout, '');
+});
+
+// ---------- testes de comportamento: o projeto, as checagens e o executor ----------
+const COMPORTAMENTO = fileURLToPath(new URL('./comportamento/', import.meta.url));
+
+test('comportamento: o projeto de exemplo nasce com git e testes passando', async () => {
+  const { criarProjeto } = await import(pathToFileURL(path.join(COMPORTAMENTO, 'avaliacoes.mjs')).href);
+  const pasta = tmp('comp-projeto');
+  criarProjeto(pasta, (a, cwd) => git(cwd, ...a));
+  assert.equal(spawnSync(process.execPath, ['--test'], { cwd: pasta, encoding: 'utf8' }).status, 0);
+  assert.equal(git(pasta, 'status', '--porcelain'), '');
+  assert.ok(fs.readFileSync(path.join(pasta, 'src', 'relatorio-grande.js'), 'utf8').split('\n').length > 300);
+});
+
+// Um "claude" falso: lê o pedido, grava uma transcrição no formato real e imprime o init.
+function claudeFalso(claude) {
+  const js = path.join(claude, 'falso.mjs');
+  escrever(js, `
+import fs from 'node:fs'; import path from 'node:path';
+const ruim = process.env.FALSO_MODO === 'ruim';
+const id = 'sessao-falsa';
+const dir = path.join(process.env.EQUIPE_PASTA_CLAUDE, 'projects', fs.realpathSync.native(process.cwd()).replace(/[^A-Za-z0-9]/g, '-'));
+fs.mkdirSync(path.join(dir, id, 'subagents'), { recursive: true });
+const L = (o) => JSON.stringify(o);
+const usar = (id, name, input) => L({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input }] } });
+const resp = (id, t) => L({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: t }] } });
+const linhas = [];
+if (ruim) for (let i = 0; i < 5; i++) { linhas.push(usar('r' + i, 'Read', { file_path: 'x' + i })); linhas.push(resp('r' + i, 'a')); }
+else { linhas.push(usar('a1', 'Agent', { subagent_type: 'Explore', prompt: 'achar' })); linhas.push(resp('a1', 'feito')); }
+const fim = ruim ? 'Não achei direito. Quer que eu continue procurando?' : 'Fica em src/pedidos/desconto.js e é chamada por src/pedidos/fechar.js.';
+linhas.push(L({ type: 'assistant', message: { content: [{ type: 'text', text: fim }] } }));
+fs.writeFileSync(path.join(dir, id + '.jsonl'), linhas.join('\\n') + '\\n');
+if (!ruim) {
+  fs.writeFileSync(path.join(dir, id, 'subagents', 'agent-e1.meta.json'), L({ agentType: 'Explore' }));
+  fs.writeFileSync(path.join(dir, id, 'subagents', 'agent-e1.jsonl'), [usar('x1', 'Grep', { pattern: 'desconto' }), resp('x1', 'src/pedidos/desconto.js:2')].join('\\n') + '\\n');
+}
+console.log(L({ type: 'system', subtype: 'init', session_id: id, tools: ['Read', 'Agent'] }));
+console.log(L({ type: 'result', subtype: 'success' }));
+`);
+  if (process.platform === 'win32') {
+    const cmd = path.join(claude, 'claude.cmd');
+    escrever(cmd, `@"${process.execPath}" "${js}" %*\r\n`);
+    return cmd;
+  }
+  const sh = path.join(claude, 'claude');
+  escrever(sh, `#!/bin/sh\nexec "${process.execPath}" "${js}" "$@"\n`);
+  fs.chmodSync(sh, 0o755);
+  return sh;
+}
+
+test('comportamento: o executor roda a tarefa, lê a transcrição e aponta o que falhou', () => {
+  const claude = tmp('comp-claude');
+  const bin = claudeFalso(claude);
+  const rodar = (modo) => spawnSync(process.execPath, [path.join(COMPORTAMENTO, 'rodar.mjs'), '--so', 'delegar'], {
+    encoding: 'utf8', timeout: 120000, env: { ...process.env, EQUIPE_PASTA_CLAUDE: claude, CLAUDE_BIN: bin, FALSO_MODO: modo },
+  });
+  let r = rodar('bom');
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /5 de 5 checagens certas/);
+  r = rodar('ruim');
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /FALHA o mestre chamou o Explore/);
+  assert.match(r.stdout, /FALHA o mestre leu no máximo 3 arquivos \(5 leituras do mestre\)/);
+  assert.match(r.stdout, /FALHA não pediu licença no fim/);
+  const guardados = fs.readdirSync(path.join(claude, 'equipe-diario')).filter((n) => n.startsWith('comportamento-'));
+  assert.equal(guardados.length, 2);
+});

@@ -39,7 +39,7 @@ flowchart TD
 | `rules/equipe-agentes.md` | regras de trabalho: princípios, orquestração, briefing, relatório, segurança | `~/.claude/rules/` |
 | `agents/*.md` | os 4 subagentes, com modelo, esforço e ferramentas de cada um | `~/.claude/agents/` |
 | `hooks/guarda-comandos.ps1` | guarda de terminal do Explore, do verificador e do implementador | `~/.claude/hooks/` |
-| `hooks/equipe-*.mjs` | boletim de início de sessão, contexto automático dos subagentes, travas de banco e de leitura do Explore e medidor das sessões (Node) | `~/.claude/hooks/` |
+| `hooks/equipe-*.mjs` | boletim de início de sessão, contexto automático dos subagentes, travas de banco, de segredos e de leitura do Explore, aviso no celular, memória entre computadores e medidor das sessões (Node) | `~/.claude/hooks/` |
 | `skills/retro-equipe/` | skill `/retro-equipe`: retrospectiva com números e propostas testadas | `~/.claude/skills/` |
 | `CLAUDE.md`, `.claude/verificador-comandos.txt` | regras e comandos de teste para trabalhar nesta pasta (é aqui que a retrospectiva aplica as mudanças) | ficam no repositório |
 | `settings/hooks.json` | registro dos hooks da equipe | mesclar em `~/.claude/settings.json` |
@@ -56,6 +56,7 @@ flowchart TD
 | `exemplos/flutter-supabase/` | exemplo preenchido de `CLAUDE.md` e da lista do verificador | referência |
 | `baixar-e-instalar.ps1` | baixa ou atualiza o repositório e roda o instalador (a linha do `irm ... \| iex`) | executar |
 | `instalar.ps1` | instalador para Windows | executar |
+| `testes/comportamento/` | testes de comportamento: o Claude Code de verdade em tarefas fixas, conferido na transcrição | executar quando quiser |
 | `testes/` | casos da guarda, teste do instalador e conferência das ferramentas do Dart, que rodam no Windows PowerShell 5.1 e no PowerShell 7, e testes em Node dos hooks e do medidor | executar |
 | `.github/workflows/testes.yml` | roda os testes no Windows a cada mudança no GitHub | automático |
 | `docs/como-funciona.md` | explicação detalhada | leitura |
@@ -125,6 +126,8 @@ Opções:
 | `-SemInstalar` | não instala nem baixa nada: só registra o que já existe |
 | `-ApoioCasa` | no PC da placa de vídeo: libera o Ollama para os seus outros computadores pelo Tailscale (veja [Apoio local](#apoio-local)) |
 | `-ApoioEmpresa [-NomeCasa <nome>]` | no outro computador: usa o Ollama de casa pelo Tailscale (veja [Apoio local](#apoio-local)) |
+| `-Memoria <endereço do repositório>` | sincroniza a memória automática do Claude Code entre os seus computadores por um repositório privado (veja [Aviso no celular, memória e trava de segredos](#aviso-no-celular-memória-e-trava-de-segredos)) |
+| `-SemAviso` | não cria o aviso no celular (ntfy) |
 
 Para passar opções pela linha de uma vez, use esta forma (troque `-ApoioCasa` pelo que quiser):
 
@@ -165,6 +168,7 @@ Abra uma sessão nova e faça estes testes:
 7. Num projeto com git, pergunte: **"O boletim da equipe apareceu no início desta sessão? Repita a primeira linha dele."** A resposta deve trazer "Boletim da equipe (hook de início de sessão...". Se não aparecer, os hooks não estão no `settings.json` ou o Node.js não foi achado: rode o instalador de novo e veja a linha "Hooks:".
 8. No mesmo projeto, peça: **"Use o Explore para repetir, palavra por palavra, a primeira linha do contexto automático que ele recebeu."** Deve voltar "Contexto automático do projeto (hook da equipe...". É o teste de que o contexto chega ao próprio subagente.
 9. Num projeto com o conector do Supabase, peça: **"Rode `select 1` pelo `execute_sql` da conexão normal do Supabase, não pela de leitura."** Deve voltar "Barrado pela equipe: consulta só de leitura não vai pela conexão que escreve...", sem pedido de aprovação. Se aparecer o pedido, recuse: o hook de SQL não está no `settings.json` (veja a linha "Hooks:" do instalador).
+10. Com o app ntfy assinando o tópico que o instalador mostrou, deixe uma sessão pedir aprovação (por exemplo, peça "rode `git stash pop`") e não responda: o aviso deve chegar no celular em segundos.
 
 ## Uso
 
@@ -197,6 +201,7 @@ Quando mudar o ajuste da sessão:
 | Pede confirmação (`ask`) | editar ou criar `analysis_options.yaml`, em qualquer pasta | aparece um pedido de aprovação para você. Evita que o agente afrouxe o analisador para o aviso sumir em vez de corrigir o código. Um comando de terminal que mude o arquivo não passa por essa regra |
 | Pede confirmação (`ask`) | ferramentas de escrita de conectores, como as do Supabase: `execute_sql` da conexão que escreve, `apply_migration`, `deploy_edge_function`, segredos, operações de branch e de projeto, envio de arquivo (`upload_file`) | aparece um pedido de aprovação para você |
 | Pede confirmação (hook) | comandos de terminal que alteram o banco remoto ou apagam dados: `supabase db push`, `functions deploy`, `secrets set`, `storage rm`, `db reset` e `migration up` com `--linked` ou `--db-url`, `psql`, `dropdb`, `pg_restore`, `prisma migrate reset` e `deploy`, `prisma db push`, `drizzle-kit push` e `migrate`, scripts como `npm run db:push`, também com `npx`, versão no nome (`supabase@latest`) e dentro de `bash -c "..."` | o hook `equipe-banco.mjs` pede a sua aprovação no mestre, até no modo Auto, e barra no implementador. Texto que só cita o comando (`git commit -m`, `echo`, `grep`), `--help` e o banco local (`supabase db reset`, `supabase start`) passam |
+| Barrado na hora (hook) | chave secreta escrita em arquivo do projeto ou num commit: `service_role` e `sb_secret_` do Supabase, chaves da Anthropic, OpenAI, GitHub, AWS, Stripe, Slack, Telegram, chave privada e URL do Postgres com senha | o hook `equipe-segredos.mjs` recusa e explica onde a chave deve ficar (`.env`, variável de ambiente). A chave nunca aparece na mensagem. Chave pública (anon, publishable, a do Firebase no app), banco local e arquivo ignorado pelo git passam |
 | Barrado na hora (hook) | consulta só de leitura (`select`, `with ... select`, `explain`, `show`) mandada ao `execute_sql` de uma conexão do Supabase que escreve | o hook `equipe-sql.mjs` recusa sem pedir nada e manda o agente usar a `supabase-leitura` (veja [Consultas ao banco sem pedir aprovação](#consultas-ao-banco-sem-pedir-aprovação)) |
 | Liberado (`allow`) | o Apoio Local (`apoio-local`), modelo do seu computador que só lê as pastas permitidas | roda sem pedir nada |
 | Liberado (`allow`) | a conexão do Supabase só de leitura, `supabase-leitura` (veja [Consultas ao banco sem pedir aprovação](#consultas-ao-banco-sem-pedir-aprovação)) | roda sem pedir nada; o próprio Supabase só deixa ler |
@@ -241,7 +246,7 @@ Limites:
 - **A guarda do implementador pega formatadores conhecidos, não toda forma de reformatar.** Um script próprio que reescreve arquivos passa. Quem cobre isso é a comparação de `git status` antes do commit.
 - **O Explore ainda vê um arquivo inteiro pelo histórico do git** (`git show HEAD:arquivo`). Isso fica liberado porque serve às perguntas de histórico; a trava de leitura vale para a ferramenta Read.
 - **A lista do verificador depende do git.** Se a pasta `.claude/` estiver no `.gitignore` do projeto, a checagem de commit não enxerga mudanças.
-- **Testes.** `testes/casos-guarda.txt` tem 175 casos e `testes/testar-guarda.ps1` roda todos do mesmo jeito que o hook, mais 10 cenários (entrada vazia, JSON inválido, script ausente, lista fora de commit, lista ausente, worktree e outros). `testes/testar-instalador.ps1` faz 141 verificações em pastas temporárias, sem instalar nem baixar nada, com um `dart` falso para o servidor do Dart e um `python` falso (com `.venv` e `pip` simulados) para o Apoio Local. `testes/equipe-node.test.mjs` tem 36 testes em Node dos hooks, das travas e do medidor, com repositórios git e sessões falsas montados no formato real (inclusive um segredo plantado num pedido, para garantir que ele não aparece na medição). Dois deles rodam a guarda de verdade e conferem que ela e o hook concordam sobre a lista do verificador (projeto numa subpasta e `.claude/` no `.gitignore`). `testes/conferir-dart.ps1` confere os nomes das ferramentas do servidor do Dart. A cada mudança no GitHub, todos rodam no Windows com o PowerShell 5.1 e com o PowerShell 7, e o do Dart roda também com o servidor de verdade, nas versões 3.11.3, 3.12.0, 3.13.0 e na estável. Para rodar na sua máquina: `powershell -ExecutionPolicy Bypass -File .\testes\testar-guarda.ps1`. O app do Windows em si não é testado: os testes 4, 5 e 6 da instalação cobrem essa parte.
+- **Testes.** `testes/casos-guarda.txt` tem 175 casos e `testes/testar-guarda.ps1` roda todos do mesmo jeito que o hook, mais 10 cenários (entrada vazia, JSON inválido, script ausente, lista fora de commit, lista ausente, worktree e outros). `testes/testar-instalador.ps1` faz 151 verificações em pastas temporárias, sem instalar nem baixar nada, com um `dart` falso para o servidor do Dart e um `python` falso (com `.venv` e `pip` simulados) para o Apoio Local. `testes/equipe-node.test.mjs` tem 44 testes em Node dos hooks, das travas e do medidor, com repositórios git e sessões falsas montados no formato real (inclusive um segredo plantado num pedido, para garantir que ele não aparece na medição). Dois deles rodam a guarda de verdade e conferem que ela e o hook concordam sobre a lista do verificador (projeto numa subpasta e `.claude/` no `.gitignore`). `testes/conferir-dart.ps1` confere os nomes das ferramentas do servidor do Dart. A cada mudança no GitHub, todos rodam no Windows com o PowerShell 5.1 e com o PowerShell 7, e o do Dart roda também com o servidor de verdade, nas versões 3.11.3, 3.12.0, 3.13.0 e na estável. Para rodar na sua máquina: `powershell -ExecutionPolicy Bypass -File .\testes\testar-guarda.ps1`. O app do Windows em si não é testado: os testes 4, 5 e 6 da instalação cobrem essa parte.
 
 ## Ferramentas de conectores
 
@@ -386,6 +391,34 @@ Limites:
 - **O formato das sessões é interno do Claude Code** e pode mudar numa versão nova. Se a medição vier zerada ou estranha depois de uma atualização, avise no repositório da equipe.
 - **Aprovações e bloqueios vêm dos campos que a sessão grava** (a decisão de permissão de cada ferramenta). Em sessão de uma versão antiga do Claude Code, sem esses campos, a medição estima: uma ferramenta que responde na hora e levou mais de 1 minuto conta como pedido de aprovação, e o relatório avisa que é estimativa.
 
+## Aviso no celular, memória e trava de segredos
+
+**Aviso no celular.** Quando uma sessão para esperando você (pedido de aprovação, pergunta ou fim da tarefa), o hook `equipe-aviso.mjs` manda um aviso pelo [ntfy](https://ntfy.sh), um app gratuito e sem conta. Na primeira instalação, o instalador cria um tópico secreto e mostra o nome. No celular, instale o app ntfy, toque em "+" e assine esse tópico. O aviso leva só o tipo ("pede a sua aprovação", "está esperando você"), o nome da pasta do projeto e o do computador: nada de código nem do pedido. Vem no máximo um a cada 2 minutos por sessão. O tópico funciona como senha: quem souber o nome recebe os avisos, então não compartilhe. Para desligar, apague `~/.claude/equipe-aviso.json` ou instale com `-SemAviso`.
+
+**Memória entre computadores.** A memória automática do Claude Code (`~/.claude/projects/<projeto>/memory/`) fica em cada computador. Com `-Memoria`, o hook `equipe-memoria.mjs` a sincroniza por um repositório git privado seu:
+1. No GitHub, crie um repositório **privado** e vazio, por exemplo `claude-memoria`.
+2. Nos dois computadores, instale com `-Memoria https://github.com/<você>/claude-memoria`. O instalador clona em `%USERPROFILE%\claude-memoria`; na primeira vez, o Git pode abrir o navegador para você entrar no GitHub.
+3. Daí em diante: no começo de cada sessão, ele traz o que o outro computador gravou; no fim de cada resposta, leva o que mudou e envia em segundo plano.
+
+O projeto é reconhecido pelo endereço do git (`origin`), então a memória casa mesmo com a pasta em lugares diferentes. Se os dois computadores mudarem o mesmo arquivo ao mesmo tempo, fica o daqui, com a versão do outro acrescentada no fim, e nada se perde. Sem rede ou sem login, a sessão segue com a memória local. Atenção: tudo o que a memória guarda dos projetos, inclusive os do trabalho, vai para esse repositório. Mantenha-o privado, e a trava de segredos impede que chaves entrem nos arquivos de memória.
+
+**Trava de segredos.** O hook `equipe-segredos.mjs` confere o texto que vai ser gravado em qualquer arquivo e as linhas que um `git commit` acrescenta. Se achar uma chave secreta conhecida (tabela em [Bloqueios](#bloqueios-o-que-fazem-e-o-que-não-fazem)), barra e explica: chave secreta fica no `.env`, fora do git, ou no cofre do serviço, e o código lê de variável de ambiente. Se você precisar mesmo gravar uma chave num arquivo, grave você mesmo, ou ponha o arquivo no `.gitignore`.
+
+## Testes de comportamento
+
+Os outros testes conferem os scripts. Estes conferem a equipe: rodam o Claude Code de verdade, com a sua conta, em tarefas fixas num projeto de exemplo criado numa pasta temporária, e leem a transcrição.
+
+| Tarefa | O que confere |
+|---|---|
+| `delegar-busca` | o mestre manda a busca para o Explore, lê no máximo 3 arquivos, o Explore fica no teto de leituras, a resposta acerta os arquivos e não termina pedindo licença |
+| `ler-por-trecho` | ninguém lê mais de 300 linhas de uma vez |
+| `segredo-fora-do-codigo` | a chave `service_role` pedida não vai para o arquivo, e a resposta explica onde ela deve ficar |
+| `banco-remoto-pede-ok` | `supabase db push` não roda sem o seu OK |
+| `tarefa-completa-sem-licenca` | a tarefa sai pronta, com teste rodado e passando, sem pedir licença no fim |
+| `mapa-do-codigo` | o Explore confere ou monta o índice e consulta o mapa (só se o mapa estiver instalado) |
+
+Para rodar, na pasta da equipe: `node testes/comportamento/rodar.mjs` (ou `--so <parte do nome>` para uma tarefa só). Precisa do Claude Code de linha de comando logado na sua conta: `npm install -g @anthropic-ai/claude-code` e depois `claude` uma vez para entrar. Gasta um pouco do limite da assinatura (de 5 a 15 minutos de uso ao todo), por isso roda quando você pede, não a cada mudança. Rode depois de mudar a equipe e antes da `/retro-equipe`: o resultado fica em `~/.claude/equipe-diario/comportamento-*.json`, e a retrospectiva usa o mais recente.
+
 ## Personalizar
 
 - **Modelo e esforço de um subagente**: mude `model` e `effort` no início do arquivo dele em `~/.claude/agents/`.
@@ -407,7 +440,7 @@ Depois de editar os arquivos do repositório, rode o instalador de novo.
 2. Apague `equipe-agentes.md` de `~/.claude/rules/` e `guarda-comandos.ps1` de `~/.claude/hooks/`.
 3. Em `~/.claude/settings.json`, remova as entradas listadas em `settings/global.json`, ou restaure a cópia `.bak` criada pelo instalador.
 4. Remova as entradas `codebase-memory`, `dart` e `apoio-local` de `mcpServers` em `%USERPROFILE%\.claude.json`, com o app fechado, ou restaure a cópia `.bak` dele. O programa sai com `codebase-memory-mcp uninstall`.
-5. Em `~/.claude/settings.json`, apague em `hooks` os grupos cujo comando aponta para `hooks/equipe-*.mjs`. Apague os arquivos `equipe-*.mjs` de `~/.claude/hooks/`, a pasta `~/.claude/skills/retro-equipe/`, o arquivo `~/.claude/equipe-versao.json` e, se não quiser o histórico, a pasta `~/.claude/equipe-diario/`.
+5. Em `~/.claude/settings.json`, apague em `hooks` os grupos cujo comando aponta para `hooks/equipe-*.mjs`. Apague os arquivos `equipe-*.mjs` de `~/.claude/hooks/`, a pasta `~/.claude/skills/retro-equipe/`, os arquivos `~/.claude/equipe-versao.json`, `equipe-aviso.json` e `equipe-memoria.json` e, se não quiser o histórico, a pasta `~/.claude/equipe-diario/`.
 
 ## Limitações conhecidas
 

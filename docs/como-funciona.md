@@ -90,8 +90,9 @@ Regra escrita depende de o agente lembrar dela. Por isso a equipe tem mecanismos
 
 1. **Boletim de início:** um hook entrega ao mestre, no começo de cada sessão, os fatos do projeto (tamanho, mapa obrigatório, configuração, lista do verificador, notas de área, plano em andamento). Ele não gasta chamadas descobrindo isso.
 2. **Contexto dos subagentes:** outro hook entrega ao Explore, ao verificador e ao revisor o que eles não carregam do `CLAUDE.md`: como conferir e indexar o mapa, as notas de área, os comandos liberados, as regras do projeto. O briefing continua necessário, mas o essencial chega mesmo quando o mestre esquece.
-3. **Travas por hook:** o que mais custou na prática virou trava, não regra. A consulta que só lê não passa pela conexão do banco que escreve (cada uma pedia aprovação e parava a sessão), o Explore lê por trecho e tem teto de leituras, e comando de terminal que altera o banco pede a sua aprovação no mestre e é barrado no implementador.
-4. **Retrospectiva com números:** a `/retro-equipe` mede as sessões da semana, propõe no máximo 5 mudanças, cada uma com teste, e guarda o resultado. Na seguinte, compara os números antes e depois. Uma mudança que não mexeu no indicador sai ou é trocada.
+3. **Travas por hook:** o que mais custou na prática virou trava, não regra. A consulta que só lê não passa pela conexão do banco que escreve (cada uma pedia aprovação e parava a sessão), o Explore lê por trecho e tem teto de leituras, comando de terminal que altera o banco pede a sua aprovação no mestre e é barrado no implementador, e chave secreta não entra em arquivo nem em commit.
+4. **Testes de comportamento:** tarefas fixas rodadas com o Claude Code de verdade conferem se a equipe delega, lê por trecho, respeita as travas e termina sem pedir licença à toa. Sem eles, só se descobre o desvio no trabalho real.
+5. **Retrospectiva com números:** a `/retro-equipe` mede as sessões da semana, propõe no máximo 5 mudanças, cada uma com teste, e guarda o resultado. Na seguinte, compara os números antes e depois. Uma mudança que não mexeu no indicador sai ou é trocada.
 
 O ciclo é: medir, propor, você escolher, testar, instalar, medir de novo. A equipe não se altera sozinha, porque uma regra mal ajustada piora tudo e porque mexer em permissões e hooks sem você seria um risco.
 

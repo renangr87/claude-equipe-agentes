@@ -94,6 +94,14 @@
   atualiza o Apoio Local e nao baixa modelo. As dependencias Python do Apoio Local
   continuam sendo conferidas no ambiente proprio dele.
 
+.PARAMETER Memoria
+  Repositorio git privado (endereco ou pasta de um clone) para sincronizar a memoria
+  automatica do Claude Code entre os seus computadores. Clona em <usuario>\claude-memoria.
+
+.PARAMETER SemAviso
+  Nao cria o aviso no celular (ntfy). Sem esta opcao, o instalador cria um topico secreto
+  na primeira vez e mostra qual assinar no app.
+
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\instalar.ps1
 
@@ -119,7 +127,9 @@ param(
     [switch]$ApoioCasa,
     [switch]$ApoioEmpresa,
     [string]$NomeCasa = '',
-    [switch]$SemHooks
+    [switch]$SemHooks,
+    [string]$Memoria = '',
+    [switch]$SemAviso
 )
 
 $ErrorActionPreference = 'Stop'
@@ -406,7 +416,7 @@ function Ler-Servidor([string]$nome) {
 function Test-HookDaEquipe($h) {
     if ($null -eq $h) { return $false }
     foreach ($p in (@($h.command) + @($h.args))) {
-        if ($p -is [string] -and $p -match '[\\/]hooks[\\/]equipe-(boletim|contexto|sql|banco)\.mjs$') { return $true }
+        if ($p -is [string] -and $p -match '[\\/]hooks[\\/]equipe-(boletim|contexto|sql|banco|segredos|aviso|memoria)\.mjs$') { return $true }
     }
     return $false
 }
@@ -488,7 +498,7 @@ function Merge-Hooks([string]$arquivoModelo, [string]$arquivoDestino, [string]$n
         Write-Host "  copia de seguranca: $bak"
     }
     [System.IO.File]::WriteAllText($arquivoDestino, ($atual | ConvertTo-Json -Depth 32) + "`n", $utf8)
-    Write-Host "  hooks da equipe gravados (boletim de inicio, contexto dos subagentes e travas de banco): $arquivoDestino"
+    Write-Host "  hooks da equipe gravados (boletim, contexto dos subagentes, travas de banco e de segredos, aviso no celular e memoria): $arquivoDestino"
 }
 
 
@@ -537,6 +547,48 @@ if ($SemBloqueios) {
 } else {
     Write-Host "Hooks:"
     Merge-Hooks (Join-Path (Join-Path $origem 'settings') 'hooks.json') (Join-Path $Destino 'settings.json') $nodeEquipe
+}
+
+# ---------- Aviso no celular e memoria entre computadores ----------
+# So valem com os hooks instalados (eles rodam no Node).
+$hooksAtivos = $nodeEquipe -and -not $SemHooks -and -not $SemBloqueios
+if ($hooksAtivos -and -not $SemAviso) {
+    Write-Host "Aviso no celular (ntfy):"
+    $arqAviso = Join-Path $Destino 'equipe-aviso.json'
+    if (-not (Test-Path -LiteralPath $arqAviso)) {
+        $topico = 'equipe-' + [guid]::NewGuid().ToString('N').Substring(0, 20)
+        [System.IO.File]::WriteAllText($arqAviso, (@{ ntfy = "https://ntfy.sh/$topico" } | ConvertTo-Json), $utf8)
+    }
+    try { $topico = ([string]((Read-Texto $arqAviso) | ConvertFrom-Json).ntfy) -replace '^.*/', '' } catch { $topico = '' }
+    if ($topico) {
+        Write-Host "  no celular, instale o app ntfy e assine o topico: $topico"
+        Write-Host "  (o topico e a senha: nao compartilhe. Para desligar, apague $arqAviso)"
+    }
+}
+if ($Memoria) {
+    Write-Host "Memoria entre computadores:"
+    $pastaMemoria = $null
+    if (Test-Path -LiteralPath (Join-Path $Memoria '.git')) {
+        $pastaMemoria = (Resolve-Path -LiteralPath $Memoria).ProviderPath
+    } else {
+        $pastaMemoria = Join-Path $HOME 'claude-memoria'
+        $gitMemoria = Find-Git
+        if (-not (Test-Path -LiteralPath (Join-Path $pastaMemoria '.git')) -and $gitMemoria) {
+            Write-Host "  baixando $Memoria em $pastaMemoria (pode abrir o navegador para entrar no GitHub)..."
+            $eap = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            & $gitMemoria clone $Memoria $pastaMemoria | Out-Host
+            $ErrorActionPreference = $eap
+        }
+    }
+    if ($pastaMemoria -and (Test-Path -LiteralPath (Join-Path $pastaMemoria '.git'))) {
+        $cfg = @{ pasta = ($pastaMemoria -replace '\\', '/') } | ConvertTo-Json
+        [System.IO.File]::WriteAllText((Join-Path $Destino 'equipe-memoria.json'), $cfg, $utf8)
+        Write-Host "  memoria sincronizada pela pasta $pastaMemoria"
+        if (-not $hooksAtivos) { Write-Host "  ATENCAO: sem os hooks (Node ausente, -SemHooks ou -SemBloqueios), a sincronizacao nao roda." }
+    } else {
+        Write-Host "  nao configurada: nao consegui baixar $Memoria. Confira o endereco e o login no GitHub e rode de novo."
+    }
 }
 
 # ---------- Mapa do codigo ----------
