@@ -151,7 +151,8 @@ function pendente(repo) {
 
 export function enviar(repo) {
   const atr = path.join(repo, '.gitattributes');
-  if (!fs.existsSync(atr)) fs.writeFileSync(atr, '*.md merge=union\n');
+  // -text: o git não troca o fim de linha (o Windows traria \r\n e a memória mudaria sozinha).
+  if (!fs.existsSync(atr)) fs.writeFileSync(atr, '* -text\n*.md merge=union\n');
   git(['add', '-A'], repo);
   if (tentar(() => git(['rev-parse', '-q', '--verify', 'HEAD'], repo)) === null) git(['checkout', '-q', '-B', 'main'], repo);
   if (git(['status', '--porcelain'], repo)) git([...ID_GIT, 'commit', '-q', '-m', `memória (${os.hostname()})`], repo);
@@ -166,6 +167,7 @@ export function tratar(entrada) {
   const local = pastaLocal(entrada);
   if (!id || !local) return null;
   const guardada = path.join(repo, 'projetos', id);
+  tentar(() => git(['config', 'core.autocrlf', 'false'], repo));
   const evento = String(entrada.hook_event_name || '');
   if (evento === 'SessionStart') {
     atualizar(repo);
