@@ -9,7 +9,9 @@
 // O projeto é reconhecido pelo endereço do git (origin), igual nos dois computadores, mesmo
 // com a pasta em lugar diferente. Configuração: <pasta do Claude>/equipe-memoria.json
 // ({"pasta": "<clone do repositório de memória>"}), feita pelo instalador com -Memoria.
-// Os dois lados mudaram o mesmo arquivo: fica o daqui, com o do outro acrescentado no fim.
+// Os dois lados mudaram o mesmo arquivo: fica o daqui, com o do outro acrescentado no fim
+// (e, no repositório, os .md se juntam linha a linha: merge=union). Projeto sem origin não
+// sincroniza.
 // Erro, rede ou login faltando: silêncio; a sessão segue com a memória local.
 import { execFileSync, spawn } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -23,7 +25,7 @@ const ESTADO = '.equipe-sync.json';
 
 function git(args, cwd, limite = 8000) {
   return execFileSync('git', args, {
-    cwd, encoding: 'utf8', timeout: limite, stdio: ['ignore', 'pipe', 'ignore'],
+    cwd, encoding: 'utf8', timeout: limite, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true,
     env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' },
   }).trim();
 }
@@ -40,12 +42,9 @@ export function idDoProjeto(cwd) {
   const raiz = tentar(() => git(['rev-parse', '--show-toplevel'], cwd));
   if (!raiz) return null;
   const origem = tentar(() => git(['remote', 'get-url', 'origin'], raiz));
-  let id;
-  if (origem) {
-    id = origem.replace(/^[a-z+]+:\/\//i, '').replace(/^[^@/]+@/, '').replace(/:(?!\d)/, '/').replace(/\.git$/i, '').replace(/\/+$/, '');
-  } else {
-    id = `local/${path.basename(raiz)}`;
-  }
+  // Sem origin não há nome seguro: dois projetos "app" misturariam a memória.
+  if (!origem) return null;
+  const id = origem.replace(/^[a-z+]+:\/\//i, '').replace(/^[^@/]+@/, '').replace(/:\d+\//, '/').replace(/:(?!\d)/, '/').replace(/\.git$/i, '').replace(/\/+$/, '');
   return id.toLowerCase().replace(/[^a-z0-9._-]+/g, '_');
 }
 
@@ -92,9 +91,13 @@ export function baixar(local, guardada) {
     }
     // Os dois mudaram: fica o daqui, com o do outro no fim, para nada se perder.
     if (g) {
-      const outro = fs.readFileSync(path.join(guardada, nome), 'utf8');
-      fs.appendFileSync(path.join(local, nome), `\n\n<!-- Versão do outro computador (as duas mudaram ao mesmo tempo) -->\n${outro}`);
-      mudou = true;
+      // Só as linhas do outro que ainda não existem aqui.
+      const daqui = new Set(fs.readFileSync(path.join(local, nome), 'utf8').split(/\r?\n/));
+      const novas = fs.readFileSync(path.join(guardada, nome), 'utf8').split(/\r?\n/).filter((l) => l.trim() && !daqui.has(l));
+      if (novas.length) {
+        fs.appendFileSync(path.join(local, nome), `\n<!-- Do outro computador (os dois mudaram ao mesmo tempo) -->\n${novas.join('\n')}\n`);
+        mudou = true;
+      }
     }
     base[nome] = g || b;
   }
@@ -108,7 +111,9 @@ export function subir(local, guardada) {
   let mudou = false;
   for (const nome of new Set([...mds(local), ...Object.keys(base)])) {
     const l = hash(path.join(local, nome));
-    if (l === (base[nome] || null) && l === hash(path.join(guardada, nome))) continue;
+    // Não mudou aqui desde a última sincronização: o que estiver no repositório (talvez a
+    // versão nova do outro computador) fica, e chega no próximo início de sessão.
+    if (l === (base[nome] || null)) continue;
     if (l) {
       fs.mkdirSync(guardada, { recursive: true });
       fs.copyFileSync(path.join(local, nome), path.join(guardada, nome));
@@ -123,14 +128,34 @@ export function subir(local, guardada) {
   return mudou;
 }
 
-export function enviar(repo, id) {
-  git(['add', '-A', '--', path.join('projetos', id)], repo);
-  if (!git(['status', '--porcelain', '--', path.join('projetos', id)], repo)) return;
-  git(['-c', 'user.name=Claude Code', '-c', 'user.email=noreply@anthropic.com', 'commit', '-q', '-m', `memória: ${id} (${os.hostname()})`], repo);
-  // Mesmo trecho mudado nos dois lados: fica o daqui (a cópia do outro já foi anexada antes).
-  tentar(() => git(['-c', 'user.name=Claude Code', '-c', 'user.email=noreply@anthropic.com', 'pull', '-q', '--no-rebase', '--no-edit', '-X', 'ours'], repo, 30000));
-  // -u origin HEAD: o primeiro envio de um repositório recém-criado ainda não tem destino.
-  git(['push', '-q', '-u', 'origin', 'HEAD'], repo, 30000);
+const ID_GIT = ['-c', 'user.name=Claude Code', '-c', 'user.email=noreply@anthropic.com'];
+
+// Junta o que o outro computador enviou. Arquivo .md mudado dos dois lados junta as duas
+// versões (merge=union): nada se perde. Repositório recém-criado: une históricos sem relação.
+export function atualizar(repo) {
+  tentar(() => git(['fetch', '-q', 'origin'], repo, 20000));
+  if (tentar(() => git(['rev-parse', '-q', '--verify', 'refs/remotes/origin/main'], repo)) === null) return;
+  if (tentar(() => git(['rev-parse', '-q', '--verify', 'HEAD'], repo)) === null) {
+    tentar(() => git(['checkout', '-q', '-B', 'main', 'origin/main'], repo));
+    return;
+  }
+  tentar(() => git([...ID_GIT, 'merge', '-q', '--no-edit', '--allow-unrelated-histories', 'origin/main'], repo, 20000));
+}
+
+// Há algo daqui ainda não enviado (commit à frente ou arquivo fora de commit)?
+function pendente(repo) {
+  const st = tentar(() => git(['status', '--porcelain', '-b'], repo)) || '';
+  return /\[ahead /.test(st) || st.split('\n').slice(1).some((l) => l.trim());
+}
+
+export function enviar(repo) {
+  const atr = path.join(repo, '.gitattributes');
+  if (!fs.existsSync(atr)) fs.writeFileSync(atr, '*.md merge=union\n');
+  git(['add', '-A'], repo);
+  if (tentar(() => git(['rev-parse', '-q', '--verify', 'HEAD'], repo)) === null) git(['checkout', '-q', '-B', 'main'], repo);
+  if (git(['status', '--porcelain'], repo)) git([...ID_GIT, 'commit', '-q', '-m', `memória (${os.hostname()})`], repo);
+  atualizar(repo);
+  git(['push', '-q', '-u', 'origin', 'HEAD:main'], repo, 30000);
 }
 
 export function tratar(entrada) {
@@ -142,14 +167,15 @@ export function tratar(entrada) {
   const guardada = path.join(repo, 'projetos', id);
   const evento = String(entrada.hook_event_name || '');
   if (evento === 'SessionStart') {
-    tentar(() => git(['pull', '-q', '--ff-only'], repo));
+    atualizar(repo);
     return baixar(local, guardada) ? 'baixou' : 'em dia';
   }
   if (evento === 'Stop' || evento === 'SessionEnd') {
-    if (!subir(local, guardada)) return 'sem mudança';
-    if (process.env.EQUIPE_MEMORIA_SINCRONO) { enviar(repo, id); return 'enviou'; }
+    // Envia o que mudou agora e também o que ficou para trás num envio que falhou.
+    if (!subir(local, guardada) && !pendente(repo)) return 'sem mudança';
+    if (process.env.EQUIPE_MEMORIA_SINCRONO) { enviar(repo); return 'enviou'; }
     // Em segundo plano: o push pode demorar e a sessão não espera.
-    const p = spawn(process.execPath, [fileURLToPath(import.meta.url), '--enviar', repo, id], { detached: true, stdio: 'ignore', windowsHide: true });
+    const p = spawn(process.execPath, [fileURLToPath(import.meta.url), '--enviar', repo], { detached: true, stdio: 'ignore', windowsHide: true });
     p.unref();
     return 'enviando';
   }
@@ -158,7 +184,7 @@ export function tratar(entrada) {
 
 function principal() {
   const i = process.argv.indexOf('--enviar');
-  if (i > 0) { tentar(() => enviar(process.argv[i + 1], process.argv[i + 2])); return; }
+  if (i > 0) { tentar(() => enviar(process.argv[i + 1])); return; }
   tentar(() => tratar(lerEntrada()));
 }
 

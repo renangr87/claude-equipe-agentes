@@ -60,7 +60,7 @@ function rodarUma(claude, av) {
   // O pedido vai pela entrada padrão: os argumentos são fixos (seguro com shell no Windows).
   const comShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(claude);
   // Com shell (o .cmd do npm no Windows), o caminho vai entre aspas por causa dos espaços.
-  const r = spawnSync(comShell ? `"${claude}"` : claude, ['-p', '--output-format', 'stream-json', '--verbose'], {
+  const r = spawnSync(comShell ? `"${claude}"` : claude, ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits'], {
     cwd: pasta, input: pedido, encoding: 'utf8', timeout: LIMITE_MS, maxBuffer: 256 * 1024 * 1024,
     shell: comShell,
   });

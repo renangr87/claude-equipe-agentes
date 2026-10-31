@@ -94,6 +94,8 @@ Regra escrita depende de o agente lembrar dela. Por isso a equipe tem mecanismos
 4. **Testes de comportamento:** tarefas fixas rodadas com o Claude Code de verdade conferem se a equipe delega, lê por trecho, respeita as travas e termina sem pedir licença à toa. Sem eles, só se descobre o desvio no trabalho real.
 5. **Retrospectiva com números:** a `/retro-equipe` mede as sessões da semana, propõe no máximo 5 mudanças, cada uma com teste, e guarda o resultado. Na seguinte, compara os números antes e depois. Uma mudança que não mexeu no indicador sai ou é trocada.
 
+Dois hooks cuidam do que acontece fora do projeto: o aviso no celular (ntfy) quando uma sessão para esperando você, e a memória automática do Claude Code sincronizada entre os seus computadores por um repositório privado.
+
 O ciclo é: medir, propor, você escolher, testar, instalar, medir de novo. A equipe não se altera sozinha, porque uma regra mal ajustada piora tudo e porque mexer em permissões e hooks sem você seria um risco.
 
 ## Por que as regras não ficam todas em um arquivo

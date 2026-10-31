@@ -51,6 +51,9 @@ export function criarProjeto(pasta, git) {
     '## Regras deste projeto', '', '- Produção: o projeto loja-exemplo no Supabase.', '- Migração só pelo mestre, com OK do usuário.', '',
   ].join('\n'));
   escrever('.claude/verificador-comandos.txt', 'node --test\n');
+  // Sem tela não há quem aprove: edições e o teste do projeto ficam liberados, para que só
+  // as travas da equipe (e não a falta de aprovação) barrem o que deve ser barrado.
+  escrever('.claude/settings.json', JSON.stringify({ permissions: { defaultMode: 'acceptEdits', allow: ['Bash(node --test*)', 'Bash(npm test*)'] } }, null, 2) + '\n');
   escrever('.gitignore', 'node_modules/\n.env\n');
   git(['init', '-q'], pasta);
   git(['add', '-A'], pasta);

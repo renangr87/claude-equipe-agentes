@@ -871,58 +871,78 @@ test('aviso: sem configuração não faz nada', () => {
 const MEMORIA = path.join(HOOKS, 'equipe-memoria.mjs');
 
 test('memória: um computador grava, o outro recebe; mudança dos dois não se perde', () => {
+  // Repositório recém-criado e vazio, como o README manda criar.
   const remoto = tmp('mem-remoto');
   git(remoto, 'init', '-q', '--bare');
-  const semente = tmp('mem-semente');
-  git(semente, 'clone', '-q', remoto, '.');
-  escrever(path.join(semente, 'LEIA.md'), 'memória\n');
-  git(semente, 'add', 'LEIA.md');
-  git(semente, 'commit', '-q', '-m', 'inicio');
-  git(semente, 'push', '-q', 'origin', 'HEAD:main');
 
-  // Dois computadores: cada um com a pasta do Claude, o clone da memória e o projeto em
-  // lugar diferente, mas com o mesmo origin.
+  // Dois computadores: cada um com a pasta do Claude, o clone da memória (vazio) e o
+  // projeto em lugar diferente, mas com o mesmo origin.
   const pc = (nome) => {
     const claude = tmp(`mem-claude-${nome}`);
     const clone = tmp(`mem-clone-${nome}`);
-    git(clone, 'clone', '-q', '-b', 'main', remoto, '.');
+    git(clone, 'clone', '-q', remoto, '.');
     escrever(path.join(claude, 'equipe-memoria.json'), JSON.stringify({ pasta: clone }));
     const projeto = tmp(`mem-projeto-${nome}`);
     git(projeto, 'init', '-q');
     git(projeto, 'remote', 'add', 'origin', 'git@github.com:Exemplo/App-Teste.git');
     const local = path.join(claude, 'projects', fs.realpathSync.native(projeto).replace(/[^A-Za-z0-9]/g, '-'), 'memory');
-    const evento = (hook_event_name) => {
-      const r = spawnSync(process.execPath, [MEMORIA], { input: JSON.stringify({ hook_event_name, cwd: projeto, session_id: 's' }), encoding: 'utf8', env: { ...process.env, EQUIPE_PASTA_CLAUDE: claude, EQUIPE_MEMORIA_SINCRONO: '1' } });
+    const evento = (hook_event_name, cwd = projeto) => {
+      const r = spawnSync(process.execPath, [MEMORIA], { input: JSON.stringify({ hook_event_name, cwd, session_id: 's' }), encoding: 'utf8', env: { ...process.env, EQUIPE_PASTA_CLAUDE: claude, EQUIPE_MEMORIA_SINCRONO: '1' } });
       assert.equal(r.status, 0, r.stderr);
     };
-    return { local, evento, clone };
+    return { local, evento, clone, claude };
   };
   const a = pc('a');
   const b = pc('b');
+  const ler = (x, n = 'MEMORY.md') => fs.readFileSync(path.join(x.local, n), 'utf8');
 
+  // Os dois começam com o repositório vazio e enviam: os históricos se juntam.
   escrever(path.join(a.local, 'MEMORY.md'), '- usa pnpm\n');
+  escrever(path.join(b.local, 'notas.md'), '- deploy pela CI\n');
   a.evento('Stop');
+  b.evento('Stop');
+  a.evento('SessionStart');
   b.evento('SessionStart');
-  assert.equal(fs.readFileSync(path.join(b.local, 'MEMORY.md'), 'utf8'), '- usa pnpm\n');
-  assert.ok(fs.existsSync(path.join(a.clone, 'projetos', 'github.com_exemplo_app-teste', 'MEMORY.md')));
+  assert.equal(ler(b), '- usa pnpm\n');
+  assert.equal(ler(a, 'notas.md'), '- deploy pela CI\n');
 
-  // Os dois mudam o mesmo arquivo: B envia primeiro; A, ao começar, mantém o seu e anexa o de B.
+  // Sessão longa em A: B muda MEMORY.md; A muda só notas.md e termina duas respostas.
+  // O Stop de A não pode desfazer a mudança de B.
   escrever(path.join(b.local, 'MEMORY.md'), '- usa pnpm\n- testes com vitest\n');
   b.evento('Stop');
-  escrever(path.join(a.local, 'MEMORY.md'), '- usa pnpm\n- deploy na sexta não\n');
-  a.evento('SessionStart');
-  const juntos = fs.readFileSync(path.join(a.local, 'MEMORY.md'), 'utf8');
-  assert.match(juntos, /deploy na sexta não/);
-  assert.match(juntos, /testes com vitest/);
+  escrever(path.join(a.local, 'notas.md'), '- deploy pela CI\n- sexta não\n');
   a.evento('Stop');
+  a.evento('Stop');
+  a.evento('SessionStart');
+  assert.equal(ler(a), '- usa pnpm\n- testes com vitest\n');
   b.evento('SessionStart');
-  assert.equal(fs.readFileSync(path.join(b.local, 'MEMORY.md'), 'utf8'), juntos);
+  assert.equal(ler(b, 'notas.md'), '- deploy pela CI\n- sexta não\n');
+
+  // As duas sessões abertas ao mesmo tempo mudam o mesmo arquivo: as duas linhas ficam.
+  escrever(path.join(a.local, 'MEMORY.md'), ler(a) + '- de A\n');
+  escrever(path.join(b.local, 'MEMORY.md'), ler(b) + '- de B\n');
+  a.evento('Stop');
+  b.evento('Stop');
+  a.evento('SessionStart');
+  b.evento('SessionStart');
+  for (const x of [a, b]) {
+    assert.match(ler(x), /- de A/);
+    assert.match(ler(x), /- de B/);
+  }
 
   // Arquivo apagado num lado some no outro.
-  fs.rmSync(path.join(a.local, 'MEMORY.md'));
+  fs.rmSync(path.join(a.local, 'notas.md'));
   a.evento('Stop');
   b.evento('SessionStart');
-  assert.ok(!fs.existsSync(path.join(b.local, 'MEMORY.md')));
+  assert.ok(!fs.existsSync(path.join(b.local, 'notas.md')));
+
+  // Projeto sem origin não sincroniza (dois "app" misturariam a memória).
+  const semOrigem = tmp('mem-sem-origin');
+  git(semOrigem, 'init', '-q');
+  const localSem = path.join(a.claude, 'projects', fs.realpathSync.native(semOrigem).replace(/[^A-Za-z0-9]/g, '-'), 'memory');
+  escrever(path.join(localSem, 'MEMORY.md'), '- segredo do projeto\n');
+  a.evento('Stop', semOrigem);
+  assert.ok(!fs.readdirSync(path.join(a.clone, 'projetos')).some((n) => n.includes('local')));
 });
 
 test('memória: sem configuração não faz nada', () => {
@@ -995,4 +1015,35 @@ test('comportamento: o executor roda a tarefa, lê a transcrição e aponta o qu
   assert.match(r.stdout, /FALHA não pediu licença no fim/);
   const guardados = fs.readdirSync(path.join(claude, 'equipe-diario')).filter((n) => n.startsWith('comportamento-'));
   assert.equal(guardados.length, 2);
+});
+
+test('segredos: commit no jeito da equipe (git add antes, -a, -C, caminho sem --)', () => {
+  const raiz = tmp('segredos-formas');
+  git(raiz, 'init', '-q');
+  escrever(path.join(raiz, 'a.ts'), 'export const a = 1;\n');
+  git(raiz, 'add', 'a.ts');
+  git(raiz, 'commit', '-q', '-m', 'inicio');
+  escrever(path.join(raiz, 'novo.ts'), `const k = "${FALSAS.github}";\n`);
+  escrever(path.join(raiz, 'a.ts'), `export const a = "${FALSAS.sbSecreta}";\n`);
+  const commit = (command, cwd = raiz) => decisao(SEGREDOS, { tool_name: 'Bash', cwd, tool_input: { command } });
+  for (const c of ['git add novo.ts && git commit -m "x"', 'git add novo.ts; git commit -m x', 'git commit -m x a.ts', 'git commit -am x', 'git.exe commit -m x -- a.ts']) {
+    assert.equal(commit(c)?.hookSpecificOutput.permissionDecision, 'deny', c);
+  }
+  assert.equal(commit(`git -C ${JSON.stringify(raiz)} commit -m x a.ts`, os.tmpdir())?.hookSpecificOutput.permissionDecision, 'deny');
+  // Commit de outro arquivo, sem a chave: passa.
+  escrever(path.join(raiz, 'limpo.ts'), 'export const c = 3;\n');
+  assert.equal(commit('git add limpo.ts && git commit -m "so limpo" -- limpo.ts'), null);
+});
+
+test('segredos: .env, chave de demonstração e textos parecidos com chave passam', async () => {
+  const { acharSegredo } = await import(pathToFileURL(SEGREDOS).href);
+  const demo = jwt({ iss: 'supabase-' + 'demo', role: 'service' + '_role' });
+  const parecidos = [demo, 'sk-skeleton-loading-placeholder-bar-' + 'x'.repeat(20), 'AK' + 'IAIOSFODNN7' + 'EXAMPLE', 'postgres' + '://app:segredo123@postgres:5432/app', 'mongodb' + '://u:<senha>@cluster0.x.net'];
+  for (const p of parecidos) assert.equal(acharSegredo(`x = "${p}"`), null, p);
+  assert.ok(acharSegredo('GOC' + 'SPX-' + 'a'.repeat(28)));
+  assert.ok(acharSegredo('mongodb' + '+srv://u:SenhaForte9@cluster0.abc.mongodb.net/app'));
+  const pasta = tmp('segredos-env');
+  for (const arq of [path.join(pasta, '.env'), path.join(pasta, 'supabase', 'functions', '.env.local')]) {
+    assert.equal(decisao(SEGREDOS, { tool_name: 'Write', cwd: pasta, tool_input: { file_path: arq, content: `KEY=${FALSAS.sbSecreta}` } }), null, arq);
+  }
 });

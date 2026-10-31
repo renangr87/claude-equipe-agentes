@@ -165,6 +165,8 @@ if ($temNode) {
     $r = Instalar $d3c
     Conferir 'hooks: repeticao nao muda nada' ($r.texto -match 'hooks ja presentes')
     Conferir 'aviso: repeticao mantem o topico' ([System.IO.File]::ReadAllText($aviso, $utf8) -ceq $topicoAntes)
+    $r = Instalar $d3c @('-SemAviso')
+    Conferir 'aviso: -SemAviso desliga' (-not (Test-Path $aviso))
     # Memoria: com a pasta de um clone, grava a configuracao apontando para ela.
     $clone = Join-Path $base 'memoria-clone'
     New-Item -ItemType Directory -Force -Path (Join-Path $clone '.git') | Out-Null

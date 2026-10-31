@@ -552,7 +552,13 @@ if ($SemBloqueios) {
 # ---------- Aviso no celular e memoria entre computadores ----------
 # So valem com os hooks instalados (eles rodam no Node).
 $hooksAtivos = $nodeEquipe -and -not $SemHooks -and -not $SemBloqueios
-if ($hooksAtivos -and -not $SemAviso) {
+if ($SemAviso) {
+    $arqAviso = Join-Path $Destino 'equipe-aviso.json'
+    if (Test-Path -LiteralPath $arqAviso) {
+        Remove-Item -LiteralPath $arqAviso -Force
+        Write-Host "Aviso no celular: desligado (-SemAviso)."
+    }
+} elseif ($hooksAtivos) {
     Write-Host "Aviso no celular (ntfy):"
     $arqAviso = Join-Path $Destino 'equipe-aviso.json'
     if (-not (Test-Path -LiteralPath $arqAviso)) {
