@@ -574,7 +574,9 @@ if ($SemAviso) {
 if ($Memoria) {
     Write-Host "Memoria entre computadores:"
     $pastaMemoria = $null
-    if (Test-Path -LiteralPath (Join-Path $Memoria '.git')) {
+    # Endereco (https://, git@) vai direto para o clone; Join-Path quebra com "https:".
+    $ehEndereco = $Memoria -match '^(https?://|git@|ssh://)'
+    if (-not $ehEndereco -and (Test-Path -LiteralPath ([System.IO.Path]::Combine($Memoria, '.git')))) {
         $pastaMemoria = (Resolve-Path -LiteralPath $Memoria).ProviderPath
     } else {
         $pastaMemoria = Join-Path $HOME 'claude-memoria'

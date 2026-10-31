@@ -172,6 +172,8 @@ if ($temNode) {
     New-Item -ItemType Directory -Force -Path (Join-Path $clone '.git') | Out-Null
     $r = Instalar $d3c @('-Memoria', $clone)
     $cfgMem = Join-Path $d3c 'equipe-memoria.json'
+    $r2 = Instalar $d3c @('-Memoria', 'https://exemplo.invalid/memoria.git', '-SemAviso')
+    Conferir 'memoria: endereco https nao quebra o instalador' ($r2.codigo -eq 0 -and $r2.texto -notmatch 'DriveNotFound')
     Conferir 'memoria: configuracao gravada' ((Test-Path $cfgMem) -and ([string]((Ler-Json $cfgMem).pasta) -eq ((Resolve-Path $clone).ProviderPath -replace '\\', '/')))
 }
 
