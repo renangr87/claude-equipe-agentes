@@ -3,7 +3,10 @@
 //
 // Lê as transcrições em <pasta do Claude>/projects (sessão principal e subagentes) e
 // tira só metadados: tokens e custo por agente, ferramentas usadas, status dos
-// relatórios, bloqueios da guarda, compactações e esperas prováveis por aprovação.
+// relatórios, bloqueios da guarda, compactações, esperas prováveis por aprovação, se o
+// Explore e o revisor consultaram o mapa antes de ler código e quantos arquivos de código o
+// mestre leu por pedido. Lê também o registro das travas (<pasta do Claude>/equipe-diario/
+// travas-AAAA-MM.log), que só tem decisões e tempos.
 // O conteúdo das conversas (pedidos, código, arquivos) nunca vai para a saída.
 //
 // Uso:
@@ -15,7 +18,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pastaClaude, pastaDiario, lerJson, lerTexto } from './equipe-comum.mjs';
+import { pastaClaude, pastaDiario, lerJson, lerTexto, ehCodigo, EXTENSOES_CODIGO } from './equipe-comum.mjs';
 
 // ---------- opções ----------
 function opcoes(argv) {
@@ -94,8 +97,70 @@ function* linhas(arquivo) {
 }
 
 function interpretar(l) {
-  if (!l || !INTERESSA.some((k) => l.includes(k))) return null;
+  if (!l) return null;
+  if (!INTERESSA.some((k) => l.includes(k))) return l.includes('"type":"user"') ? pedidoLeve(l) : null;
   try { return JSON.parse(l); } catch { return null; }
+}
+
+// Mensagem que a pessoa digitou (um pedido). A linha não é convertida: só os campos de
+// controle e o começo do conteúdo são olhados, para saber se é pedido; o texto não sai daqui.
+// Campos de controle começam depois de "{" ou ","; no conteúdo as aspas vêm escapadas.
+const campo = (l, nome) => {
+  const m = l.match(new RegExp(`[,{]"${nome}":("[^"]*"|true|false)`));
+  return m ? (m[1].startsWith('"') ? m[1].slice(1, -1) : m[1] === 'true') : undefined;
+};
+function pedidoLeve(l) {
+  const m = l.match(/[,{]"content":(?:\[\{"type":"text","text":)?"([^"]{0,40})/);
+  const inicio = m ? m[1] : (/[,{]"content":\[/.test(l) ? '' : null);
+  const d = { type: 'user', uuid: campo(l, 'uuid'), timestamp: campo(l, 'timestamp'), isSidechain: campo(l, 'isSidechain') === true };
+  d.pedido = inicio !== null && campo(l, 'isMeta') !== true && campo(l, 'isCompactSummary') !== true && !d.isSidechain && inicioDePedido(inicio);
+  return d;
+}
+// Saída de comando local, aviso de tarefa e interrupção não são pedidos; comando de barra é.
+const inicioDePedido = (t) => !/^\[Request interrupted/.test(t) && (!t.startsWith('<') || t.startsWith('<command-'));
+function ehPedido(d) {
+  if (typeof d.pedido === 'boolean') return d.pedido;
+  if (d.isMeta || d.isCompactSummary || d.isSidechain || !d.message) return false;
+  const c = d.message.content;
+  if (typeof c === 'string') return inicioDePedido(c);
+  if (!Array.isArray(c) || !c.length || c.some((x) => x && x.type === 'tool_result')) return false;
+  const t = c.find((x) => x && x.type === 'text');
+  return inicioDePedido(t && typeof t.text === 'string' ? t.text : '');
+}
+
+// Leitura de código por Read, Grep ou Glob, sem olhar o disco (a transcrição pode ser de
+// outro computador). Mesmos critérios da trava do mapa (equipe-mapa.mjs).
+const CONSULTA_MAPA = /^mcp__codebase-memory__(search_graph|search_code|trace_path|query_graph|get_code_snippet|detect_changes)$/;
+const TIPOS_TEXTO = new Set(['md', 'markdown', 'json', 'yaml', 'toml', 'txt', 'html', 'css', 'xml', 'csv', 'log', 'ini', 'config', 'license', 'readme']);
+const naRevisao = (f) => /(^|[\\/])\.revisao[\\/]/.test(String(f));
+function padraoDeCodigo(padrao) {
+  const p = String(padrao || '');
+  const exts = [];
+  for (const m of p.matchAll(/\.\{([A-Za-z0-9,]+)\}/g)) exts.push(...m[1].split(','));
+  for (const m of p.matchAll(/\.([A-Za-z0-9]+)(?=$|[\s,}/])/g)) exts.push(m[1]);
+  return exts.some((e) => EXTENSOES_CODIGO.has(e.toLowerCase()));
+}
+const pareceArquivo = (p) => {
+  const n = String(p).replace(/\\/g, '/').replace(/\/+$/, '');
+  return n.slice(n.lastIndexOf('/') + 1).lastIndexOf('.') > 0;
+};
+export function leituraDeCodigo(nome, entrada) {
+  const ti = entrada && typeof entrada === 'object' ? entrada : {};
+  if (nome === 'Read') {
+    const f = String(ti.file_path || '');
+    return Boolean(f) && ehCodigo(f) && !naRevisao(f);
+  }
+  if (nome === 'Grep') {
+    const p = String(ti.path || '');
+    if (naRevisao(p)) return false;
+    if (ti.type) return !TIPOS_TEXTO.has(String(ti.type).toLowerCase());
+    if (ti.glob) return padraoDeCodigo(ti.glob);
+    if (p && ehCodigo(p)) return true;
+    // Um arquivo que não é código não conta; pasta (ou nenhuma) varre o código.
+    return !(p && pareceArquivo(p));
+  }
+  if (nome === 'Glob') return padraoDeCodigo(ti.pattern) && !naRevisao(ti.path || '');
+  return false;
 }
 
 function textoDe(conteudo) {
@@ -136,6 +201,9 @@ function novaAnalise() {
     primeiro: null, ultimo: null, ultimoTs: null, cwd: null, custos: new Map(), ultimoTexto: '',
     entrega: '', entregaTs: null,
     agentes: [], tipoPorAgente: new Map(), relatorios: new Map(),
+    // Ordem das ferramentas (primeira consulta ao mapa, primeira leitura de código) e linha do
+    // tempo do mestre (pedidos e leituras de código), só com posições e horários.
+    seq: 0, primeiroMapa: null, primeiraLeitura: null, linhaDoTempo: [],
   };
 }
 
@@ -178,6 +246,7 @@ function analisar(arquivo, desdeMs, r = novaAnalise()) {
       : d.type === 'queue-operation' && d.operation === 'enqueue' ? d.content : null;
     if (typeof fila === 'string') guardarRelatorios(fila, r.relatorios);
     if (d.isApiErrorMessage) r.errosApi++;
+    if (d.type === 'user' && ehPedido(d)) r.linhaDoTempo.push({ ts, seq: ++r.seq, k: 'pedido' });
     if (d.type === 'assistant' && d.message) {
       const m = d.message;
       const chave = m.id || d.requestId || d.uuid;
@@ -187,6 +256,12 @@ function analisar(arquivo, desdeMs, r = novaAnalise()) {
           if (r.usos.has(c.id)) continue;
           r.ferramentas[c.name] = (r.ferramentas[c.name] || 0) + 1;
           r.usos.set(c.id, { nome: c.name, ts, tipo: c.input && c.input.subagent_type });
+          r.seq++;
+          if (r.primeiroMapa === null && CONSULTA_MAPA.test(c.name)) r.primeiroMapa = r.seq;
+          if (/^(Read|Grep|Glob)$/.test(c.name) && leituraDeCodigo(c.name, c.input)) {
+            if (r.primeiraLeitura === null) r.primeiraLeitura = r.seq;
+            if (c.name === 'Read' && !d.isSidechain) r.linhaDoTempo.push({ ts, seq: r.seq, k: 'leitura' });
+          }
           if (c.name === 'Agent' || c.name === 'Task') {
             r.agentes.push({ tipo: (c.input && c.input.subagent_type) || 'general-purpose', modelo: (c.input && c.input.model) || null });
           }
@@ -243,6 +318,21 @@ function analisar(arquivo, desdeMs, r = novaAnalise()) {
     }
   }
   return r;
+}
+
+// Leituras de código do mestre em cada pedido, na ordem do tempo. Leituras antes do primeiro
+// pedido do período (pedido feito antes dele) contam como um pedido.
+export function leiturasPorPedido(linhaDoTempo) {
+  const ordem = [...linhaDoTempo].sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0) || a.seq - b.seq);
+  const contas = [];
+  for (const e of ordem) {
+    if (e.k === 'pedido') contas.push(0);
+    else {
+      if (!contas.length) contas.push(0);
+      contas[contas.length - 1]++;
+    }
+  }
+  return contas;
 }
 
 // O motivo da guarda pode citar o comando barrado: o que vem entre aspas sai.
@@ -308,7 +398,7 @@ function statusDoRelatorio(tipo, texto) {
 }
 
 // ---------- medição ----------
-export function medir({ dias = 7, projeto = '', raiz = '' } = {}) {
+export function medir({ dias = 7, projeto = '', raiz = '', diario = '' } = {}) {
   const pastaProjetos = raiz || path.join(pastaClaude(), 'projects');
   const desdeMs = Date.now() - dias * 86400000;
   const sessoes = [];
@@ -334,13 +424,15 @@ export function medir({ dias = 7, projeto = '', raiz = '' } = {}) {
     }
   }
 
-  for (const partes of porSessao.values()) {
+  const idsMedidos = new Set();
+  for (const [idSessao, partes] of porSessao) {
     {
       const principal = novaAnalise();
       for (const parte of partes) analisar(parte.arquivo, desdeMs, principal);
       if (principal.primeiro === null) continue;
       const nomeProjeto = principal.cwd ? path.basename(principal.cwd.replace(/[\\/]+$/, '')) : '?';
       if (projeto && !nomeProjeto.toLowerCase().includes(projeto) && !(principal.cwd || '').toLowerCase().includes(projeto)) continue;
+      idsMedidos.add(idSessao);
 
       // Subagentes: um arquivo por agente em <sessão>/subagents/, com o tipo no .meta.json.
       const arquivosSub = new Map();
@@ -370,6 +462,8 @@ export function medir({ dias = 7, projeto = '', raiz = '' } = {}) {
           leituras: f.Read || 0,
           buscas: (f.Grep || 0) + (f.Glob || 0),
           consultouMapa: nomesF.some((x) => MAPA_CONSULTA.test(x)),
+          // null: a chamada não leu código. true: consultou o mapa antes da primeira leitura.
+          mapaAntes: a.primeiraLeitura === null ? null : a.primeiroMapa !== null && a.primeiroMapa < a.primeiraLeitura,
           indexou: Boolean(f['mcp__codebase-memory__index_repository']),
           conferiuIndice: Boolean(f['mcp__codebase-memory__index_status']),
           usouApoio: nomesF.some((x) => x.startsWith('mcp__apoio-local__') && x !== 'mcp__apoio-local__status_local'),
@@ -383,7 +477,7 @@ export function medir({ dias = 7, projeto = '', raiz = '' } = {}) {
       // Formato antigo: mensagens de subagente dentro do arquivo da sessão.
       const lado = somarUso(principal.msgs, (m) => m.lado);
       if (lado.passos > 0) {
-        agentes.push({ tipo: 'subagente', modelo: modeloPrincipal(lado.modelos), entrada: lado.entrada, saida: lado.saida, custo: lado.custo, passos: lado.passos, passosAcima100k: lado.passosAcima100k, segundos: 0, leituras: 0, buscas: 0, consultouMapa: false, indexou: false, conferiuIndice: false, usouApoio: false, bloqueios: [], aprovacoes: [], barrados: [], recusas: 0, estimado: false, status: '' });
+        agentes.push({ tipo: 'subagente', modelo: modeloPrincipal(lado.modelos), entrada: lado.entrada, saida: lado.saida, custo: lado.custo, passos: lado.passos, passosAcima100k: lado.passosAcima100k, segundos: 0, leituras: 0, buscas: 0, consultouMapa: false, mapaAntes: null, indexou: false, conferiuIndice: false, usouApoio: false, bloqueios: [], aprovacoes: [], barrados: [], recusas: 0, estimado: false, status: '' });
       }
 
       const mestre = somarUso(principal.msgs, (m) => !m.lado);
@@ -395,6 +489,7 @@ export function medir({ dias = 7, projeto = '', raiz = '' } = {}) {
           modelo: modeloPrincipal(mestre.modelos), entrada: mestre.entrada, saida: mestre.saida, custo: mestre.custo,
           leituras: f.Read || 0, buscas: (f.Grep || 0) + (f.Glob || 0), edicoes: (f.Edit || 0) + (f.Write || 0) + (f.MultiEdit || 0),
           terminal: (f.Bash || 0) + (f.PowerShell || 0),
+          leiturasPorPedido: leiturasPorPedido(principal.linhaDoTempo),
         },
         chamadas: principal.agentes,
         agentes,
@@ -409,7 +504,70 @@ export function medir({ dias = 7, projeto = '', raiz = '' } = {}) {
       });
     }
   }
-  return { ...resumir(sessoes, { dias, desdeMs, pastaProjetos }), filtro: projeto || null };
+  // Com filtro de projeto, só as decisões das sessões medidas (a chave da chamada começa
+  // pelo id da sessão).
+  const travas = lerTravas(diario || pastaDiario(), desdeMs, projeto ? idsMedidos : null);
+  return { ...resumir(sessoes, { dias, desdeMs, pastaProjetos, travas }), filtro: projeto || null };
+}
+
+// ---------- registro das travas ----------
+// Uma linha por decisão: data ISO, trava, decisão, ms, tipo do agente, chave da chamada.
+// Os despachantes (pre, pos, eventos) gravam o tempo do processo inteiro; no "eventos" a
+// decisão é o nome do evento do hook.
+const DESPACHANTES = ['pre', 'pos', 'eventos'];
+const NOME_VALIDO = /^[A-Za-z][A-Za-z0-9_-]{0,39}$/;
+
+function percentil(ordenados, p) {
+  if (!ordenados.length) return 0;
+  return ordenados[Math.min(ordenados.length - 1, Math.max(0, Math.ceil(p * ordenados.length) - 1))];
+}
+export function mediana(lista) {
+  if (!lista.length) return 0;
+  const o = [...lista].sort((a, b) => a - b);
+  const m = Math.floor(o.length / 2);
+  return o.length % 2 ? o[m] : (o[m - 1] + o[m]) / 2;
+}
+
+export function lerTravas(pasta, desdeMs, sessoes = null) {
+  const r = { linhas: 0, porTrava: {}, tempos: {}, mapa: { chamadas: 0, fugas: 0 }, entregasSemVerificar: 0, conclusoesSemRevisao: 0, foraDoEscopo: 0 };
+  let nomes = [];
+  try { nomes = fs.readdirSync(pasta).filter((n) => /^travas-\d{4}-\d{2}\.log$/.test(n)).sort(); } catch { return r; }
+  const porDespachante = {};
+  const chamadasMapa = new Map();
+  for (const n of nomes) {
+    const conteudo = lerTexto(path.join(pasta, n));
+    if (!conteudo) continue;
+    for (const l of conteudo.split(/\r?\n/)) {
+      const [quando, trava, decisao, tempo, tipo, chave] = l.split('\t');
+      const ts = Date.parse(quando || '');
+      if (!ts || ts < desdeMs || !NOME_VALIDO.test(trava || '') || !NOME_VALIDO.test(decisao || '')) continue;
+      if (sessoes && ![...sessoes].some((id) => String(chave || '').startsWith(`${id}-`))) continue;
+      r.linhas++;
+      if (DESPACHANTES.includes(trava)) {
+        const v = Number(tempo);
+        if (Number.isFinite(v)) (porDespachante[trava] = porDespachante[trava] || []).push(v);
+        continue;
+      }
+      const t = r.porTrava[trava] = r.porTrava[trava] || {};
+      t[decisao] = (t[decisao] || 0) + 1;
+      if (decisao === 'entregou-sem-verificar') r.entregasSemVerificar++;
+      if (decisao === 'concluiu-sem-revisao') r.conclusoesSemRevisao++;
+      if (decisao === 'fora-do-escopo') r.foraDoEscopo++;
+      // Fugas do mapa: entre as chamadas do Explore e do revisor que tiveram decisão do mapa
+      // (consultou ou fugiu), quantas fugiram. Chamada sem chave conta sozinha.
+      if (trava === 'mapa' && (decisao === 'consultou' || decisao === 'fuga') && (tipo === 'Explore' || tipo === 'revisor')) {
+        const k = chave || `linha-${r.linhas}`;
+        chamadasMapa.set(k, chamadasMapa.get(k) || decisao === 'fuga');
+      }
+    }
+  }
+  r.mapa.chamadas = chamadasMapa.size;
+  r.mapa.fugas = [...chamadasMapa.values()].filter(Boolean).length;
+  for (const [d, lista] of Object.entries(porDespachante)) {
+    const o = lista.sort((a, b) => a - b);
+    r.tempos[d] = { vezes: o.length, media: o.reduce((x, v) => x + v, 0) / o.length, p95: percentil(o, 0.95), pior: o[o.length - 1] };
+  }
+  return r;
 }
 
 function custoRegistrado(custos, desdeMs) {
@@ -423,7 +581,7 @@ function custoRegistrado(custos, desdeMs) {
 
 const PADRAO_MODELO = { Explore: 'haiku', implementador: 'sonnet', verificador: 'haiku', revisor: 'sonnet' };
 
-function resumir(sessoes, { dias, desdeMs, pastaProjetos }) {
+function resumir(sessoes, { dias, desdeMs, pastaProjetos, travas }) {
   const porTipo = {};
   const projetos = {};
   const bloqueios = {};
@@ -440,6 +598,7 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos }) {
   let custoRegistrado = 0;
   let sessoesComRegistro = 0;
   let leiturasMestre = 0;
+  const porPedido = [];
 
   const somarDecisoes = (x) => {
     for (const e of x.aprovacoes) {
@@ -461,6 +620,7 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos }) {
   for (const s of sessoes) {
     custoMestre += s.mestre.custo;
     leiturasMestre += s.mestre.leituras;
+    porPedido.push(...s.mestre.leiturasPorPedido);
     compactacoes += s.compactacoes;
     errosApi += s.errosApi;
     perguntas += s.perguntas.length;
@@ -486,6 +646,7 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos }) {
       const t = porTipo[a.tipo] = porTipo[a.tipo] || {
         chamadas: 0, entrada: 0, saida: 0, custo: 0, segundos: 0, passosAcima100k: 0, leituras: 0,
         consultouMapa: 0, indexou: 0, conferiuIndice: 0, usouApoio: 0, status: {}, modelos: {},
+        comLeituraDeCodigo: 0, mapaAntesDaLeitura: 0,
       };
       t.chamadas++;
       t.entrada += a.entrada;
@@ -495,6 +656,10 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos }) {
       t.passosAcima100k += a.passosAcima100k;
       t.leituras += a.leituras;
       if (a.consultouMapa) t.consultouMapa++;
+      if (a.mapaAntes !== null && a.mapaAntes !== undefined) {
+        t.comLeituraDeCodigo++;
+        if (a.mapaAntes) t.mapaAntesDaLeitura++;
+      }
       if (a.indexou) t.indexou++;
       if (a.conferiuIndice) t.conferiuIndice++;
       if (a.usouApoio) t.usouApoio++;
@@ -513,6 +678,16 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos }) {
   const ex = porTipo.Explore;
   const rev = porTipo.revisor;
   const imp = porTipo.implementador;
+  // Mapa antes da leitura: só as chamadas do Explore e do revisor que leram código.
+  const comLeitura = (ex ? ex.comLeituraDeCodigo : 0) + (rev ? rev.comLeituraDeCodigo : 0);
+  const mapaAntes = (ex ? ex.mapaAntesDaLeitura : 0) + (rev ? rev.mapaAntesDaLeitura : 0);
+  // Leituras do mestre por pedido: mediana e máximo entre os pedidos com ao menos uma
+  // leitura de código (os pedidos sem leitura puxariam a mediana para zero).
+  const comLeituraMestre = porPedido.filter((v) => v > 0);
+  const pedidos = { total: porPedido.length, comLeitura: comLeituraMestre.length, mediana: mediana(comLeituraMestre), maximo: comLeituraMestre.length ? Math.max(...comLeituraMestre) : 0 };
+  const tv = travas || lerTravas('', 0);
+  const barrouOuPediu = Object.values(tv.porTrava).reduce((x, d) => x + (d.barrou || 0) + (d.pediu || 0), 0);
+  const p95s = Object.values(tv.tempos).map((t) => t.p95);
 
   const indicadores = {
     sessoes: sessoes.length,
@@ -530,6 +705,14 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos }) {
     implementador_incompleto_pct: imp ? (100 * (imp.chamadas - (imp.status.feito || 0) - (imp.status['feito com ressalvas'] || 0))) / imp.chamadas : 0,
     compactacoes_por_sessao: compactacoes / n,
     subidas_de_modelo: Object.values(subidas).reduce((x, v) => x + v, 0),
+    // null: não deu para medir neste período (fica fora da comparação).
+    mapa_antes_da_leitura_pct: comLeitura ? (100 * mapaAntes) / comLeitura : null,
+    mestre_leituras_por_pedido_mediana: pedidos.total ? pedidos.mediana : null,
+    fugas_do_mapa_pct: tv.mapa.chamadas ? (100 * tv.mapa.fugas) / tv.mapa.chamadas : null,
+    travas_barrou_por_sessao: tv.linhas ? barrouOuPediu / n : null,
+    entregas_sem_verificacao: tv.linhas ? tv.entregasSemVerificar : null,
+    conclusoes_sem_revisao: tv.linhas ? tv.conclusoesSemRevisao : null,
+    hooks_p95_ms: p95s.length ? Math.max(...p95s) : null,
   };
 
   return {
@@ -537,9 +720,10 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos }) {
     dias, desde: new Date(desdeMs).toISOString(), pastaProjetos,
     sessoes: sessoes.length,
     custo: { total: custoTotal, mestre: custoMestre, agentes: custoAgentes, registradoPeloClaudeCode: sessoesComRegistro ? custoRegistrado : null, sessoesComRegistro },
-    mestre: { leituras: leiturasMestre, modelos: contar(sessoes.map((s) => s.mestre.modelo)) },
+    mestre: { leituras: leiturasMestre, modelos: contar(sessoes.map((s) => s.mestre.modelo)), pedidos },
     porTipo, projetos, bloqueios, aprovacoes, barrados, estimado, subidas,
     compactacoes, errosApi, recusas, perguntas, segundosPerguntas,
+    travas: tv,
     indicadores,
   };
 }
@@ -557,6 +741,7 @@ const mil = (v) => (v >= 1e6 ? `${nf(1).format(v / 1e6)} mi` : v >= 1e3 ? `${nf(
 const pct = (v) => `${nf(0).format(v || 0)}%`;
 const minutos = (s) => (s >= 3600 ? `${nf(1).format(s / 3600)} h` : `${nf(0).format(s / 60)} min`);
 const data = (iso) => new Date(iso).toLocaleDateString('pt-BR');
+const ms = (v) => `${nf(0).format(v || 0)} ms`;
 
 export function texto(r) {
   const out = [];
@@ -599,7 +784,12 @@ export function texto(r) {
     const st = Object.entries(t.status).map(([k, v]) => `${v} ${k}`).join(', ');
     out.push(`- ${tipo}: ${t.chamadas} chamadas${st ? ` (${st})` : ''}; ${minutos(t.segundos / t.chamadas)} em média.`);
   }
+  const antes = ['Explore', 'revisor'].filter((tp) => r.porTipo[tp] && r.porTipo[tp].comLeituraDeCodigo)
+    .map((tp) => { const t = r.porTipo[tp]; return `${tp} ${t.mapaAntesDaLeitura} de ${t.comLeituraDeCodigo} (${pct((100 * t.mapaAntesDaLeitura) / t.comLeituraDeCodigo)})`; });
+  if (antes.length) out.push(`- Mapa antes da primeira leitura de código: ${antes.join(', ')}. Só contam as chamadas que leram código.`);
   out.push(`- Mestre: ${r.mestre.leituras} leituras próprias (Read), ${nf(1).format(i.leituras_do_mestre_por_sessao)} por sessão.`);
+  const pd = r.mestre.pedidos;
+  if (pd && pd.total) out.push(`- Leituras de código do mestre por pedido: ${pd.comLeitura} de ${pd.total} pedidos leram código${pd.comLeitura ? `; nesses, mediana ${nf(1).format(pd.mediana)} e máximo ${pd.maximo}` : ''}.`);
   const subidas = Object.entries(r.subidas);
   out.push(`- Subidas de modelo: ${subidas.length ? subidas.map(([k, v]) => `${k} (${v})`).join(', ') : 'nenhuma'}.`);
   out.push(`- Compactações: ${r.compactacoes} (${nf(1).format(i.compactacoes_por_sessao)} por sessão). Erros da API: ${r.errosApi}.`);
@@ -615,6 +805,7 @@ export function texto(r) {
   out.push(`- Bloqueios da guarda: ${totalBloqueios}.`);
   for (const [k, v] of bloqueios.slice(0, 8)) out.push(`  - ${v}x ${k}`);
   out.push('');
+  out.push(...textoTravas(r.travas));
   out.push('## Por projeto');
   out.push('');
   out.push('| Projeto | Sessões | Chamadas de agente | Compactações | Custo |');
@@ -625,8 +816,30 @@ export function texto(r) {
   return out.join('\n');
 }
 
+// Seção das travas: vem só do registro (decisões e tempos), sem conteúdo.
+const ESPECIAIS = new Set(['passou', 'consultou', 'fuga', 'entregou-sem-verificar', 'concluiu-sem-revisao']);
+function textoTravas(tv) {
+  const out = ['## Travas', ''];
+  if (!tv || !tv.linhas) {
+    out.push('Nenhuma decisão no registro das travas neste período (travas não instaladas ou sem uso).', '');
+    return out;
+  }
+  out.push(`${tv.linhas} linhas no registro das travas (só decisões e tempos, sem conteúdo).`);
+  for (const [nome, d] of Object.entries(tv.porTrava).sort((a, b) => a[0].localeCompare(b[0]))) {
+    const partes = Object.entries(d).filter(([k]) => !ESPECIAIS.has(k)).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${v} ${k}`);
+    if (partes.length) out.push(`- ${nome}: ${partes.join(', ')}.`);
+  }
+  const m = tv.mapa;
+  out.push(`- Fugas do mapa: ${m.fugas}${m.chamadas ? ` de ${m.chamadas} (${pct((100 * m.fugas) / m.chamadas)})` : ''}. Base: chamadas do Explore e do revisor que consultaram o mapa ou fugiram dele.`);
+  out.push(`- Entregas sem verificação: ${tv.entregasSemVerificar}. Mudanças concluídas sem revisão: ${tv.conclusoesSemRevisao}.`);
+  const tempos = DESPACHANTES.filter((d) => tv.tempos[d]).map((d) => { const t = tv.tempos[d]; return `${d} ${ms(t.media)} em média, p95 ${ms(t.p95)}, pior ${ms(t.pior)} (${t.vezes}x)`; });
+  if (tempos.length) out.push(`- Tempo dos hooks: ${tempos.join('; ')}.`);
+  out.push('');
+  return out;
+}
+
 // Indicadores em que subir é bom; nos outros, descer é bom.
-const MAIOR_MELHOR = new Set(['explore_mapa_pct']);
+const MAIOR_MELHOR = new Set(['explore_mapa_pct', 'mapa_antes_da_leitura_pct']);
 const ROTULOS = {
   custo_por_sessao: ['Custo por sessão', dinheiro],
   custo_mestre_pct: ['Parte do mestre no custo', pct],
@@ -642,6 +855,13 @@ const ROTULOS = {
   implementador_incompleto_pct: ['Tarefas do implementador não concluídas', pct],
   compactacoes_por_sessao: ['Compactações por sessão', (v) => nf(1).format(v)],
   subidas_de_modelo: ['Subidas de modelo', (v) => nf(0).format(v)],
+  mapa_antes_da_leitura_pct: ['Explore e revisor com mapa antes da primeira leitura de código', pct],
+  mestre_leituras_por_pedido_mediana: ['Leituras de código do mestre por pedido (mediana)', (v) => nf(1).format(v)],
+  fugas_do_mapa_pct: ['Fugas do mapa', pct],
+  travas_barrou_por_sessao: ['Travas que barraram ou pediram, por sessão', (v) => nf(1).format(v)],
+  entregas_sem_verificacao: ['Entregas sem verificação', (v) => nf(0).format(v)],
+  conclusoes_sem_revisao: ['Mudanças concluídas sem revisão', (v) => nf(0).format(v)],
+  hooks_p95_ms: ['Tempo dos hooks (p95 do mais lento)', ms],
 };
 
 export function comparacao(antes, agora) {
@@ -650,6 +870,7 @@ export function comparacao(antes, agora) {
     if (!(k in agora) || !(k in antes)) continue;
     const a = antes[k];
     const b = agora[k];
+    if (typeof a !== 'number' || typeof b !== 'number') continue;
     let sinal = '=';
     if (Math.abs(b - a) > Math.max(Math.abs(a) * 0.05, 1e-9)) {
       const melhorou = MAIOR_MELHOR.has(k) ? b > a : b < a;

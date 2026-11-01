@@ -1,0 +1,225 @@
+// Testes dos indicadores novos do medidor da /retro-equipe: mapa antes da primeira leitura
+// de código (Explore e revisor), leituras de código do mestre por pedido e a seção das
+// travas, que vem do registro (equipe-diario/travas-AAAA-MM.log).
+//   node --test testes/medidor-travas.test.mjs
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const MEDIR = fileURLToPath(new URL('../hooks/equipe-medir.mjs', import.meta.url));
+
+const tmp = (nome) => fs.mkdtempSync(path.join(os.tmpdir(), `equipe-${nome}-`));
+const escrever = (arquivo, texto) => {
+  fs.mkdirSync(path.dirname(arquivo), { recursive: true });
+  fs.writeFileSync(arquivo, texto);
+};
+const agora = Date.now();
+const iso = (minutos) => new Date(agora - 60 * 60000 + minutos * 60000).toISOString();
+const linha = (o) => JSON.stringify(o);
+const uso = { input_tokens: 10, output_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+const SEGREDO = 'SEGREDO-PLANTADO-987';
+
+function medir(claude, ...args) {
+  return execFileSync(process.execPath, [MEDIR, ...args], {
+    encoding: 'utf8', env: { ...process.env, EQUIPE_PASTA_CLAUDE: claude },
+  });
+}
+
+// Uma mensagem do assistente com as ferramentas dadas ([nome, entrada]).
+let contador = 0;
+function ferramentas(minuto, lista, extra = {}) {
+  contador++;
+  return linha({
+    type: 'assistant', uuid: `as${contador}`, timestamp: iso(minuto), ...extra,
+    message: { id: `m${contador}`, model: 'claude-haiku-5-5', usage: uso, content: lista.map(([name, input], i) => ({ type: 'tool_use', id: `t${contador}-${i}`, name, input })) },
+  });
+}
+const pedido = (minuto, conteudo, extra = {}) => linha({ type: 'user', uuid: `p${++contador}`, timestamp: iso(minuto), cwd: '/tmp/app-exemplo', message: { role: 'user', content: conteudo }, ...extra });
+const resultado = (minuto, id) => linha({ type: 'user', uuid: `r${++contador}`, timestamp: iso(minuto), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: `conteúdo lido ${SEGREDO}` }] } });
+
+const MAPA = 'mcp__codebase-memory__search_graph';
+
+function cenario() {
+  const claude = tmp('claude-travas');
+  const pasta = path.join(claude, 'projects', '-app-exemplo');
+  const sid = 'sessao-trava-1';
+  // Sessão principal: 4 pedidos de verdade, mais linhas de usuário que não são pedidos.
+  escrever(path.join(pasta, `${sid}.jsonl`), [
+    pedido(0, `primeiro pedido ${SEGREDO}`),
+    ferramentas(1, [['Read', { file_path: '/tmp/app-exemplo/src/a.ts' }], ['Read', { file_path: '/tmp/app-exemplo/README.md' }]], { cwd: '/tmp/app-exemplo' }),
+    resultado(2, `t${contador}-0`),
+    ferramentas(2, [['Read', { file_path: '/tmp/app-exemplo/src/b.ts' }]]),
+    // Saída de comando local e mensagem de sistema: não abrem pedido novo.
+    pedido(3, '<local-command-stdout>saída</local-command-stdout>'),
+    pedido(3, 'aviso do sistema', { isMeta: true }),
+    ferramentas(4, [['Read', { file_path: '/tmp/app-exemplo/src/c.ts' }]]),
+    pedido(10, [{ type: 'text', text: `segundo pedido ${SEGREDO}` }]),
+    ferramentas(11, [['Grep', { pattern: 'x' }]]),
+    pedido(20, '<command-message>retro</command-message><command-name>/retro-equipe</command-name>'),
+    ferramentas(21, [['Read', { file_path: '/tmp/app-exemplo/lib/d.dart' }]]),
+    // O texto do pedido cita "tool_result": a linha é convertida inteira e continua pedido.
+    pedido(30, `quarto pedido sobre tool_result ${SEGREDO}`),
+    ferramentas(31, [['Agent', { subagent_type: 'Explore', prompt: SEGREDO }]]),
+  ].join('\n') + '\n');
+  const sub = path.join(pasta, sid, 'subagents');
+  const agente = (id, tipo, linhas) => {
+    escrever(path.join(sub, `agent-${id}.meta.json`), JSON.stringify({ agentType: tipo }));
+    escrever(path.join(sub, `agent-${id}.jsonl`), [
+      // O briefing chega como mensagem de usuário do subagente: não é pedido.
+      pedido(1, `briefing ${SEGREDO}`, { isSidechain: true }),
+      ...linhas,
+    ].join('\n') + '\n');
+  };
+  const lado = { isSidechain: true };
+  // Explore 1: mapa primeiro. Explore 2: lê código antes do mapa. Explore 3: não lê código.
+  agente('e1', 'Explore', [ferramentas(2, [[MAPA, { query: SEGREDO }]], lado), ferramentas(3, [['Read', { file_path: '/tmp/app-exemplo/src/a.ts' }]], lado)]);
+  agente('e2', 'Explore', [ferramentas(2, [['Glob', { pattern: 'src/**/*.{ts,tsx}' }]], lado), ferramentas(3, [[MAPA, {}]], lado)]);
+  agente('e3', 'Explore', [ferramentas(2, [['Read', { file_path: '/tmp/app-exemplo/docs/x.md' }], ['Grep', { pattern: 'y', glob: '*.md' }]], lado)]);
+  // Revisor 1: mapa e leitura na mesma mensagem, mapa antes. Revisor 2: Grep numa pasta antes do mapa.
+  agente('r1', 'revisor', [ferramentas(2, [['mcp__codebase-memory__detect_changes', {}], ['Read', { file_path: '/tmp/app-exemplo/src/a.ts' }]], lado)]);
+  agente('r2', 'revisor', [ferramentas(2, [['Grep', { pattern: 'z', path: '/tmp/app-exemplo/src' }]], lado), ferramentas(3, [['mcp__codebase-memory__trace_path', {}]], lado)]);
+
+  // Registro das travas: linhas dentro e fora do período.
+  const velho = new Date(agora - 30 * 86400000).toISOString();
+  const dentro = (m) => iso(m);
+  const reg = (q, trava, decisao, ms, tipo, chave) => [q, trava, decisao, ms, tipo, chave].join('\t');
+  const mes = (d) => d.slice(0, 7);
+  const linhasReg = [
+    reg(velho, 'sql', 'barrou', 5, 'mestre', `${sid}-mestre`),
+    reg(velho, 'pre', 'passou', 9000, 'mestre', `${sid}-mestre`),
+    reg(dentro(1), 'mapa', 'barrou', 12, 'Explore', `${sid}-e2`),
+    reg(dentro(2), 'mapa', 'fuga', 10, 'Explore', `${sid}-e2`),
+    reg(dentro(2), 'mapa', 'consultou', 0, 'Explore', `${sid}-e1`),
+    reg(dentro(2), 'mapa', 'consultou', 0, 'revisor', `${sid}-r1`),
+    reg(dentro(3), 'mapa', 'consultou', 0, 'revisor', `${sid}-r2`),
+    reg(dentro(3), 'orcamento', 'barrou', 8, 'mestre', `${sid}-mestre`),
+    reg(dentro(3), 'orcamento', 'barrou', 8, 'mestre', `${sid}-mestre`),
+    reg(dentro(4), 'sql', 'pediu', 3, 'mestre', `${sid}-mestre`),
+    reg(dentro(4), 'briefing', 'valvula', 2, 'mestre', `${sid}-mestre`),
+    reg(dentro(5), 'verificar', 'entregou-sem-verificar', 4, 'implementador', `${sid}-i1`),
+    reg(dentro(5), 'revisao', 'concluiu-sem-revisao', 4, 'mestre', `${sid}-mestre`),
+    reg(dentro(5), 'escopo', 'fora-do-escopo', 4, 'implementador', `${sid}-i1`),
+    reg(dentro(6), 'pre', 'passou', 40, 'mestre', `${sid}-mestre`),
+    reg(dentro(6), 'pre', 'barrou', 60, 'mestre', `${sid}-mestre`),
+    reg(dentro(6), 'pre', 'passou', 350, 'mestre', `${sid}-mestre`),
+    reg(dentro(7), 'pos', 'passou', 30, 'Explore', `${sid}-e1`),
+    reg(dentro(7), 'eventos', 'SubagentStop', 20, 'implementador', `${sid}-i1`),
+    'linha quebrada sem tabulação',
+  ];
+  const diario = path.join(claude, 'equipe-diario');
+  const porMes = new Map();
+  for (const l of linhasReg) {
+    const k = /^\d{4}-\d{2}/.test(l) ? mes(l) : mes(new Date(agora).toISOString());
+    if (!porMes.has(k)) porMes.set(k, []);
+    porMes.get(k).push(l);
+  }
+  for (const [k, ls] of porMes) escrever(path.join(diario, `travas-${k}.log`), ls.join('\n') + '\n');
+  return { claude, sid };
+}
+
+test('medidor: mapa antes da primeira leitura de código, por tipo de agente', () => {
+  const { claude } = cenario();
+  const r = JSON.parse(medir(claude, '--json'));
+  assert.equal(r.porTipo.Explore.chamadas, 3);
+  assert.equal(r.porTipo.Explore.comLeituraDeCodigo, 2, 'a chamada que só leu .md não conta');
+  assert.equal(r.porTipo.Explore.mapaAntesDaLeitura, 1);
+  assert.equal(r.porTipo.revisor.comLeituraDeCodigo, 2);
+  assert.equal(r.porTipo.revisor.mapaAntesDaLeitura, 1);
+  assert.equal(r.indicadores.mapa_antes_da_leitura_pct, 50);
+  assert.match(medir(claude), /Mapa antes da primeira leitura de código: Explore 1 de 2 \(50%\), revisor 1 de 2 \(50%\)/);
+});
+
+test('medidor: leituras de código do mestre agrupadas por pedido', () => {
+  const { claude } = cenario();
+  const r = JSON.parse(medir(claude, '--json'));
+  // Pedidos: 3 leituras de código (o README não conta), 0 (Grep não é Read), 1, 0.
+  assert.deepEqual(r.mestre.pedidos, { total: 4, comLeitura: 2, mediana: 2, maximo: 3 });
+  assert.equal(r.indicadores.mestre_leituras_por_pedido_mediana, 2);
+  assert.match(medir(claude), /2 de 4 pedidos leram código; nesses, mediana 2,0 e máximo 3/);
+});
+
+test('medidor: seção das travas só com as linhas do período', () => {
+  const { claude } = cenario();
+  const r = JSON.parse(medir(claude, '--json'));
+  const tv = r.travas;
+  assert.equal(tv.porTrava.sql.barrou, undefined, 'a linha velha fica de fora');
+  assert.equal(tv.porTrava.sql.pediu, 1);
+  assert.equal(tv.porTrava.orcamento.barrou, 2);
+  assert.equal(tv.porTrava.briefing.valvula, 1);
+  assert.deepEqual(tv.mapa, { chamadas: 4, fugas: 1 });
+  assert.equal(tv.entregasSemVerificar, 1);
+  assert.equal(tv.conclusoesSemRevisao, 1);
+  assert.equal(tv.foraDoEscopo, 1);
+  assert.deepEqual(tv.tempos.pre, { vezes: 3, media: 150, p95: 350, pior: 350 });
+  assert.equal(tv.tempos.pos.pior, 30);
+  assert.equal(tv.tempos.eventos.vezes, 1);
+  assert.equal(r.indicadores.fugas_do_mapa_pct, 25);
+  assert.equal(r.indicadores.entregas_sem_verificacao, 1);
+  assert.equal(r.indicadores.conclusoes_sem_revisao, 1);
+  assert.equal(r.indicadores.hooks_p95_ms, 350);
+  const t = medir(claude);
+  assert.match(t, /## Travas/);
+  assert.match(t, /- orcamento: 2 barrou\./);
+  assert.match(t, /- mapa: 1 barrou\./);
+  assert.match(t, /Fugas do mapa: 1 de 4 \(25%\)/);
+  assert.match(t, /Entregas sem verificação: 1\. Mudanças concluídas sem revisão: 1\./);
+  assert.match(t, /pre 150 ms em média, p95 350 ms, pior 350 ms \(3x\)/);
+  assert.doesNotMatch(t, /9\.000 ms|9000/);
+});
+
+test('medidor: com filtro de projeto, só as travas das sessões medidas', () => {
+  const { claude } = cenario();
+  const diario = path.join(claude, 'equipe-diario');
+  const arq = fs.readdirSync(diario).filter((n) => n.startsWith('travas-')).sort().pop();
+  fs.appendFileSync(path.join(diario, arq), [iso(8), 'leitura', 'barrou', 3, 'Explore', 'outra-sessao-e9'].join('\t') + '\n');
+  assert.equal(JSON.parse(medir(claude, '--json')).travas.porTrava.leitura.barrou, 1);
+  const r = JSON.parse(medir(claude, '--json', '--projeto', 'app-exemplo'));
+  assert.equal(r.travas.porTrava.leitura, undefined);
+  assert.equal(r.travas.porTrava.orcamento.barrou, 2);
+});
+
+test('medidor: sem registro das travas, diz que não há decisões', () => {
+  const { claude } = cenario();
+  fs.rmSync(path.join(claude, 'equipe-diario'), { recursive: true, force: true });
+  const r = JSON.parse(medir(claude, '--json'));
+  assert.equal(r.indicadores.fugas_do_mapa_pct, null);
+  assert.match(medir(claude), /Nenhuma decisão no registro das travas/);
+});
+
+test('medidor: nada do conteúdo das transcrições vai para a saída', () => {
+  const { claude } = cenario();
+  assert.doesNotMatch(medir(claude), new RegExp(SEGREDO));
+  assert.doesNotMatch(medir(claude, '--json'), new RegExp(SEGREDO));
+  assert.doesNotMatch(medir(claude, '--retro'), new RegExp(SEGREDO));
+});
+
+test('comparação inclui os indicadores novos e pula os que não deu para medir', async () => {
+  const { comparacao } = await import(pathToFileURL(MEDIR).href);
+  const antes = { mapa_antes_da_leitura_pct: 50, mestre_leituras_por_pedido_mediana: 4, fugas_do_mapa_pct: 10, hooks_p95_ms: 100, entregas_sem_verificacao: null };
+  const agora2 = { mapa_antes_da_leitura_pct: 90, mestre_leituras_por_pedido_mediana: 2, fugas_do_mapa_pct: 20, hooks_p95_ms: 100, entregas_sem_verificacao: 3 };
+  const t = comparacao(antes, agora2);
+  assert.match(t, /mapa antes da primeira leitura de código \| 50% \| 90% \| melhorou/);
+  assert.match(t, /Leituras de código do mestre por pedido \(mediana\) \| 4,0 \| 2,0 \| melhorou/);
+  assert.match(t, /Fugas do mapa \| 10% \| 20% \| piorou/);
+  assert.match(t, /Tempo dos hooks \(p95 do mais lento\) \| 100 ms \| 100 ms \| = \|/);
+  assert.doesNotMatch(t, /Entregas sem verificação/);
+});
+
+test('leitura de código: mesmos critérios da trava do mapa, sem olhar o disco', async () => {
+  const { leituraDeCodigo } = await import(pathToFileURL(MEDIR).href);
+  assert.equal(leituraDeCodigo('Read', { file_path: 'C:\\app\\lib\\main.dart' }), true);
+  assert.equal(leituraDeCodigo('Read', { file_path: '/app/README.md' }), false);
+  assert.equal(leituraDeCodigo('Read', { file_path: '/app/.revisao/diff.ts' }), false);
+  assert.equal(leituraDeCodigo('Grep', { pattern: 'x' }), true);
+  assert.equal(leituraDeCodigo('Grep', { pattern: 'x', path: '/app/src' }), true);
+  assert.equal(leituraDeCodigo('Grep', { pattern: 'x', path: '/app/notas.md' }), false);
+  assert.equal(leituraDeCodigo('Grep', { pattern: 'x', type: 'md' }), false);
+  assert.equal(leituraDeCodigo('Grep', { pattern: 'x', type: 'py' }), true);
+  assert.equal(leituraDeCodigo('Grep', { pattern: 'x', glob: '*.{ts,tsx}' }), true);
+  assert.equal(leituraDeCodigo('Glob', { pattern: '**/*.json' }), false);
+  assert.equal(leituraDeCodigo('Glob', { pattern: '**/*.go' }), true);
+});
