@@ -5,7 +5,7 @@
 // Travas, nesta ordem (as que anotam algo ficam por último, para só anotar o que passou):
 //   segurança: SQL pela conexão que escreve, chave secreta em arquivo ou commit, comando que
 //              altera o banco (pede aprovação no mestre, barra no implementador);
-//   retrabalho: briefing do mestre para os agentes;
+//   retrabalho: briefing do mestre para os agentes; a mesma falha que voltou (convergência);
 //   economia:  mapa primeiro (Explore e revisor), orçamento de leitura do mestre, leitura
 //              por trecho e teto de leituras do Explore.
 // O tipo do agente vem na entrada do hook, então as travas de cada agente moram aqui, e não
@@ -22,9 +22,10 @@ import { desligada, lerEntrada, registrarTrava, tipoDoAgente } from './equipe-co
 async function carregar(arquivo) {
   try { return await import(new URL(arquivo, import.meta.url).href); } catch { return null; }
 }
-const [sql, segredos, banco, briefing, mapa, leitura] = await Promise.all([
+const [sql, segredos, banco, briefing, mapa, leitura, convergencia] = await Promise.all([
   carregar('./equipe-sql.mjs'), carregar('./equipe-segredos.mjs'), carregar('./equipe-banco.mjs'),
   carregar('./equipe-briefing.mjs'), carregar('./equipe-mapa.mjs'), carregar('./equipe-leitura.mjs'),
+  carregar('./equipe-convergencia.mjs'),
 ]);
 const nada = () => null;
 
@@ -36,6 +37,7 @@ export const TRAVAS = [
   { nome: 'segredos', quando: /^(Write|Edit|MultiEdit|NotebookEdit|Bash|PowerShell)$/, rodar: segredos ? (e) => deHook(segredos.decidir(e)) : nada },
   { nome: 'banco', quando: /^(Bash|PowerShell)$/, rodar: banco ? (e) => deHook(banco.decidir(e)) : nada },
   { nome: 'briefing', quando: /^(Agent|Task)$/, rodar: briefing ? briefing.decidirBriefing : nada },
+  { nome: 'convergencia', quando: /^(Agent|Task)$/, rodar: convergencia ? convergencia.decidirConvergencia : nada },
   { nome: 'mapa', quando: /^(Read|Grep|Glob)$/, rodar: mapa ? mapa.decidirMapa : nada },
   { nome: 'orcamento', quando: /^Read$/, rodar: mapa ? mapa.decidirOrcamento : nada },
   { nome: 'leitura', quando: /^Read$/, rodar: (e) => (leitura && tipoDoAgente(e) === 'Explore' && !desligada('leitura') ? deHook(leitura.decidir(e)) : null) },
@@ -48,15 +50,19 @@ export function decidir(entrada) {
   const ferramenta = String(entrada.tool_name || '');
   let final = null;
   const motivos = [];
+  const ctx = { registros: [] };
   for (const t of TRAVAS) {
     if (!t.quando.test(ferramenta)) continue;
     const inicio = Date.now();
     let r = null;
-    try { r = t.rodar(entrada); } catch { r = null; }
+    try { r = t.rodar(entrada, ctx); } catch { r = null; }
     const ms = Date.now() - inicio;
     const decisao = r && r.decisao;
     const registro = (r && r.registro) || (decisao === 'deny' ? 'barrou' : decisao === 'ask' ? 'pediu' : null);
-    if (registro) registrarTrava(t.nome, registro, ms, entrada);
+    if (registro) {
+      registrarTrava(t.nome, registro, ms, entrada);
+      ctx.registros.push({ nome: t.nome, registro });
+    }
     if (!decisao || !PESO[decisao] || decisao === 'allow') continue;
     if (!final || PESO[decisao] > PESO[final]) final = decisao;
     if (r.motivo) motivos.push({ decisao, motivo: r.motivo });

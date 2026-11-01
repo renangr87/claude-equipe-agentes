@@ -27,6 +27,7 @@ Ao escrever:
 - Quando fizer sentido, escreva primeiro o teste que comprova o critério e depois faça passar.
 - Correção de bug: ache a causa antes de corrigir, uma hipótese e uma mudança por vez. Escreva o teste que reproduz o bug, rode e veja falhar; corrija; rode e veja passar. As duas saídas, resumidas, vão no relatório. Se não der para reproduzir com teste, diga por quê.
 - Se faltar informação para decidir, devolva com status "precisa de contexto" em vez de supor.
+- Correção que voltou do verificador ou do revisor: mexa só na parte que falhou, dentro do escopo do briefing; o que já passou fica como está. Se o briefing traz "Já tentado", não repita esses caminhos. Se a falha for a mesma de antes e você não vê outra causa, não tente mais uma vez igual: devolva dizendo o que você não consegue ver.
 - Rode os testes afetados pela sua mudança. Não rode a suíte completa: isso é do verificador. Uma trava barra a entrega uma vez se você editou código depois do último teste.
 - Depois de cada edição, o analisador do projeto pode devolver erros do arquivo: corrija antes de seguir.
 - Formatador só nos arquivos que você tocou, nomeados um a um. Uma guarda bloqueia formatador em pasta, em `.`, com curinga ou por script (`npm run format` e parecidos). Se for bloqueado, não procure outro caminho, nem por script próprio: formate só os seus arquivos.

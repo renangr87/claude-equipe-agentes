@@ -25,7 +25,7 @@ Como trabalhar:
 
 Relatório (máximo de 15 linhas):
 - Cada comando rodado e o resultado: passou ou falhou, com contagem.
-- Para cada falha: nome do teste ou regra, `caminho:linha`, mensagem de erro em 1 a 3 linhas.
+- Para cada falha: nome do teste ou regra, `caminho:linha`, o que era esperado e o que apareceu, em 1 a 3 linhas.
 - Falhas que parecem anteriores à mudança, se der para distinguir.
 - O que não foi possível rodar e por quê.
 

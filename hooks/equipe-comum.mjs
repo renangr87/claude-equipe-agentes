@@ -82,6 +82,21 @@ export function lerJson(arquivo) {
 const canonico = (p) => {
   try { return fs.realpathSync.native(p); } catch { return path.resolve(p); }
 };
+// Caminho real de um arquivo que talvez não exista mais: o da pasta existente mais próxima,
+// com o resto do caminho por cima. É o que o git devolve (nome longo, sem atalho).
+export function caminhoReal(p) {
+  const absoluto = path.resolve(String(p || '.'));
+  let pasta = absoluto;
+  const resto = [];
+  for (let i = 0; i < 100; i++) {
+    try { return path.join(fs.realpathSync.native(pasta), ...resto.reverse()); } catch { /* sobe */ }
+    const acima = path.dirname(pasta);
+    if (acima === pasta) break;
+    resto.push(path.basename(pasta));
+    pasta = acima;
+  }
+  return absoluto;
+}
 const mesmoCaminho = (a, b) => {
   const n = (p) => canonico(p).replace(/[\\/]+$/, '');
   return process.platform === 'win32' ? n(a).toLowerCase() === n(b).toLowerCase() : n(a) === n(b);
@@ -253,9 +268,16 @@ function lerPlano(raiz) {
   if (texto === null) return null;
   const feitos = (texto.match(/^\s*[-*]\s*\[[xX]\]/gm) || []).length;
   const abertos = (texto.match(/^\s*[-*]\s*\[ \]/gm) || []).length;
+  // Itens da seção "Já tentado" (o que não funcionou e por quê): para não repetir.
+  let jaTentado = 0;
+  const linhasPlano = texto.split(/\r?\n/);
+  const ini = linhasPlano.findIndex((l) => /^#{2,3}\s+j[aá] tentad[oa]s?\b/i.test(l));
+  if (ini >= 0) {
+    for (let i = ini + 1; i < linhasPlano.length && !/^#{1,3}\s/.test(linhasPlano[i]); i++) if (/^\s*[-*]\s+\S/.test(linhasPlano[i])) jaTentado++;
+  }
   let dias = null;
   try { dias = Math.floor((Date.now() - fs.statSync(arquivo).mtimeMs) / 86400000); } catch { /* sem data */ }
-  return { feitos, abertos, dias };
+  return { feitos, abertos, dias, jaTentado };
 }
 
 // Versão instalada da equipe e se o GitHub tem uma mais nova. Não usa a rede aqui:
@@ -360,7 +382,7 @@ export function registrarTrava(trava, decisao, ms, entrada) {
 // Interruptor de emergência das travas de economia e de retrabalho: EQUIPE_DESLIGAR com
 // os nomes separados por vírgula (ou "tudo"), no bloco env do settings.json. As travas
 // de segurança (banco, segredos, SQL) não desligam por aqui.
-export const TRAVAS_DESLIGAVEIS = ['leitura', 'mapa', 'orcamento', 'briefing', 'analisar', 'verificar', 'escopo', 'revisao'];
+export const TRAVAS_DESLIGAVEIS = ['leitura', 'mapa', 'orcamento', 'briefing', 'convergencia', 'analisar', 'verificar', 'escopo', 'revisao'];
 export function desligada(nome) {
   const lista = String(process.env.EQUIPE_DESLIGAR || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').split(/[\s,;]+/).filter(Boolean);
   if (!TRAVAS_DESLIGAVEIS.includes(nome)) return false;
@@ -481,4 +503,32 @@ export const EXTENSOES_CODIGO = EXT_CODIGO;
 // Texto sem acento e em minúsculas, para comparar rótulos e pedidos com tolerância.
 export function normalizar(texto) {
   return String(texto || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+}
+
+// Status do relatório de um subagente, pela palavra de status (o medidor e a trava de
+// convergência leem do mesmo jeito). Relatório sem resultado nunca conta como sucesso.
+export function statusDoRelatorio(tipo, texto) {
+  const t = texto || '';
+  // Sem relatório não há status: nunca contar como "passou".
+  if (!t.trim()) return tipo === 'revisor' ? 'sem veredito' : tipo === 'implementador' || tipo === 'verificador' ? 'sem status' : '';
+  if (tipo === 'revisor') {
+    const m = t.match(/veredito\W{0,6}(aprovado com ressalvas|aprovado|reprovado)/i);
+    return m ? m[1].toLowerCase() : 'sem veredito';
+  }
+  if (tipo === 'implementador') {
+    const m = t.match(/status\W{0,6}(feito com ressalvas|feito|parcial|bloqueado|precisa de contexto)/i);
+    return m ? m[1].toLowerCase() : 'sem status';
+  }
+  if (tipo === 'verificador') {
+    if (/bloque/i.test(t) && !/passou|passaram|passed/i.test(t)) return 'bloqueado';
+    // Com contagem ("3 falharam", "0 failed"), vale o número; sem contagem, a palavra.
+    const n = [...t.matchAll(/(\d+)\s+(?:testes?\s+|tests?\s+)?(falh|fail)/gi)].map((x) => Number(x[1]));
+    if (n.length) return n.some((x) => x > 0) ? 'com falha' : 'passou';
+    if (/\b(nenhum|nenhuma|sem|no)\b[^.\n]{0,20}(falh|fail)/i.test(t)) return 'passou';
+    if (/\b(falhou|falharam|failed|failures?)\b/i.test(t)) return 'com falha';
+    // "passou" só com sinal de sucesso; relatório sem resultado não conta como sucesso.
+    if (/\b(passou|passaram|passed|sucesso|tudo ok|ok)\b/i.test(t)) return 'passou';
+    return 'sem status';
+  }
+  return '';
 }

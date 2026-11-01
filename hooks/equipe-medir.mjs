@@ -18,7 +18,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pastaClaude, pastaDiario, lerJson, lerTexto, ehCodigo, EXTENSOES_CODIGO } from './equipe-comum.mjs';
+import { pastaClaude, pastaDiario, lerJson, lerTexto, ehCodigo, EXTENSOES_CODIGO, normalizar, statusDoRelatorio } from './equipe-comum.mjs';
+
+// Briefing de correção de bug (só o sim ou não sai daqui, nunca o texto): "bug" ou
+// "regressão", ou "corrigir"/"consertar" perto de erro, falha ou quebra. "Corrigir o texto"
+// não conta.
+const PEDE_CORRECAO = /\b(bug|bugs|regress\w*)\b|\b(corrig\w*|corre[cç][aã]o|consert\w*|fix|fixes)\b[^.\n]{0,50}\b(erro|errado|falha\w*|quebr\w*|problema|crash|exce[cç][aã]o|bug)/;
+// Só teste de verdade: analisador, lint e checagem de tipos não reproduzem o bug.
+const TESTE_DE_VERDADE = /\b(flutter|dart)\s+test\b|\b(npm|pnpm|yarn|bun)\s+(run\s+)?test\b|\bnpx\s+(vitest|jest|playwright)\b|\b(vitest|jest|pytest)\b|\bpython\d*(\.exe)?\s+-m\s+(pytest|unittest)\b|\bnode(\.exe)?\s+--test\b|\bgo\s+test\b|\bcargo\s+test\b|\bInvoke-Pester\b|\bdotnet\s+test\b|\bmvn\w*\s+(test|verify)\b|\bgradlew?\w*\s+\S*test/i;
+// Arquivo de teste: a edição dele não é "a correção".
+const ARQUIVO_DE_TESTE = /(^|[\\/])(test|tests|spec|specs|__tests__|testes)[\\/]|[._-](test|spec)\.[a-z0-9]+$|^test_[^\\/]*$|[\\/]test_[^\\/]*$/i;
 
 // ---------- opções ----------
 function opcoes(argv) {
@@ -114,6 +123,12 @@ function pedidoLeve(l) {
   const inicio = m ? m[1] : (/[,{]"content":\[/.test(l) ? '' : null);
   const d = { type: 'user', uuid: campo(l, 'uuid'), timestamp: campo(l, 'timestamp'), isSidechain: campo(l, 'isSidechain') === true };
   d.pedido = inicio !== null && campo(l, 'isMeta') !== true && campo(l, 'isCompactSummary') !== true && !d.isSidechain && inicioDePedido(inicio);
+  // Briefing do subagente: só se é correção de bug (sim ou não), lido no começo do conteúdo.
+  if (d.isSidechain) {
+    const i = l.indexOf('"content":');
+    // As quebras de linha vêm escapadas (\n) na linha crua: viram espaço antes de procurar.
+    if (i >= 0) d.correcao = PEDE_CORRECAO.test(normalizar(l.slice(i, i + 1500).replace(/\\[nrt]/g, ' ')));
+  }
   return d;
 }
 // Saída de comando local, aviso de tarefa e interrupção não são pedidos; comando de barra é.
@@ -204,6 +219,8 @@ function novaAnalise() {
     // Ordem das ferramentas (primeira consulta ao mapa, primeira leitura de código) e linha do
     // tempo do mestre (pedidos e leituras de código), só com posições e horários.
     seq: 0, primeiroMapa: null, primeiraLeitura: null, linhaDoTempo: [],
+    // Correção de bug: o teste ficou vermelho antes da primeira edição de código (fora de teste)?
+    pedeCorrecao: null, testesPorUso: new Map(), primeiroVermelho: null, primeiraEdicao: null,
   };
 }
 
@@ -247,6 +264,14 @@ function analisar(arquivo, desdeMs, r = novaAnalise()) {
     if (typeof fila === 'string') guardarRelatorios(fila, r.relatorios);
     if (d.isApiErrorMessage) r.errosApi++;
     if (d.type === 'user' && ehPedido(d)) r.linhaDoTempo.push({ ts, seq: ++r.seq, k: 'pedido' });
+    // Primeira mensagem do arquivo do subagente: o briefing. Só guarda se é correção de bug.
+    if (r.pedeCorrecao === null && d.type === 'user') {
+      if (typeof d.correcao === 'boolean') r.pedeCorrecao = d.correcao;
+      else if (d.message) {
+        const t = typeof d.message.content === 'string' ? d.message.content : textoDe(d.message.content);
+        if (t && t.trim()) r.pedeCorrecao = PEDE_CORRECAO.test(normalizar(t));
+      }
+    }
     if (d.type === 'assistant' && d.message) {
       const m = d.message;
       const chave = m.id || d.requestId || d.uuid;
@@ -261,6 +286,15 @@ function analisar(arquivo, desdeMs, r = novaAnalise()) {
           if (/^(Read|Grep|Glob)$/.test(c.name) && leituraDeCodigo(c.name, c.input)) {
             if (r.primeiraLeitura === null) r.primeiraLeitura = r.seq;
             if (c.name === 'Read' && !d.isSidechain) r.linhaDoTempo.push({ ts, seq: r.seq, k: 'leitura' });
+          }
+          if (/^(Bash|PowerShell)$/.test(c.name) && c.input && TESTE_DE_VERDADE.test(String(c.input.command || ''))) r.testesPorUso.set(c.id, r.seq);
+          if (r.primeiraEdicao === null && /^(Edit|Write|MultiEdit)$/.test(c.name) && c.input) {
+            const arq = String(c.input.file_path || '').replace(/\\/g, '/');
+            // Teste ou não pelo caminho dentro do projeto: um projeto numa pasta "tests/" não
+            // faz toda edição parecer teste.
+            const base = String(d.cwd || r.cwd || '').replace(/\\/g, '/').replace(/\/+$/, '');
+            const rel = base && arq.toLowerCase().startsWith(`${base.toLowerCase()}/`) ? arq.slice(base.length + 1) : arq.split('/').slice(-3).join('/');
+            if (ehCodigo(arq) && !ARQUIVO_DE_TESTE.test(rel)) r.primeiraEdicao = r.seq;
           }
           if (c.name === 'Agent' || c.name === 'Task') {
             r.agentes.push({ tipo: (c.input && c.input.subagent_type) || 'general-purpose', modelo: (c.input && c.input.model) || null });
@@ -287,6 +321,10 @@ function analisar(arquivo, desdeMs, r = novaAnalise()) {
         const uso = r.usos.get(c.tool_use_id);
         const nome = uso ? uso.nome : '?';
         const texto = textoDe(c.content);
+        if (c.is_error && r.testesPorUso.has(c.tool_use_id)) {
+          const q = r.testesPorUso.get(c.tool_use_id);
+          if (r.primeiroVermelho === null || q < r.primeiroVermelho) r.primeiroVermelho = q;
+        }
         const s = uso && ts !== null && uso.ts !== null ? (ts - uso.ts) / 1000 : null;
         if (s !== null) {
           if (INSTANTANEAS.test(uso.nome) && s > 60) r.esperas.push({ nome, s });
@@ -371,31 +409,6 @@ function modeloPrincipal(modelos) {
 }
 
 // Status do relatório final de cada agente (só a palavra-chave, nunca o texto).
-function statusDoRelatorio(tipo, texto) {
-  const t = texto || '';
-  // Sem relatório não há status: nunca contar como "passou".
-  if (!t.trim()) return tipo === 'revisor' ? 'sem veredito' : tipo === 'implementador' || tipo === 'verificador' ? 'sem status' : '';
-  if (tipo === 'revisor') {
-    const m = t.match(/veredito\W{0,6}(aprovado com ressalvas|aprovado|reprovado)/i);
-    return m ? m[1].toLowerCase() : 'sem veredito';
-  }
-  if (tipo === 'implementador') {
-    const m = t.match(/status\W{0,6}(feito com ressalvas|feito|parcial|bloqueado|precisa de contexto)/i);
-    return m ? m[1].toLowerCase() : 'sem status';
-  }
-  if (tipo === 'verificador') {
-    if (/bloque/i.test(t) && !/passou|passaram|passed/i.test(t)) return 'bloqueado';
-    // Com contagem ("3 falharam", "0 failed"), vale o número; sem contagem, a palavra.
-    const n = [...t.matchAll(/(\d+)\s+(?:testes?\s+|tests?\s+)?(falh|fail)/gi)].map((x) => Number(x[1]));
-    if (n.length) return n.some((x) => x > 0) ? 'com falha' : 'passou';
-    if (/\b(nenhum|nenhuma|sem|no)\b[^.\n]{0,20}(falh|fail)/i.test(t)) return 'passou';
-    if (/\b(falhou|falharam|failed|failures?)\b/i.test(t)) return 'com falha';
-    // "passou" só com sinal de sucesso; relatório sem resultado não conta como sucesso.
-    if (/\b(passou|passaram|passed|sucesso|tudo ok|ok)\b/i.test(t)) return 'passou';
-    return 'sem status';
-  }
-  return '';
-}
 
 // ---------- medição ----------
 export function medir({ dias = 7, projeto = '', raiz = '', diario = '' } = {}) {
@@ -464,6 +477,8 @@ export function medir({ dias = 7, projeto = '', raiz = '', diario = '' } = {}) {
           consultouMapa: nomesF.some((x) => MAPA_CONSULTA.test(x)),
           // null: a chamada não leu código. true: consultou o mapa antes da primeira leitura.
           mapaAntes: a.primeiraLeitura === null ? null : a.primeiroMapa !== null && a.primeiroMapa < a.primeiraLeitura,
+          // null: não é correção de bug (ou não editou código). true: teste vermelho antes da correção.
+          vermelhoAntes: a.pedeCorrecao && a.primeiraEdicao !== null ? a.primeiroVermelho !== null && a.primeiroVermelho < a.primeiraEdicao : null,
           indexou: Boolean(f['mcp__codebase-memory__index_repository']),
           conferiuIndice: Boolean(f['mcp__codebase-memory__index_status']),
           usouApoio: nomesF.some((x) => x.startsWith('mcp__apoio-local__') && x !== 'mcp__apoio-local__status_local'),
@@ -646,7 +661,7 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos, travas }) {
       const t = porTipo[a.tipo] = porTipo[a.tipo] || {
         chamadas: 0, entrada: 0, saida: 0, custo: 0, segundos: 0, passosAcima100k: 0, leituras: 0,
         consultouMapa: 0, indexou: 0, conferiuIndice: 0, usouApoio: 0, status: {}, modelos: {},
-        comLeituraDeCodigo: 0, mapaAntesDaLeitura: 0,
+        comLeituraDeCodigo: 0, mapaAntesDaLeitura: 0, correcoes: 0, vermelhoAntes: 0,
       };
       t.chamadas++;
       t.entrada += a.entrada;
@@ -659,6 +674,10 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos, travas }) {
       if (a.mapaAntes !== null && a.mapaAntes !== undefined) {
         t.comLeituraDeCodigo++;
         if (a.mapaAntes) t.mapaAntesDaLeitura++;
+      }
+      if (a.vermelhoAntes !== null && a.vermelhoAntes !== undefined) {
+        t.correcoes++;
+        if (a.vermelhoAntes) t.vermelhoAntes++;
       }
       if (a.indexou) t.indexou++;
       if (a.conferiuIndice) t.conferiuIndice++;
@@ -712,6 +731,7 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos, travas }) {
     travas_barrou_por_sessao: tv.linhas ? barrouOuPediu / n : null,
     entregas_sem_verificacao: tv.linhas ? tv.entregasSemVerificar : null,
     conclusoes_sem_revisao: tv.linhas ? tv.conclusoesSemRevisao : null,
+    correcao_com_teste_vermelho_pct: imp && imp.correcoes ? (100 * imp.vermelhoAntes) / imp.correcoes : null,
     hooks_p95_ms: p95s.length ? Math.max(...p95s) : null,
   };
 
@@ -787,6 +807,8 @@ export function texto(r) {
   const antes = ['Explore', 'revisor'].filter((tp) => r.porTipo[tp] && r.porTipo[tp].comLeituraDeCodigo)
     .map((tp) => { const t = r.porTipo[tp]; return `${tp} ${t.mapaAntesDaLeitura} de ${t.comLeituraDeCodigo} (${pct((100 * t.mapaAntesDaLeitura) / t.comLeituraDeCodigo)})`; });
   if (antes.length) out.push(`- Mapa antes da primeira leitura de código: ${antes.join(', ')}. Só contam as chamadas que leram código.`);
+  const ti = r.porTipo.implementador;
+  if (ti && ti.correcoes) out.push(`- Correções de bug do implementador com teste vermelho antes da correção: ${ti.vermelhoAntes} de ${ti.correcoes} (${pct((100 * ti.vermelhoAntes) / ti.correcoes)}). Teste que já passava antes não prova a correção.`);
   out.push(`- Mestre: ${r.mestre.leituras} leituras próprias (Read), ${nf(1).format(i.leituras_do_mestre_por_sessao)} por sessão.`);
   const pd = r.mestre.pedidos;
   if (pd && pd.total) out.push(`- Leituras de código do mestre por pedido: ${pd.comLeitura} de ${pd.total} pedidos leram código${pd.comLeitura ? `; nesses, mediana ${nf(1).format(pd.mediana)} e máximo ${pd.maximo}` : ''}.`);
@@ -839,7 +861,7 @@ function textoTravas(tv) {
 }
 
 // Indicadores em que subir é bom; nos outros, descer é bom.
-const MAIOR_MELHOR = new Set(['explore_mapa_pct', 'mapa_antes_da_leitura_pct']);
+const MAIOR_MELHOR = new Set(['explore_mapa_pct', 'mapa_antes_da_leitura_pct', 'correcao_com_teste_vermelho_pct']);
 const ROTULOS = {
   custo_por_sessao: ['Custo por sessão', dinheiro],
   custo_mestre_pct: ['Parte do mestre no custo', pct],
@@ -861,6 +883,7 @@ const ROTULOS = {
   travas_barrou_por_sessao: ['Travas que barraram ou pediram, por sessão', (v) => nf(1).format(v)],
   entregas_sem_verificacao: ['Entregas sem verificação', (v) => nf(0).format(v)],
   conclusoes_sem_revisao: ['Mudanças concluídas sem revisão', (v) => nf(0).format(v)],
+  correcao_com_teste_vermelho_pct: ['Correções de bug com teste vermelho antes da correção', pct],
   hooks_p95_ms: ['Tempo dos hooks (p95 do mais lento)', ms],
 };
 

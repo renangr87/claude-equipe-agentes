@@ -223,3 +223,56 @@ test('leitura de código: mesmos critérios da trava do mapa, sem olhar o disco'
   assert.equal(leituraDeCodigo('Glob', { pattern: '**/*.json' }), false);
   assert.equal(leituraDeCodigo('Glob', { pattern: '**/*.go' }), true);
 });
+
+test('medidor: correção de bug com teste vermelho antes da correção', () => {
+  const claude = tmp('claude-vermelho');
+  const pasta = path.join(claude, 'projects', '-app-exemplo');
+  const sid = 'sessao-vermelho';
+  escrever(path.join(pasta, `${sid}.jsonl`), [pedido(0, 'arrume o cupom'), ferramentas(1, [['Agent', { subagent_type: 'implementador', prompt: 'x' }]])].join('\n') + '\n');
+  const sub = path.join(pasta, sid, 'subagents');
+  const lado = { isSidechain: true };
+  const erro = (minuto, id) => linha({ type: 'user', uuid: `er${++contador}`, timestamp: iso(minuto), isSidechain: true, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content: `1 failing ${SEGREDO}` }] } });
+  const agente = (id, briefing, linhas) => {
+    escrever(path.join(sub, `agent-${id}.meta.json`), JSON.stringify({ agentType: 'implementador' }));
+    escrever(path.join(sub, `agent-${id}.jsonl`), [pedido(1, `${briefing} ${SEGREDO}`, lado), ...linhas].join('\n') + '\n');
+  };
+  // i1: edita o teste, roda e vê vermelho, depois corrige o código: conta como certo.
+  let a = ferramentas(2, [['Edit', { file_path: '/tmp/app-exemplo/test/cupom.test.js' }]], lado);
+  let b = ferramentas(3, [['Bash', { command: 'npm test' }]], lado);
+  const idB = `t${contador}-0`;
+  agente('i1', 'Objetivo: corrigir o bug do cupom percentual', [a, b, erro(4, idB), ferramentas(5, [['Edit', { file_path: '/tmp/app-exemplo/src/cupom.js' }]], lado)]);
+  // i2: corrige antes de ver o teste falhar.
+  a = ferramentas(2, [['Edit', { file_path: '/tmp/app-exemplo/src/frete.js' }]], lado);
+  b = ferramentas(3, [['Bash', { command: 'npm test' }]], lado);
+  agente('i2', 'Objetivo: consertar o erro do frete que vem zerado', [a, b, erro(4, `t${contador}-0`)]);
+  // i3: não é correção de bug.
+  agente('i3', 'Objetivo: tela nova de perfil', [ferramentas(2, [['Write', { file_path: '/tmp/app-exemplo/src/perfil.js' }]], lado)]);
+  const r = JSON.parse(medir(claude, '--json'));
+  assert.equal(r.porTipo.implementador.correcoes, 2);
+  assert.equal(r.porTipo.implementador.vermelhoAntes, 1);
+  assert.equal(r.indicadores.correcao_com_teste_vermelho_pct, 50);
+  const t = medir(claude);
+  assert.match(t, /Correções de bug do implementador com teste vermelho antes da correção: 1 de 2 \(50%\)/);
+  assert.ok(!t.includes(SEGREDO));
+});
+
+test('medidor: "corrigir o texto" não é correção de bug, e analisador não conta como teste', () => {
+  const claude = tmp('claude-vermelho2');
+  const pasta = path.join(claude, 'projects', '-app-exemplo');
+  const sid = 'sessao-vermelho2';
+  escrever(path.join(pasta, `${sid}.jsonl`), [pedido(0, 'x'), ferramentas(1, [['Agent', { subagent_type: 'implementador', prompt: 'x' }]])].join('\n') + '\n');
+  const sub = path.join(pasta, sid, 'subagents');
+  const lado = { isSidechain: true };
+  const erro = (minuto, id) => linha({ type: 'user', uuid: `er${++contador}`, timestamp: iso(minuto), isSidechain: true, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content: 'erro' }] } });
+  const agente = (id, briefing, linhas) => {
+    escrever(path.join(sub, `agent-${id}.meta.json`), JSON.stringify({ agentType: 'implementador' }));
+    escrever(path.join(sub, `agent-${id}.jsonl`), [pedido(1, briefing, lado), ...linhas].join('\n') + '\n');
+  };
+  agente('t1', 'Objetivo: corrigir o texto do botão', [ferramentas(2, [['Edit', { file_path: '/tmp/app-exemplo/src/botao.js' }]], lado)]);
+  // Correção de bug em que só o analisador ficou vermelho antes: não conta como teste vermelho.
+  const b = ferramentas(2, [['Bash', { command: 'flutter analyze' }]], lado);
+  agente('t2', 'Escopo: lib/a.dart\nObjetivo: bug no login', [b, erro(3, `t${contador}-0`), ferramentas(4, [['Edit', { file_path: '/tmp/app-exemplo/lib/a.dart' }]], lado)]);
+  const r = JSON.parse(medir(claude, '--json'));
+  assert.equal(r.porTipo.implementador.correcoes, 1);
+  assert.equal(r.porTipo.implementador.vermelhoAntes, 0);
+});

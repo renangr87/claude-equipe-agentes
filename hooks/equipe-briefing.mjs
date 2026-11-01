@@ -25,6 +25,7 @@ const ROTULOS = {
   verificar: 'como verificar|verificacao',
   formato: 'formato(?: do retorno)?',
   ferramentas: 'ferramentas(?: a usar primeiro)?',
+  jaTentado: 'ja tentad[oa]s?|tentativas? anteriores|o que ja foi tentado',
 };
 const rotulo = (padrao) => new RegExp(`(?:^|\\n)[ \\t>*#\\-\\d.)]*\\**\\s*(?:${padrao})\\s*\\**\\s*(?:\\([^)\\n]*\\))?\\s*\\**\\s*[:\\-–—]`, 'g');
 

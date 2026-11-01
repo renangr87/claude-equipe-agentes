@@ -4,7 +4,8 @@
 //     "leia você mesmo", "sem delegar" e "sem revisão" no texto do pedido);
 //   - SubagentStart do implementador: tira a foto do git status (escopo);
 //   - SubagentStop: zera as contas da chamada (leituras, mapa); no implementador, barra uma
-//     vez a entrega sem verificação e grava a lista do escopo; no revisor, anota a revisão;
+//     vez a entrega sem verificação e grava a lista do escopo; no verificador, guarda a
+//     assinatura da falha (a mesma falha duas vezes); no revisor, anota a revisão;
 //   - Stop do mestre: revisão obrigatória em mudança grande ou sensível.
 // Erro vira silêncio: nunca impede a sessão por defeito próprio.
 import fs from 'node:fs';
@@ -14,6 +15,7 @@ import {
   apagarEstado, chaveDaChamada, gravarEstado, lerEntrada, limparChamada, normalizar, registrarTrava, tipoDoAgente,
 } from './equipe-comum.mjs';
 import { anotarRevisao, fimDoImplementador, fotoInicial, revisaoNoFim } from './equipe-entrega.mjs';
+import { fimDoImplementadorConvergencia, fimDoVerificador } from './equipe-convergencia.mjs';
 import * as leitura from './equipe-leitura.mjs';
 
 const LIVRE = /\b(leia (voce|vc|tu) mesmo|le (voce|vc) mesmo|sem delegar|nao delegue|nao precisa delegar)\b/;
@@ -49,9 +51,15 @@ export function tratar(entrada) {
     const inicio = Date.now();
     if (tipo === 'implementador') {
       const r = fimDoImplementador(entrada);
+      // Só conta como tentativa quando ele termina de verdade (não na vez em que foi barrado).
+      if (!(r && r.bloquear)) fimDoImplementadorConvergencia(entrada);
       if (r && r.registro) registrarTrava(r.registro === 'barrou' || r.registro === 'entregou-sem-verificar' ? 'verificar' : 'escopo', r.registro, Date.now() - inicio, entrada);
       if (r && r.bloquear) return { decision: 'block', reason: r.motivo };
       return null;
+    }
+    if (tipo === 'verificador') {
+      const r = fimDoVerificador(entrada);
+      if (r) registrarTrava('convergencia', r, Date.now() - inicio, entrada);
     }
     if (tipo === 'revisor') anotarRevisao(entrada);
     // Explore e revisor: as contas da chamada zeram (um agente retomado começa de novo).

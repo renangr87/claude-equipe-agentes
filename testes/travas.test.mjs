@@ -486,3 +486,152 @@ test('despachante: módulo de trava quebrado não derruba as de segurança', () 
   const s = rodar(path.join(copia, 'equipe-pre.mjs'), { session_id: 'sk', cwd: raiz, tool_name: 'Bash', tool_input: { command: 'supabase db push' } }, env);
   assert.equal(decisao(s), 'ask');
 });
+
+test('escopo e revisão: projeto aberto por um atalho de pasta (como o nome curto no Windows)', () => {
+  const { claude, env } = ambiente();
+  const real = projeto({ mapa: false });
+  const atalho = path.join(tmp('atalho'), 'proj');
+  fs.symlinkSync(real, atalho, process.platform === 'win32' ? 'junction' : 'dir');
+  const base = { session_id: 'sl', agent_type: 'implementador', agent_id: 'i1', cwd: atalho };
+  rodar(EVENTOS, { ...base, hook_event_name: 'SubagentStart' }, env);
+  const arq = path.join(atalho, 'lib', 'a1.dart');
+  fs.appendFileSync(arq, '// linha\n'.repeat(60));
+  rodar(POS, { ...base, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+  rodar(POS, { ...base, tool_name: 'Bash', tool_input: { command: 'flutter test' } }, env);
+  const transcricao = transcricaoComBriefing(claude, 'Objetivo: x\nEscopo: lib/a1.dart\nCritério de aceite: y');
+  assert.equal(rodar(EVENTOS, { ...base, hook_event_name: 'SubagentStop', agent_transcript_path: transcricao }, env), null);
+  const md = fs.readFileSync(path.join(real, '.revisao', 'escopo.md'), 'utf8');
+  assert.match(md, /implementador editou \(1\): lib\/a1\.dart/);
+  assert.match(md, /dentro do escopo/);
+  // A revisão obrigatória também reconhece o arquivo pelo atalho.
+  const s = rodar(EVENTOS, { hook_event_name: 'Stop', session_id: 'sl', cwd: atalho }, env);
+  assert.equal(s && s.decision, 'block');
+});
+
+// ---------- convergência: a mesma falha voltou ----------
+
+test('convergência: a mesma falha depois de duas tentativas avisa o mestre e barra a tentativa igual', () => {
+  const { claude, env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const sessao = 'sc';
+  let n = 0;
+  const fimVerificador = (relatorio) => rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: sessao, agent_id: `v${++n}`, agent_type: 'verificador', cwd: raiz, last_assistant_message: relatorio }, env);
+  const fimImplementador = () => rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: sessao, agent_id: `i${++n}`, agent_type: 'implementador', cwd: raiz }, env);
+  const depoisDoVerificador = () => rodar(POS, { session_id: sessao, cwd: raiz, tool_name: 'Agent', tool_input: { subagent_type: 'verificador', prompt: 'Rode: flutter test' } }, env);
+  const implementador = (prompt, extra = {}) => rodar(PRE, { session_id: sessao, cwd: raiz, tool_name: 'Agent', tool_input: { subagent_type: 'implementador', prompt, ...extra } }, env);
+  const falha = 'flutter test: falhou (1 de 12).\n- cupom reduz o total, test/cupom_test.dart:12: esperado 90, apareceu 100.';
+  const bom = 'Objetivo: corrigir o cupom.\nEscopo: lib/cupom.dart e test/cupom_test.dart.\nCritério de aceite: o teste passa.\nComo verificar: flutter test test/cupom_test.dart';
+
+  // A verificação que reproduz o bug, antes de qualquer tentativa, não conta.
+  fimVerificador(falha);
+  fimImplementador();
+  fimVerificador(falha);
+  assert.equal(depoisDoVerificador(), null, 'uma tentativa só: nada a dizer');
+  assert.equal(implementador(bom), null);
+  // Segunda tentativa com a mesma falha.
+  fimImplementador();
+  fimVerificador(falha.replace('(1 de 12)', '(1 de 12, de novo)'));
+  assert.match(contexto(depoisDoVerificador()), /mesma falha voltou depois de 2 tentativas do implementador \(test\/cupom_test\.dart:12\)/);
+  assert.equal(depoisDoVerificador(), null, 'o aviso sai uma vez');
+  let s = implementador(bom);
+  assert.equal(decisao(s), 'deny');
+  assert.match(motivo(s), /Já tentado.*model: opus/s);
+  // Válvula só para o mesmo briefing; outro briefing igual na abordagem é barrado também.
+  assert.equal(implementador(bom), null);
+  assert.ok(registro(claude).some((l) => l[1] === 'convergencia' && l[2] === 'valvula'));
+  assert.equal(decisao(implementador(`${bom}\nContexto: tente de novo.`)), 'deny');
+  // Com outra abordagem registrada (título e lista numerada), com opus, ou noutra tarefa: segue.
+  assert.equal(implementador(`${bom}\n\n## Já tentado\n1. trocar a ordem do desconto: o total continuou 100`), null);
+  assert.equal(implementador(bom, { model: 'opus' }), null);
+  assert.equal(implementador('Objetivo: tela de perfil.\nEscopo: lib/perfil.dart.\nCritério de aceite: abre.\nComo verificar: flutter test'), null);
+  // Verificação que passou zera tudo; a mesma falha num episódio novo volta a ser cobrada.
+  fimVerificador('flutter test: passou (12 de 12).');
+  assert.equal(implementador(bom), null);
+  fimImplementador();
+  fimVerificador(falha);
+  fimImplementador();
+  fimVerificador(falha);
+  assert.match(contexto(depoisDoVerificador()), /depois de 2 tentativas/);
+  assert.equal(decisao(implementador(bom)), 'deny');
+});
+
+test('convergência: relatório aprovado, falha anterior à mudança e aviso do analisador não contam', async () => {
+  const { assinaturaDaFalha } = await import(new URL('../hooks/equipe-convergencia.mjs', import.meta.url).href);
+  const { statusDoRelatorio } = await import(new URL('../hooks/equipe-comum.mjs', import.meta.url).href);
+  assert.equal(statusDoRelatorio('verificador', 'flutter analyze: 0 erros, 0 falhas; info em lib/a.dart:3'), 'passou');
+  assert.equal(statusDoRelatorio('verificador', 'Nenhuma falha. Teste novo test/x_test.dart:12 passou.'), 'passou');
+  assert.equal(assinaturaDaFalha('Falhou (2):\n- total, test/a_test.dart:5: esperado 1, apareceu 2\n- Falhas que parecem anteriores à mudança:\n  - test/velho_test.dart:9 (já falhava)\n- info - lib/b.dart:3 - prefer const'), 'test/a_test.dart:5');
+  assert.equal(assinaturaDaFalha('FAILED src\\Pedidos\\Cupom.ts:7 e test/x.test.ts:20'), 'src/pedidos/cupom.ts:7 test/x.test.ts:20');
+  assert.equal(assinaturaDaFalha('Falhou, mas sem dizer onde.'), null);
+});
+
+test('convergência: lê o relatório entregue pelo SubagentHandback antes da última mensagem', () => {
+  const { claude, env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const transcricao = path.join(claude, 'projects', '-p', 'sh', 'subagents', 'agent-v.jsonl');
+  const entrega = (texto) => JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'x', name: 'SubagentHandback', input: { message: texto } }] } });
+  escrever(transcricao, `${entrega('Falhou: lib/a1.dart:3 erro de tipo.')}\n`);
+  const fim = (id, tipo, extra = {}) => rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: 'sh', agent_id: id, agent_type: tipo, cwd: raiz, ...extra }, env);
+  for (const id of ['1', '2']) {
+    fim(`i${id}`, 'implementador');
+    fim(`v${id}`, 'verificador', { agent_transcript_path: transcricao, last_assistant_message: 'Entregando o relatório.' });
+  }
+  const s = rodar(PRE, { session_id: 'sh', cwd: raiz, tool_name: 'Agent', tool_input: { subagent_type: 'implementador', prompt: 'Objetivo: x.\nEscopo: lib/a1.dart.\nCritério de aceite: y.\nComo verificar: flutter analyze' } }, env);
+  assert.equal(decisao(s), 'deny');
+});
+
+test('convergência: o briefing que usou a válvula da trava do briefing não é barrado de novo', () => {
+  const { env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const fim = (id, tipo, msg) => rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: 'sv2', agent_id: id, agent_type: tipo, cwd: raiz, last_assistant_message: msg }, env);
+  for (const id of ['1', '2']) { fim(`i${id}`, 'implementador'); fim(`v${id}`, 'verificador', 'Falhou: lib/a1.dart:3'); }
+  const incompleto = 'Arrume lib/a1.dart de novo.';
+  const chamar = () => rodar(PRE, { session_id: 'sv2', cwd: raiz, tool_name: 'Agent', tool_input: { subagent_type: 'implementador', prompt: incompleto } }, env);
+  assert.match(motivo(chamar()), /Briefing barrado/);
+  assert.equal(chamar(), null, 'a segunda vez é a válvula do briefing: passa');
+});
+
+// ---------- revisão pelo custo de desfazer ----------
+
+test('revisão: texto e documentação não pedem revisor; manifesto de dependências pede', () => {
+  const { env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  escrever(path.join(raiz, 'package.json'), '{\n  "name": "app"\n}\n');
+  git(raiz, 'add', '-A');
+  git(raiz, 'commit', '-q', '-m', 'pacote');
+  const caso = (sessao, rel, texto) => {
+    const arq = path.join(raiz, rel);
+    fs.appendFileSync(arq, texto);
+    rodar(POS, { session_id: sessao, cwd: raiz, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+    return rodar(EVENTOS, { hook_event_name: 'Stop', session_id: sessao, cwd: raiz }, env);
+  };
+  assert.equal(caso('d1', 'README.md', 'linha de texto\n'.repeat(200)), null);
+  assert.match(caso('d2', 'package.json', '  \n'.repeat(60)).reason, /6\d linhas mudadas sem revisão/);
+});
+
+test('boletim: o plano lembra o que já foi tentado', () => {
+  const { env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  escrever(path.join(raiz, '.revisao', 'plano.md'), '# Plano\n\n- [x] passo 1\n- [ ] passo 2\n\n## Já tentado\n\n- trocar a ordem do desconto: o total continuou errado\n- arredondar no fim: quebrou o teste do frete\n');
+  const saida = execFileSync(process.execPath, [path.join(HOOKS, 'equipe-boletim.mjs')], { input: JSON.stringify({ cwd: raiz, source: 'resume' }), encoding: 'utf8', env: { ...process.env, ...env } });
+  assert.match(JSON.parse(saida).hookSpecificOutput.additionalContext, /"Já tentado" tem 2 item\(ns\): não repita/);
+});
+
+test('revisão: teste volta com um clique; schema e tela contam', () => {
+  const { env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  escrever(path.join(raiz, 'prisma', 'schema.prisma'), 'model A {}\n');
+  escrever(path.join(raiz, 'web', 'index.html'), '<p></p>\n');
+  escrever(path.join(raiz, 'test', 'a_test.dart'), '//\n');
+  git(raiz, 'add', '-A');
+  git(raiz, 'commit', '-q', '-m', 'mais');
+  const caso = (sessao, rel) => {
+    const arq = path.join(raiz, rel);
+    fs.appendFileSync(arq, 'x\n'.repeat(80));
+    rodar(POS, { session_id: sessao, cwd: raiz, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+    return rodar(EVENTOS, { hook_event_name: 'Stop', session_id: sessao, cwd: raiz }, env);
+  };
+  assert.equal(caso('t1', 'test/a_test.dart'), null);
+  assert.equal(caso('t2', 'prisma/schema.prisma').decision, 'block');
+  assert.equal(caso('t3', 'web/index.html').decision, 'block');
+});

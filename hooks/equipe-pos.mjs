@@ -5,7 +5,8 @@
 //     na hora; anota a edição (verificação antes da entrega e revisão obrigatória);
 //   - terminal do implementador: anota quando ele rodou uma verificação (também quando o
 //     comando falhou: PostToolUseFailure);
-//   - Agent do mestre: entrega a lista do escopo do implementador que acabou de terminar.
+//   - Agent do mestre: entrega a lista do escopo do implementador que acabou de terminar e
+//     avisa quando a mesma falha do verificador voltou.
 // Nunca barra; erro vira silêncio.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,6 +15,7 @@ import { analisar } from './equipe-analisar.mjs';
 import { fatosRapidos, lerEntrada, registrarTrava, tipoDoAgente } from './equipe-comum.mjs';
 import { anotarFerramenta, escopoParaMestre } from './equipe-entrega.mjs';
 import { anotarConsulta } from './equipe-mapa.mjs';
+import { avisoParaMestre } from './equipe-convergencia.mjs';
 
 export function tratar(entrada) {
   if (!entrada || typeof entrada !== 'object') return null;
@@ -47,6 +49,11 @@ export function tratar(entrada) {
   if (/^(Agent|Task)$/.test(nome)) {
     const escopo = escopoParaMestre(entrada);
     if (escopo) contexto.push(escopo);
+    const aviso = avisoParaMestre(entrada);
+    if (aviso) {
+      registrarTrava('convergencia', 'avisou', 0, entrada);
+      contexto.push(aviso);
+    }
   }
   if (!contexto.length) return null;
   return { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: contexto.join('\n\n') } };

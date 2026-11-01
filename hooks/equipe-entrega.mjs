@@ -18,11 +18,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { secoes, caminhos } from './equipe-briefing.mjs';
 import {
-  anotacoes, anotar, apagarEstado, chaveDaChamada, desligada, ehCodigo, git, gravarEstado, lerEstado, lerTexto,
-  limparChamada, normalizar, tipoDoAgente,
+  anotacoes, anotar, apagarEstado, caminhoReal, chaveDaChamada, desligada, ehCodigo, git, gravarEstado, lerEstado,
+  lerTexto, limparChamada, normalizar, tipoDoAgente,
 } from './equipe-comum.mjs';
 
 const LIMITE_LINHAS = 50;
+// Não é código, mas muda o que roda: dependências e configuração do analisador e dos tipos.
+const CONTA_COMO_CODIGO = /(^|\/)(pubspec\.yaml|package\.json|pyproject\.toml|requirements[^/]*\.txt|go\.mod|Cargo\.toml|Gemfile|[^/]+\.csproj|analysis_options\.yaml|tsconfig[^/]*\.json|\.eslintrc[^/]*|Dockerfile|docker-compose[^/]*\.ya?ml|AndroidManifest\.xml|Info\.plist)$|\.(prisma|graphql|gql|proto|html?|css|scss|sass|less|xml)$/i;
+// Teste volta com um clique: não pede revisor (a não ser em área sensível).
+const ARQUIVO_DE_TESTE = /(^|\/)(test|tests|spec|specs|__tests__|testes|integration_test)\/|[._-](test|spec)\.[a-z0-9]+$|(^|\/)test_[^/]*$/i;
 
 export function chaveDaSessao(entrada) {
   const sessao = String((entrada && entrada.session_id) || '').replace(/[^A-Za-z0-9_-]/g, '');
@@ -51,7 +55,9 @@ export function anotarFerramenta(entrada, lista) {
   if (/^(Edit|Write|MultiEdit|NotebookEdit)$/.test(nome)) {
     const arq = String(ti.file_path || ti.notebook_path || '');
     if (!arq) return;
-    const absoluto = path.resolve(entrada.cwd || process.cwd(), arq);
+    // Caminho real: no Windows, o mesmo lugar vem com nome curto (RUNNER~1) de um lado e
+    // longo do git, do outro.
+    const absoluto = caminhoReal(path.resolve(entrada.cwd || process.cwd(), arq));
     if (tipo === 'implementador') {
       const chave = chaveDaChamada(entrada);
       if (ehCodigo(arq)) anotar(chave, 'editou', Date.now());
@@ -182,7 +188,8 @@ export function relatorioDeEscopo(entrada) {
   const alterados = alteradosDesde(foto);
   if (!alterados) return null;
   const chaveRel = (r) => normalizar(posix(r));
-  const proprios = new Set(anotacoes(chave, 'arquivos').map((f) => chaveRel(path.relative(foto.raiz, f))));
+  const raizReal = caminhoReal(foto.raiz);
+  const proprios = new Set(anotacoes(chave, 'arquivos').map((f) => chaveRel(path.relative(raizReal, caminhoReal(f)))));
   const dele = alterados.filter((a) => proprios.has(chaveRel(a)));
   const outros = alterados.filter((a) => !proprios.has(chaveRel(a)));
   const escopo = escopoDoBriefing(entrada.agent_transcript_path);
@@ -309,7 +316,7 @@ function estadoDaRevisao(entrada) {
     }
     const raiz = raizDaPasta.get(pasta);
     if (!raiz) continue;
-    const rel = posix(path.relative(raiz, e));
+    const rel = posix(path.relative(caminhoReal(raiz), caminhoReal(e)));
     if (!rel || rel.startsWith('..') || /^\.revisao\//.test(rel)) continue;
     if (!porRaiz.has(raiz)) porRaiz.set(raiz, []);
     porRaiz.get(raiz).push(rel);
@@ -317,11 +324,15 @@ function estadoDaRevisao(entrada) {
   const agora = {};
   const arquivos = [];
   for (const [raiz, rels] of porRaiz) {
-    const linhas = linhasPorArquivo(raiz, typeof bases[raiz] === 'string' ? bases[raiz] : 'HEAD', rels);
-    const areas = areasDoProjeto(raiz);
+    // Faixa pelo custo de desfazer: texto, documentação e testes voltam com um clique e não
+    // pedem revisor; código do produto, schema, telas, manifesto e configuração do analisador
+    // contam; área sensível, sempre.
+    const areasRaiz = areasDoProjeto(raiz);
+    const contam = rels.filter((r) => ehSensivel(r, areasRaiz) || ((ehCodigo(r) || CONTA_COMO_CODIGO.test(r)) && !ARQUIVO_DE_TESTE.test(r)));
+    const linhas = linhasPorArquivo(raiz, typeof bases[raiz] === 'string' ? bases[raiz] : 'HEAD', contam);
     for (const [rel, n] of Object.entries(linhas)) {
       agora[`${raiz}|${rel}`] = n;
-      arquivos.push({ chave: `${raiz}|${rel}`, rel, sensivel: ehSensivel(rel, areas) });
+      arquivos.push({ chave: `${raiz}|${rel}`, rel, sensivel: ehSensivel(rel, areasRaiz) });
     }
   }
   return { sessao, agora, arquivos };

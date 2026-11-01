@@ -68,7 +68,8 @@ function linhasDoProjeto(fatos, origem, l) {
     const acao = origem === 'compact'
       ? 'A conversa acabou de ser compactada: releia o plano antes de continuar.'
       : 'Se a tarefa de agora é a mesma, releia antes de continuar; se não, ignore.';
-    l.push(`- Plano em .revisao/plano.md${passos}${idade}. ${acao}`);
+    const tentado = p.jaTentado ? ` A seção "Já tentado" tem ${p.jaTentado} item(ns): não repita esses caminhos.` : '';
+    l.push(`- Plano em .revisao/plano.md${passos}${idade}. ${acao}${tentado}`);
   }
 }
 
