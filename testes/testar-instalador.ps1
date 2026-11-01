@@ -4,7 +4,9 @@
 
 .DESCRIPTION
   Cenarios: instalacao limpa, repeticao, mescla com settings.json existente,
-  JSON invalido, -SemBloqueios e caminho com espaco e aspa simples.
+  instalacao antiga (hooks separados), -ModeloMestre, JSON invalido, -SemBloqueios,
+  caminho com espaco e aspa simples, mapa (registro e indexacao automatica), Dart e
+  Apoio Local.
   Rode com os dois PowerShell para cobrir o Windows:
     powershell -ExecutionPolicy Bypass -File .\testes\testar-instalador.ps1
     pwsh -File ./testes/testar-instalador.ps1
@@ -57,15 +59,19 @@ foreach ($a in 'Explore', 'implementador', 'revisor', 'verificador') {
 }
 $explore = [System.IO.File]::ReadAllText((Join-Path $d1 'agents\Explore.md'), $utf8)
 $destinoBruto = (Resolve-Path -LiteralPath $d1).ProviderPath -replace '\\', '/'
-Conferir 'limpa: Explore com a trava de leitura no caminho real' ($explore.Contains('"' + $destinoBruto + '/hooks/equipe-leitura.mjs"'))
+Conferir 'limpa: Explore com a guarda no caminho real' ($explore.Contains("& '" + $destinoBruto + "/hooks/guarda-comandos.ps1'"))
+Conferir 'limpa: Explore sem a trava de leitura no agente (agora no equipe-pre)' (-not $explore.Contains('equipe-leitura.mjs'))
 Conferir 'limpa: guarda copiada' (Test-Path (Join-Path $d1 'hooks\guarda-comandos.ps1'))
 Conferir 'limpa: regra copiada' (Test-Path (Join-Path $d1 'rules\equipe-agentes.md'))
 $s = Ler-Json (Join-Path $d1 'settings.json')
 Conferir 'limpa: todas as regras deny' (@($s.permissions.deny).Count -eq $nDeny)
 Conferir 'limpa: todas as regras ask' (@($s.permissions.ask).Count -eq $nAsk)
+Conferir 'limpa: sem -ModeloMestre, nao grava model' ($null -eq $s.PSObject.Properties['model'])
 
 # 1b. Scripts, skill da retrospectiva, versao instalada e hooks da equipe
-foreach ($n in 'equipe-comum.mjs', 'equipe-boletim.mjs', 'equipe-contexto.mjs', 'equipe-medir.mjs', 'equipe-sql.mjs', 'equipe-leitura.mjs', 'equipe-banco.mjs', 'equipe-segredos.mjs', 'equipe-aviso.mjs', 'equipe-memoria.mjs') {
+$scriptsEquipe = @(Get-ChildItem -LiteralPath (Join-Path $raiz 'hooks') -Filter 'equipe-*.mjs' | ForEach-Object { $_.Name })
+Conferir 'limpa: lista de scripts da equipe tem o diagnostico e o despachante' (($scriptsEquipe -contains 'equipe-diagnostico.mjs') -and ($scriptsEquipe -contains 'equipe-pre.mjs'))
+foreach ($n in $scriptsEquipe) {
     Conferir "limpa: $n copiado" (Test-Path (Join-Path $d1 "hooks\$n"))
 }
 $caminhoSkill = Join-Path $d1 'skills\retro-equipe\SKILL.md'
@@ -79,7 +85,11 @@ if ($temNode) {
     $ini = @($s.hooks.SessionStart)
     $sub = @($s.hooks.SubagentStart)
     Conferir 'limpa: hook de inicio aponta para o boletim' ($ini.Count -eq 1 -and [string](@(@($ini[0].hooks)[0].args)[0]) -like '*/hooks/equipe-boletim.mjs')
-    Conferir 'limpa: hook dos subagentes so para Explore, verificador e revisor' ($sub.Count -eq 1 -and $sub[0].matcher -eq 'Explore|verificador|revisor')
+    Conferir 'limpa: contexto so para Explore, verificador e revisor; eventos do implementador' ($sub.Count -eq 2 -and $sub[0].matcher -eq 'Explore|verificador|revisor' -and [string](@(@($sub[0].hooks)[0].args)[0]) -like '*/hooks/equipe-contexto.mjs' -and $sub[1].matcher -eq 'implementador' -and [string](@(@($sub[1].hooks)[0].args)[0]) -like '*/hooks/equipe-eventos.mjs')
+    $pre = @($s.hooks.PreToolUse)
+    Conferir 'limpa: um grupo so antes das ferramentas, com o equipe-pre' ($pre.Count -eq 1 -and @($pre[0].hooks).Count -eq 1 -and [string](@(@($pre[0].hooks)[0].args)[0]) -like '*/hooks/equipe-pre.mjs')
+    Conferir 'limpa: diagnostico rodou no fim, sem erro' ($r.texto -match 'Diagn.stico da equipe' -and $r.texto -match 'Resumo:' -and $r.texto -notmatch '  ERRO ')
+    if ($r.texto -match '  ERRO ') { Write-Host $r.texto }
     # O hook registrado roda de verdade e devolve o JSON que o Claude Code espera.
     $h = @($ini[0].hooks)[0]
     $env:EQUIPE_SEM_REDE = '1'
@@ -87,6 +97,7 @@ if ($temNode) {
     $saidaHook = ($entrada | & $h.command @($h.args) 2>&1 | Out-String)
     Remove-Item Env:\EQUIPE_SEM_REDE
     Conferir 'limpa: hook de inicio roda e devolve contexto' ($saidaHook -match '"hookEventName":"SessionStart"' -and $saidaHook -match 'additionalContext')
+    Conferir 'limpa: boletim nao acusa problema na instalacao' ($saidaHook -notmatch 'com problema')
     if ($saidaHook -notmatch 'additionalContext') { Write-Host $saidaHook }
 }
 
@@ -134,7 +145,7 @@ if ($temNode) {
     # Um hook do usuario foi acrescentado dentro do grupo antigo da equipe, e outro do
     # usuario tem nome parecido com os da equipe: os dois ficam.
     # Num evento que a equipe deixou de usar, sai so o hook da equipe.
-    $inicial = '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo","args":["oi"]}]},{"hooks":[{"type":"command","command":"node","args":["C:/velho/.claude/hooks/equipe-boletim.mjs"],"timeout":5},{"type":"command","command":"meu-no-grupo"}]}],"Stop":[{"hooks":[{"type":"command","command":"node","args":["C:/meus/hooks/equipe-outro.mjs"]}]}],"SubagentStop":[{"hooks":[{"type":"command","command":"node","args":["C:/velho/.claude/hooks/equipe-contexto.mjs"]},{"type":"command","command":"meu-stop"}]},{"hooks":[{"type":"command","command":"node","args":["C:/velho/.claude/hooks/equipe-boletim.mjs"]}]}],"PreCompact":[{"hooks":[{"type":"command","command":"node","args":["C:/velho/.claude/hooks/equipe-sql.mjs"]}]}]}}'
+    $inicial = '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo","args":["oi"]}]},{"hooks":[{"type":"command","command":"node","args":["C:/velho/.claude/hooks/equipe-boletim.mjs"],"timeout":5},{"type":"command","command":"meu-no-grupo"}]}],"Stop":[{"hooks":[{"type":"command","command":"node","args":["C:/meus/hooks/equipe-outro.mjs"]}]}],"PreCompact":[{"hooks":[{"type":"command","command":"node","args":["C:/velho/.claude/hooks/equipe-contexto.mjs"]},{"type":"command","command":"meu-stop"}]},{"hooks":[{"type":"command","command":"node","args":["C:/velho/.claude/hooks/equipe-boletim.mjs"]}]}],"PostCompact":[{"hooks":[{"type":"command","command":"node","args":["C:/velho/.claude/hooks/equipe-sql.mjs"]}]}]}}'
     [System.IO.File]::WriteAllText((Join-Path $d3c 'settings.json'), $inicial, $utf8)
     $r = Instalar $d3c
     $s = Ler-Json (Join-Path $d3c 'settings.json')
@@ -146,21 +157,22 @@ if ($temNode) {
     $todosArgs = @($ini | ForEach-Object { @($_.hooks) } | ForEach-Object { @($_.args) }) -join ' '
     Conferir 'hooks: nenhuma entrada antiga da equipe sobrou' ($todosArgs -notmatch 'C:/velho/')
     Conferir 'hooks: manteve o hook do usuario de nome parecido' ([string](@(@(@($s.hooks.Stop)[0].hooks)[0].args)[0]) -eq 'C:/meus/hooks/equipe-outro.mjs')
-    $parado = @($s.hooks.SubagentStop)
+    $parado = @($s.hooks.PreCompact)
     Conferir 'hooks: evento retirado perdeu so o hook da equipe' ($parado.Count -eq 1 -and @($parado[0].hooks).Count -eq 1 -and @($parado[0].hooks)[0].command -eq 'meu-stop')
-    Conferir 'hooks: evento retirado so com hook da equipe saiu' ($null -eq $s.hooks.PSObject.Properties['PreCompact'])
+    Conferir 'hooks: evento retirado so com hook da equipe saiu' ($null -eq $s.hooks.PSObject.Properties['PostCompact'])
     $argsDe = { param($evento) (@($s.hooks.$evento) | ForEach-Object { @($_.hooks) } | ForEach-Object { @($_.args) }) -join ' ' }
     Conferir 'hooks: aviso no celular registrado' ((& $argsDe 'Notification') -match '/hooks/equipe-aviso\.mjs')
     Conferir 'hooks: memoria registrada no inicio e no fim' (((& $argsDe 'SessionStart') -match '/hooks/equipe-memoria\.mjs') -and ((& $argsDe 'Stop') -match '/hooks/equipe-memoria\.mjs') -and ((& $argsDe 'SessionEnd') -match '/hooks/equipe-memoria\.mjs'))
-    $edicao = @(@($s.hooks.PreToolUse) | Where-Object { $_.matcher -eq 'Write|Edit|MultiEdit|NotebookEdit' })
-    Conferir 'hooks: trava de segredos nas edicoes e no terminal' ($edicao.Count -eq 1 -and ((& $argsDe 'PreToolUse') -match 'equipe-segredos\.mjs.*equipe-segredos\.mjs'))
+    $pre = @($s.hooks.PreToolUse)
+    $casa = { param($m, $ferramenta) [regex]::IsMatch($ferramenta, '^(' + $m + ')$') }
+    Conferir 'hooks: um grupo so antes das ferramentas, com o equipe-pre' ($pre.Count -eq 1 -and @($pre[0].hooks).Count -eq 1 -and [string](@(@($pre[0].hooks)[0].args)[0]) -like '*/hooks/equipe-pre.mjs')
+    Conferir 'hooks: equipe-pre vale para terminal, edicao, leitura, agentes e SQL' ($pre.Count -eq 1 -and (@('Bash', 'PowerShell', 'Write', 'Edit', 'Read', 'Grep', 'Agent', 'mcp__supabase__execute_sql') | Where-Object { -not (& $casa $pre[0].matcher $_) }).Count -eq 0)
+    Conferir 'hooks: registro depois das ferramentas (equipe-pos)' ((& $argsDe 'PostToolUse') -match '/hooks/equipe-pos\.mjs')
+    Conferir 'hooks: eventos no pedido, no fim do implementador e no fim da sessao' (((& $argsDe 'UserPromptSubmit') -match '/hooks/equipe-eventos\.mjs') -and ((& $argsDe 'SubagentStop') -match '/hooks/equipe-eventos\.mjs') -and ((& $argsDe 'Stop') -match '/hooks/equipe-eventos\.mjs'))
     $aviso = Join-Path $d3c 'equipe-aviso.json'
     Conferir 'aviso: topico secreto criado' ((Test-Path $aviso) -and ([string]((Ler-Json $aviso).ntfy) -match '^https://ntfy\.sh/equipe-[0-9a-f]{20}$'))
     $topicoAntes = [System.IO.File]::ReadAllText($aviso, $utf8)
-    $sql = @(@($s.hooks.PreToolUse) | Where-Object { $_.matcher -eq 'mcp__.*__execute_sql' })
-    Conferir 'hooks: hook de SQL registrado' ($sql.Count -eq 1 -and [string](@(@($sql[0].hooks)[0].args)[0]) -like '*/hooks/equipe-sql.mjs')
-    $banco = @(@($s.hooks.PreToolUse) | Where-Object { $_.matcher -eq 'Bash|PowerShell' })
-    Conferir 'hooks: hook de banco no terminal registrado' ($banco.Count -eq 1 -and [string](@(@($banco[0].hooks)[0].args)[0]) -like '*/hooks/equipe-banco.mjs')
+    Conferir 'hooks: travas antigas nao ficam registradas em separado' ((& $argsDe 'PreToolUse') -notmatch 'equipe-(sql|banco|segredos|leitura)\.mjs')
     Conferir 'hooks: um backup so, com bloqueios e hooks' (@(Get-ChildItem -LiteralPath $d3c -Filter 'settings.json.bak-*').Count -eq 1)
     $r = Instalar $d3c
     Conferir 'hooks: repeticao nao muda nada' ($r.texto -match 'hooks ja presentes')
@@ -176,6 +188,65 @@ if ($temNode) {
     Conferir 'memoria: endereco https nao quebra o instalador' ($r2.codigo -eq 0 -and $r2.texto -notmatch 'DriveNotFound')
     Conferir 'memoria: configuracao gravada' ((Test-Path $cfgMem) -and ([string]((Ler-Json $cfgMem).pasta) -eq ((Resolve-Path $clone).ProviderPath -replace '\\', '/')))
 }
+
+# 3d. Instalacao antiga: travas de SQL, banco e segredos em grupos separados e o Explore
+# com a trava de leitura no proprio agente. Depois de reinstalar, so ficam as entradas
+# novas da equipe e os hooks do usuario.
+if ($temNode) {
+    $d3d = Join-Path $base 'antiga'
+    New-Item -ItemType Directory -Force -Path (Join-Path $d3d 'agents') | Out-Null
+    $v = 'C:/velho/.claude/hooks'
+    $antigo = '{"hooks":{' +
+        '"SessionStart":[{"hooks":[{"type":"command","command":"node","args":["' + $v + '/equipe-boletim.mjs"],"timeout":15},{"type":"command","command":"node","args":["' + $v + '/equipe-memoria.mjs"],"timeout":20}]}],' +
+        '"SubagentStart":[{"matcher":"Explore|verificador|revisor","hooks":[{"type":"command","command":"node","args":["' + $v + '/equipe-contexto.mjs"],"timeout":15}]}],' +
+        '"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"meu-pre"}]},' +
+            '{"matcher":"mcp__.*__execute_sql","hooks":[{"type":"command","command":"node","args":["' + $v + '/equipe-sql.mjs"],"timeout":10}]},' +
+            '{"matcher":"Bash|PowerShell","hooks":[{"type":"command","command":"node","args":["' + $v + '/equipe-banco.mjs"],"timeout":10},{"type":"command","command":"node","args":["' + $v + '/equipe-segredos.mjs"],"timeout":10}]},' +
+            '{"matcher":"Write|Edit|MultiEdit|NotebookEdit","hooks":[{"type":"command","command":"node","args":["' + $v + '/equipe-segredos.mjs"],"timeout":10}]}],' +
+        '"Notification":[{"hooks":[{"type":"command","command":"node","args":["' + $v + '/equipe-aviso.mjs"],"timeout":10}]}],' +
+        '"Stop":[{"hooks":[{"type":"command","command":"node","args":["' + $v + '/equipe-memoria.mjs"],"timeout":20}]}],' +
+        '"SessionEnd":[{"hooks":[{"type":"command","command":"node","args":["' + $v + '/equipe-memoria.mjs"],"timeout":20}]}]}}'
+    [System.IO.File]::WriteAllText((Join-Path $d3d 'settings.json'), $antigo, $utf8)
+    $exploreAntigo = "---`nname: Explore`nhooks:`n  PreToolUse:`n    - matcher: `"Read`"`n      hooks:`n        - type: command`n          command: `"node`"`n          args: [`"$v/equipe-leitura.mjs`"]`n---`nantigo`n"
+    [System.IO.File]::WriteAllText((Join-Path $d3d 'agents\Explore.md'), $exploreAntigo, $utf8)
+    $r = Instalar $d3d
+    $s = Ler-Json (Join-Path $d3d 'settings.json')
+    $todos = @($s.hooks.PSObject.Properties | ForEach-Object { @($_.Value) } | ForEach-Object { @($_.hooks) } | ForEach-Object { @($_.args) }) -join ' '
+    $pre = @($s.hooks.PreToolUse)
+    Conferir 'antiga: saiu com 0' ($r.codigo -eq 0)
+    Conferir 'antiga: nenhuma entrada antiga sobrou' ($todos -notmatch 'C:/velho/')
+    Conferir 'antiga: travas separadas sairam' ($todos -notmatch 'equipe-(sql|banco|segredos|leitura)\.mjs')
+    Conferir 'antiga: antes das ferramentas, o hook do usuario e o equipe-pre' ($pre.Count -eq 2 -and @($pre[0].hooks)[0].command -eq 'meu-pre' -and [string](@(@($pre[1].hooks)[0].args)[0]) -like '*/hooks/equipe-pre.mjs')
+    $nPorEvento = @{}
+    foreach ($ev in $s.hooks.PSObject.Properties) { $nPorEvento[$ev.Name] = @(@($ev.Value) | ForEach-Object { @($_.hooks) } | Where-Object { [string](@($_.args)[0]) -like '*/hooks/equipe-*.mjs' }).Count }
+    Conferir 'antiga: cada hook da equipe uma vez' ($nPorEvento['SessionStart'] -eq 2 -and $nPorEvento['SubagentStart'] -eq 2 -and $nPorEvento['PreToolUse'] -eq 1 -and $nPorEvento['Stop'] -eq 2 -and $nPorEvento['SessionEnd'] -eq 1 -and $nPorEvento['Notification'] -eq 1)
+    $exploreNovo = [System.IO.File]::ReadAllText((Join-Path $d3d 'agents\Explore.md'), $utf8)
+    Conferir 'antiga: Explore trocado, sem a trava de leitura no agente' (-not $exploreNovo.Contains('equipe-leitura') -and $exploreNovo.Contains('guarda-comandos.ps1'))
+    Conferir 'antiga: Explore antigo guardado em backup' (@(Get-ChildItem -LiteralPath (Join-Path $d3d 'agents') -Filter 'Explore.md.bak-*').Count -eq 1)
+    $r = Instalar $d3d
+    Conferir 'antiga: repeticao nao muda nada' ($r.texto -match 'hooks ja presentes')
+}
+
+# 3e. -ModeloMestre: grava model no settings.json (com backup); sem a opcao, nao toca
+$d3e = Join-Path $base 'modelo'
+New-Item -ItemType Directory -Force -Path $d3e | Out-Null
+[System.IO.File]::WriteAllText((Join-Path $d3e 'settings.json'), '{"model":"opus","permissions":{"allow":["Bash(npm test)"]}}', $utf8)
+$r = Instalar $d3e @('-ModeloMestre', 'opusplan')
+$s = Ler-Json (Join-Path $d3e 'settings.json')
+Conferir 'modelo: saiu com 0' ($r.codigo -eq 0)
+Conferir 'modelo: gravou opusplan' ($s.model -eq 'opusplan')
+Conferir 'modelo: manteve o resto' (@($s.permissions.allow) -contains 'Bash(npm test)')
+Conferir 'modelo: um backup so na instalacao' (@(Get-ChildItem -LiteralPath $d3e -Filter 'settings.json.bak-*').Count -eq 1)
+$r = Instalar $d3e @('-ModeloMestre', 'opusplan')
+Conferir 'modelo: repeticao mantem' ($r.texto -match 'modelo do mestre ja e opusplan')
+$r = Instalar $d3e
+Conferir 'modelo: sem a opcao, nao mexe no model' ((Ler-Json (Join-Path $d3e 'settings.json')).model -eq 'opusplan')
+$d3f = Join-Path $base 'modelo-novo'
+$r = Instalar $d3f @('-ModeloMestre', 'sonnet')
+Conferir 'modelo: settings.json novo com sonnet' ($r.codigo -eq 0 -and (Ler-Json (Join-Path $d3f 'settings.json')).model -eq 'sonnet')
+$d3g = Join-Path $base 'modelo-invalido'
+$r = Instalar $d3g @('-ModeloMestre', 'haiku')
+Conferir 'modelo: valor fora da lista recusado antes de instalar' ($r.codigo -ne 0 -and -not (Test-Path (Join-Path $d3g 'agents')))
 
 # 4. JSON invalido: falha sem alterar o arquivo
 $d4 = Join-Path $base 'invalido'
@@ -223,16 +294,51 @@ if ($temNode) {
 
 # 7 a 11. -ComMapa: registra o codebase-memory no .claude.json (precisa do Node)
 if (Get-Command node -ErrorAction SilentlyContinue) {
-    # Executavel falso do mapa, para o instalador achar no PATH
+    # Executavel falso do mapa, para o instalador achar no PATH. Grava cada chamada em
+    # chamadas.log e guarda o que "config set" mudou em estado.json; "config list" responde
+    # no formato do programa de verdade.
     $falso = Join-Path $base 'bin-falso'
     New-Item -ItemType Directory -Force -Path $falso | Out-Null
+    $mjsMapa = Join-Path $falso 'mapa-falso.mjs'
+    $codigoFalso = @'
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const aqui = path.dirname(fileURLToPath(import.meta.url));
+const args = process.argv.slice(2);
+fs.appendFileSync(path.join(aqui, 'chamadas.log'), args.join(' ') + '\n');
+const arq = path.join(aqui, 'estado.json');
+let estado = {};
+try { estado = JSON.parse(fs.readFileSync(arq, 'utf8')); } catch {}
+const padrao = { auto_index: 'false', auto_index_limit: '50000', auto_watch: 'true' };
+if (args[0] === 'config' && args[1] === 'list') {
+  console.log('Configuration:');
+  for (const k of Object.keys(padrao)) console.log('  ' + k.padEnd(25) + ' = ' + String(estado[k] ?? padrao[k]).padEnd(10));
+} else if (args[0] === 'config' && args[1] === 'set') {
+  estado[args[2]] = args[3];
+  fs.writeFileSync(arq, JSON.stringify(estado));
+  console.log(args[2] + ' = ' + args[3]);
+}
+'@
+    [System.IO.File]::WriteAllText($mjsMapa, $codigoFalso, $utf8)
+    $nodeTeste = (Get-Command node).Source
     if ($env:OS -eq 'Windows_NT') {
         $exeMapa = Join-Path $falso 'codebase-memory-mcp.cmd'
-        [System.IO.File]::WriteAllText($exeMapa, "@echo off`r`n", $utf8)
+        [System.IO.File]::WriteAllText($exeMapa, "@`"$nodeTeste`" `"$mjsMapa`" %*`r`n", $utf8)
     } else {
         $exeMapa = Join-Path $falso 'codebase-memory-mcp'
-        [System.IO.File]::WriteAllText($exeMapa, "#!/bin/sh`n", $utf8)
+        [System.IO.File]::WriteAllText($exeMapa, "#!/bin/sh`nexec '$nodeTeste' '$mjsMapa' `"`$@`"`n", $utf8)
         & chmod +x $exeMapa
+    }
+    $logMapa = Join-Path $falso 'chamadas.log'
+    $estadoMapa = Join-Path $falso 'estado.json'
+    function Limpar-MapaFalso([string]$estado = '') {
+        Remove-Item -LiteralPath $logMapa, $estadoMapa -Force -ErrorAction SilentlyContinue
+        if ($estado) { [System.IO.File]::WriteAllText($estadoMapa, $estado, $utf8) }
+    }
+    function Chamadas-Set {
+        if (-not (Test-Path -LiteralPath $logMapa)) { return @() }
+        return @([System.IO.File]::ReadAllLines($logMapa) | Where-Object { $_ -like 'config set *' })
     }
     $pathOriginal = $env:PATH
     $pathComMapa = $falso + [System.IO.Path]::PathSeparator + $env:PATH
@@ -243,7 +349,13 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
     $usuario = Join-Path $d7 '.claude.json'
     [System.IO.File]::WriteAllText($usuario, '{"numStartups":5,"projects":{"C:/x":{"allowedTools":[]}},"mcpServers":{"outro":{"command":"x"}}}', $utf8)
     $env:PATH = $pathComMapa
+    Limpar-MapaFalso
     $r = Instalar $d7 @('-ComMapa')
+    $sets = Chamadas-Set
+    Conferir 'mapa: leu a configuracao (config list)' ((Test-Path $logMapa) -and @([System.IO.File]::ReadAllLines($logMapa)) -contains 'config list')
+    Conferir 'mapa: ligou o auto_index que estava desligado' (($sets -contains 'config set auto_index true') -and $r.texto -match 'auto_index = true \(era false\)')
+    Conferir 'mapa: nao regravou limite e auto_watch que ja estavam certos' ($sets.Count -eq 1)
+    Conferir 'mapa: diagnostico ve a indexacao automatica ligada' ($r.texto -match 'Mapa com indexa')
     $u = Ler-Json $usuario
     Conferir 'mapa: saiu com 0' ($r.codigo -eq 0)
     Conferir 'mapa: registrou com o caminho completo' ($u.mcpServers.'codebase-memory'.command -eq $exeMapa)
@@ -251,9 +363,28 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
     Conferir 'mapa: manteve o resto do arquivo' ($u.numStartups -eq 5 -and $null -ne $u.projects)
     $baks = @(Get-ChildItem -LiteralPath $d7 -Filter '.claude.json.bak-*' -Force)
     Conferir 'mapa: fez backup do original' ($baks.Count -eq 1 -and [System.IO.File]::ReadAllText($baks[0].FullName, $utf8).Contains('"outro"') -and -not [System.IO.File]::ReadAllText($baks[0].FullName, $utf8).Contains('codebase-memory'))
+    Remove-Item -LiteralPath $logMapa -Force -ErrorAction SilentlyContinue
     $r = Instalar $d7 @('-ComMapa')
     Conferir 'mapa: repeticao sai com 0' ($r.codigo -eq 0)
     Conferir 'mapa: repeticao nao faz backup novo' (@(Get-ChildItem -LiteralPath $d7 -Filter '.claude.json.bak-*' -Force).Count -eq 1)
+    Conferir 'mapa: repeticao nao regrava a configuracao' ((Chamadas-Set).Count -eq 0 -and $r.texto -match 'indexacao automatica ja ligada')
+
+    # 7b. Limite diferente e auto_watch desligado: acerta os dois e nao mexe no auto_index
+    Limpar-MapaFalso '{"auto_index":"true","auto_index_limit":"1000","auto_watch":"false"}'
+    $r = Instalar $d7 @('-ComMapa')
+    $sets = Chamadas-Set
+    Conferir 'mapa: acertou o limite e o auto_watch' (($sets -contains 'config set auto_index_limit 50000') -and ($sets -contains 'config set auto_watch true') -and $sets.Count -eq 2)
+
+    # 7b2. Limite maior que o da equipe, posto pelo usuario: fica
+    Limpar-MapaFalso '{"auto_index":"true","auto_index_limit":"200000","auto_watch":"true"}'
+    $r = Instalar $d7 @('-ComMapa')
+    Conferir 'mapa: limite maior do usuario fica' ((Chamadas-Set).Count -eq 0 -and $r.texto -match 'auto_index_limit 200000')
+
+    # 7c. -SemAutoIndex: nao grava nada na configuracao do mapa
+    Limpar-MapaFalso
+    $r = Instalar $d7 @('-ComMapa', '-SemAutoIndex')
+    Conferir 'mapa: -SemAutoIndex nao grava a configuracao' ($r.codigo -eq 0 -and (Chamadas-Set).Count -eq 0 -and -not (Test-Path $estadoMapa) -and $r.texto -match 'ignorada \(-SemAutoIndex\)')
+    Conferir 'mapa: diagnostico avisa a indexacao automatica desligada' ($r.texto -match 'Mapa sem indexa')
 
     # 8. .claude.json grande (o Windows PowerShell 5.1 nao le JSON acima de ~2 MB)
     $d8 = Join-Path $base 'mapa-grande'

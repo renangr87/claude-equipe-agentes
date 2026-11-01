@@ -4,9 +4,13 @@
 // Diz, em poucas linhas, o que o mestre levaria várias chamadas para descobrir: o tamanho
 // do projeto e se o mapa do código é obrigatório, se o projeto está configurado para o
 // verificador, as notas de área, o plano em andamento, se há versão nova da equipe e se
-// a retrospectiva está pendente. Só lê; nunca bloqueia; qualquer erro vira silêncio.
+// a retrospectiva está pendente, se esta cópia está no mapa, se a revisão de escopo achou
+// algo fora do pedido e se a instalação da equipe tem problema. Só lê; nunca bloqueia;
+// qualquer erro vira silêncio.
+import fs from 'node:fs';
 import path from 'node:path';
-import { fatosDoProjeto, lerEntrada, lerJson, pastaDiario, saidaContexto, sessoesDesde, versaoDaEquipe } from './equipe-comum.mjs';
+import { fatosDoProjeto, lerEntrada, lerJson, lerTexto, pastaDiario, saidaContexto, sessoesDesde, versaoDaEquipe } from './equipe-comum.mjs';
+import { acharMapa, projetoIndexado, projetosDoMapa, resumoRapido, rodarMapa } from './equipe-diagnostico.mjs';
 import { CONEXAO_LEITURA, leituraDeclarada } from './equipe-sql.mjs';
 
 const DIAS_RETRO = 7;
@@ -18,6 +22,7 @@ export function boletim(entrada) {
   const origem = entrada.source || 'startup';
   const l = [];
   if (fatos.codigo > 0) linhasDoProjeto(fatos, origem, l);
+  escopo(fatos.raiz, l);
   if (origem === 'startup') avisos(l);
   if (!l.length) return '';
   return ['Boletim da equipe (hook de início de sessão; dados lidos agora do projeto):', ...l].join('\n');
@@ -27,6 +32,9 @@ function linhasDoProjeto(fatos, origem, l) {
   const modulos = fatos.modulos.length > 1 ? `, ${fatos.modulos.length} módulos (${fatos.modulos.slice(0, 5).join(', ')})` : '';
   if (fatos.mapaObrigatorio) {
     l.push(`- Projeto ${fatos.raiz}: ${fatos.codigo} arquivos de código${modulos}. O mapa do código é obrigatório aqui: na primeira tarefa, o Explore confere o índice e indexa se faltar.`);
+    const indexado = mapaIndexado(fatos.raiz);
+    if (indexado === true) l.push('- Mapa: esta cópia está indexada.');
+    else if (indexado === false) l.push('- Mapa: esta cópia não está indexada (o Explore indexa na primeira tarefa).');
   } else {
     l.push(`- Projeto ${fatos.raiz}: ${fatos.codigo} arquivos de código${modulos}. Projeto pequeno: o mapa é opcional.`);
   }
@@ -64,8 +72,35 @@ function linhasDoProjeto(fatos, origem, l) {
   }
 }
 
+// O mapa já tem esta cópia? Pergunta ao programa (codebase-memory-mcp cli list_projects,
+// 2 segundos no máximo). true, false, ou null quando não dá para saber: programa ausente
+// ou saída que não deu para ler (aí o boletim não diz nada).
+export function mapaIndexado(raiz) {
+  const programa = acharMapa();
+  if (!programa) return null;
+  const saida = rodarMapa(programa, ['cli', 'list_projects', '{"format":"json","limit":500,"metadata_only":true}'], 2000);
+  const projetos = projetosDoMapa(saida);
+  if (!projetos) return null;
+  return projetoIndexado(projetos, raiz);
+}
+
+// A revisão de escopo de menos de 1 dia achou mudança fora do pedido: o mestre lê antes
+// do commit.
+function escopo(raiz, l) {
+  const arquivo = path.join(raiz, '.revisao', 'escopo.md');
+  let idade = Infinity;
+  try { idade = Date.now() - fs.statSync(arquivo).mtimeMs; } catch { return; }
+  if (idade > 86400000) return;
+  const texto = lerTexto(arquivo);
+  if (texto && texto.includes('FORA DO ESCOPO')) {
+    l.push('- .revisao/escopo.md (de menos de 1 dia) marca mudança FORA DO ESCOPO: leia antes do commit e resolva com o usuário o que fica.');
+  }
+}
+
 // Avisos para o usuário: só no começo de uma sessão nova, para não repetir.
 function avisos(l) {
+  const problema = resumoRapido();
+  if (problema) l.push(`- ${problema}`);
   const v = versaoDaEquipe();
   if (v && v.atrasada) {
     l.push(`- Há versão nova da equipe no GitHub (instalada ${v.instalada.slice(0, 7)}, disponível ${v.remota.slice(0, 7)}). No fim da primeira tarefa, avise o usuário uma vez: rodar de novo a linha de instalação.`);

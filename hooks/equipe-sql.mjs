@@ -7,10 +7,9 @@
 // agente para a conexão só de leitura (supabase-leitura). Escrita continua pela conexão
 // normal, com aprovação. Erro ou dúvida vira silêncio: segue o fluxo normal (pedir aprovação).
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { git, lerEntrada } from './equipe-comum.mjs';
+import { git, lerEntrada, servidorDeclarado } from './equipe-comum.mjs';
 
 export const CONEXAO_LEITURA = 'supabase-leitura';
 
@@ -46,26 +45,7 @@ export function somenteLeitura(sql) {
 // A conexão só de leitura está declarada para este projeto? No .mcp.json da raiz ou no
 // .claude.json do usuário (geral ou do projeto).
 export function leituraDeclarada(raiz) {
-  const tem = (servidores) => Boolean(servidores && typeof servidores === 'object' && servidores[CONEXAO_LEITURA]);
-  const ler = (arq) => {
-    try { return JSON.parse(fs.readFileSync(arq, 'utf8').replace(/^﻿/, '')); } catch { return null; }
-  };
-  if (raiz) {
-    const mcp = ler(path.join(raiz, '.mcp.json'));
-    if (mcp && tem(mcp.mcpServers)) return true;
-  }
-  const base = process.env.CLAUDE_CONFIG_DIR || os.homedir();
-  const usuario = ler(path.join(base, '.claude.json'));
-  if (!usuario) return false;
-  if (tem(usuario.mcpServers)) return true;
-  if (raiz && usuario.projects && typeof usuario.projects === 'object') {
-    const norm = (p) => path.resolve(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-    const alvo = norm(raiz);
-    for (const [p, v] of Object.entries(usuario.projects)) {
-      if (norm(p) === alvo && v && tem(v.mcpServers)) return true;
-    }
-  }
-  return false;
+  return servidorDeclarado(CONEXAO_LEITURA, raiz);
 }
 
 export function decidir(entrada) {

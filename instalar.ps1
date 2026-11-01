@@ -12,7 +12,8 @@
      propria equipe, listadas em settings\retiradas.json; o resto e mantido
   6. Mapa do codigo (codebase-memory): instala o programa se faltar (instalador oficial,
      so o binario) e registra no .claude.json do usuario. Obrigatorio em projeto medio
-     ou grande: so fica de fora com -SemMapa
+     ou grande: so fica de fora com -SemMapa. Liga a indexacao automatica do mapa
+     (auto_index true, auto_index_limit 50000, auto_watch true), salvo com -SemAutoIndex
   7. Servidor do Dart: se achar o Dart 3.13 ou mais novo, confere o servidor e registra.
      Sem Dart, pula sem erro
   8. Apoio Local (modelo do Ollama neste computador): baixa ou atualiza o repositorio
@@ -27,6 +28,9 @@
      revisor. Copia a skill /retro-equipe e o medidor das sessoes, e grava a versao
      instalada em <Destino>\equipe-versao.json. So ficam de fora com -SemHooks ou
      -SemBloqueios
+  11. Com -ModeloMestre: grava o modelo da sessao principal ("model") no settings.json
+  12. No fim, com os hooks instalados, roda o diagnostico da instalacao
+     (hooks\equipe-diagnostico.mjs) e mostra o que estiver faltando
 
   O que faltar (Git, Node.js, Python 3.12, Ollama) e instalado pelo winget. Com
   -SemInstalar, nada e instalado nem baixado: so e registrado o que ja existe.
@@ -47,6 +51,11 @@
 
 .PARAMETER ComMapa
   Mantido por compatibilidade: o mapa ja e instalado e registrado por padrao.
+
+.PARAMETER SemAutoIndex
+  Nao mexe na configuracao do mapa (auto_index, auto_index_limit e auto_watch). O que ja
+  estiver configurado fica como esta; para desligar a indexacao automatica, rode:
+  codebase-memory-mcp config set auto_index false
 
 .PARAMETER SemDart
   Nao registra o servidor do Dart, mesmo que o Dart esteja instalado.
@@ -102,6 +111,10 @@
   Nao cria o aviso no celular (ntfy). Sem esta opcao, o instalador cria um topico secreto
   na primeira vez e mostra qual assinar no app.
 
+.PARAMETER ModeloMestre
+  Modelo da sessao principal (o mestre), gravado como "model" no settings.json:
+  opusplan, opus ou sonnet. Sem esta opcao, o "model" do settings.json nao e tocado.
+
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\instalar.ps1
 
@@ -129,7 +142,10 @@ param(
     [string]$NomeCasa = '',
     [switch]$SemHooks,
     [string]$Memoria = '',
-    [switch]$SemAviso
+    [switch]$SemAviso,
+    [switch]$SemAutoIndex,
+    [ValidateSet('opusplan', 'opus', 'sonnet')]
+    [string]$ModeloMestre
 )
 
 $ErrorActionPreference = 'Stop'
@@ -412,11 +428,13 @@ function Ler-Servidor([string]$nome) {
 # ---------- Hooks, retrospectiva e versao instalada ----------
 
 # Hook da equipe: o comando ou um argumento aponta para um dos scripts que a equipe
-# registra no settings.json. Script do usuario com nome parecido fica.
+# registra (ou registrava) no settings.json. Os antigos continuam na lista para sair na
+# reinstalacao (por exemplo, as travas sql, banco e segredos, que agora rodam dentro do
+# equipe-pre). Script do usuario com nome parecido fica.
 function Test-HookDaEquipe($h) {
     if ($null -eq $h) { return $false }
     foreach ($p in (@($h.command) + @($h.args))) {
-        if ($p -is [string] -and $p -match '[\\/]hooks[\\/]equipe-(boletim|contexto|sql|banco|segredos|aviso|memoria)\.mjs$') { return $true }
+        if ($p -is [string] -and $p -match '[\\/]hooks[\\/]equipe-(boletim|contexto|pre|pos|eventos|sql|banco|segredos|leitura|aviso|memoria)\.mjs$') { return $true }
     }
     return $false
 }
@@ -498,7 +516,7 @@ function Merge-Hooks([string]$arquivoModelo, [string]$arquivoDestino, [string]$n
         Write-Host "  copia de seguranca: $bak"
     }
     [System.IO.File]::WriteAllText($arquivoDestino, ($atual | ConvertTo-Json -Depth 32) + "`n", $utf8)
-    Write-Host "  hooks da equipe gravados (boletim, contexto dos subagentes, travas de banco e de segredos, aviso no celular e memoria): $arquivoDestino"
+    Write-Host "  hooks da equipe gravados (boletim, contexto dos subagentes, travas antes e registro depois das ferramentas, eventos da sessao, aviso no celular e memoria): $arquivoDestino"
 }
 
 
@@ -547,6 +565,39 @@ if ($SemBloqueios) {
 } else {
     Write-Host "Hooks:"
     Merge-Hooks (Join-Path (Join-Path $origem 'settings') 'hooks.json') (Join-Path $Destino 'settings.json') $nodeEquipe
+}
+
+# ---------- Modelo do mestre ----------
+
+# Grava "model" no settings.json so com -ModeloMestre; sem a opcao, nunca toca no modelo.
+function Set-ModeloMestre([string]$modelo, [string]$arquivoDestino) {
+    $atual = New-Object PSObject
+    if (Test-Path -LiteralPath $arquivoDestino) {
+        $texto = Read-Texto $arquivoDestino
+        if ($texto.Trim().Length -gt 0) { $atual = $texto | ConvertFrom-Json }
+    }
+    if ($atual.PSObject.Properties['model'] -and [string]$atual.model -ceq $modelo) {
+        Write-Host "  modelo do mestre ja e $modelo, mantido: $arquivoDestino"
+        return
+    }
+    # Na mesma instalacao, os bloqueios ou os hooks podem ter gravado o backup: fica o mais antigo.
+    $bak = "$arquivoDestino.bak-$carimbo"
+    if ($settingsExistia -and (Test-Path -LiteralPath $arquivoDestino) -and -not (Test-Path -LiteralPath $bak)) {
+        Copy-Item -LiteralPath $arquivoDestino -Destination $bak
+        Write-Host "  copia de seguranca: $bak"
+    }
+    if ($atual.PSObject.Properties['model']) { $atual.model = $modelo } else { $atual | Add-Member -NotePropertyName 'model' -NotePropertyValue $modelo }
+    [System.IO.File]::WriteAllText($arquivoDestino, ($atual | ConvertTo-Json -Depth 32) + "`n", $utf8)
+    Write-Host "  modelo do mestre gravado ($modelo): $arquivoDestino"
+}
+
+if ($ModeloMestre) {
+    if ($SemBloqueios) {
+        Write-Host "Modelo do mestre: ignorado (-SemBloqueios nao mexe no settings.json)."
+    } else {
+        Write-Host "Modelo do mestre:"
+        Set-ModeloMestre $ModeloMestre (Join-Path $Destino 'settings.json')
+    }
 }
 
 # ---------- Aviso no celular e memoria entre computadores ----------
@@ -623,6 +674,57 @@ function Instalar-Mapa {
     Atualizar-Path
 }
 
+# Valores de "codebase-memory-mcp config list". O formato atual e uma linha por chave
+# ("  auto_index                = false"); aceita tambem "chave: valor" e JSON. Chave
+# ausente fica com o padrao do programa.
+function Get-ConfigMapa([string]$texto) {
+    $valores = @{ auto_index = 'false'; auto_index_limit = '50000'; auto_watch = 'true' }
+    $achadas = @{}
+    foreach ($m in [regex]::Matches([string]$texto, '"?\b(auto_index_limit|auto_index|auto_watch)\b"?\s*[:=]\s*"?([A-Za-z0-9_.-]+)')) {
+        $chave = $m.Groups[1].Value
+        if (-not $achadas.ContainsKey($chave)) {
+            $achadas[$chave] = $true
+            $valores[$chave] = $m.Groups[2].Value.ToLowerInvariant()
+        }
+    }
+    return $valores
+}
+
+# Indexacao automatica do mapa: o projeto novo ja chega indexado na primeira sessao.
+# So grava o que estiver diferente.
+function Set-AutoIndexMapa([string]$mapa) {
+    $eap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $texto = (& $mapa config list 2>$null | Out-String)
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  ATENCAO: nao consegui ler a configuracao do mapa (codebase-memory-mcp config list). Ligue depois: codebase-memory-mcp config set auto_index true"
+            return
+        }
+        $atual = Get-ConfigMapa $texto
+        $mudar = @()
+        if ($atual['auto_index'] -ne 'true') { $mudar += , @('auto_index', 'true') }
+        # Limite maior que o da equipe, posto por voce, fica.
+        $limite = 0
+        if (-not [int]::TryParse([string]$atual['auto_index_limit'], [ref]$limite) -or $limite -lt 50000) { $mudar += , @('auto_index_limit', '50000') }
+        if ($atual['auto_watch'] -eq 'false') { $mudar += , @('auto_watch', 'true') }
+        if ($mudar.Count -eq 0) {
+            Write-Host "  indexacao automatica ja ligada, mantida (auto_index true, auto_index_limit $($atual['auto_index_limit']))."
+            return
+        }
+        foreach ($par in $mudar) {
+            $null = (& $mapa config set $par[0] $par[1] 2>&1 | Out-String)
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "  ATENCAO: nao consegui gravar $($par[0]) = $($par[1]). Rode depois: codebase-memory-mcp config set $($par[0]) $($par[1])"
+            } else {
+                Write-Host "  configuracao do mapa: $($par[0]) = $($par[1]) (era $($atual[$par[0]]))"
+            }
+        }
+    } finally {
+        $ErrorActionPreference = $eap
+    }
+}
+
 if (-not $SemMapa) {
     $mapa = Find-Mapa
     if (-not $mapa -and -not $SemInstalar) {
@@ -636,6 +738,11 @@ if (-not $SemMapa) {
         Write-Host "  Ele e obrigatorio em projeto medio ou grande. Rode este instalador de novo sem -SemInstalar, ou instale so o binario (--skip-config) como no README da equipe, secao 'Mapa do codigo'."
     } else {
         Registrar-Servidor 'Mapa do codigo (codebase-memory)' 'codebase-memory' (Join-Path (Join-Path $origem 'projeto') 'mcp.codebase-memory.json') $mapa
+        if ($SemAutoIndex) {
+            Write-Host "  indexacao automatica: ignorada (-SemAutoIndex)."
+        } else {
+            Set-AutoIndexMapa $mapa
+        }
     }
 }
 
@@ -976,6 +1083,18 @@ if (-not $SemApoio) {
             Rodar-ScriptApoio (Join-Path (Split-Path -Parent $servidorApoio) 'remoto\casa_ligar.ps1') @() 'Acesso ao Ollama a partir dos seus outros computadores (Tailscale)'
         }
     }
+}
+
+# ---------- Diagnostico da instalacao ----------
+# So com os hooks instalados: o diagnostico roda no Node e confere os hooks e os agentes.
+$diagnostico = Join-Path $pastaHooks 'equipe-diagnostico.mjs'
+if ($hooksAtivos -and (Test-Path -LiteralPath $diagnostico)) {
+    Write-Host ""
+    $eap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    & $nodeEquipe $diagnostico '--claude-json' $arquivoUsuario
+    $ErrorActionPreference = $eap
+    $global:LASTEXITCODE = 0
 }
 
 Write-Host ""

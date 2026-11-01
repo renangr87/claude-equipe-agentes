@@ -4,6 +4,7 @@
 //
 // Só biblioteca padrão do Node. Nenhuma função aqui lança erro para fora: um hook
 // que quebra não pode atrapalhar a sessão, então tudo devolve null ou vazio.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -317,4 +318,167 @@ export function sessoesDesde(desdeMs, limite = 20000) {
 export function saidaContexto(evento, texto) {
   if (!texto) return;
   process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: evento, additionalContext: texto } }));
+}
+
+// ---------- Travas: registro, interruptor, estado por chamada e cache ----------
+
+const limpo = (v) => String(v ?? '').replace(/[\t\r\n]+/g, ' ').slice(0, 80);
+
+// Quem está chamando: o tipo do agente (o mestre não tem) e a chave da chamada, igual
+// para todas as ferramentas da mesma chamada de subagente.
+export function tipoDoAgente(entrada) {
+  return String((entrada && entrada.agent_type) || '') || 'mestre';
+}
+export function chaveDaChamada(entrada) {
+  const sessao = String((entrada && entrada.session_id) || '').replace(/[^A-Za-z0-9_-]/g, '');
+  if (!sessao) return null;
+  const agente = String((entrada && entrada.agent_id) || '').replace(/[^A-Za-z0-9_-]/g, '');
+  return `${sessao}-${agente || 'mestre'}`;
+}
+
+// Registro das travas: uma linha por decisão, sem conteúdo (data, trava, decisão, tempo
+// em ms, tipo de agente e chave da chamada). É por ele que a /retro-equipe vê falso
+// positivo, fuga e lentidão. Arquivos com mais de 60 dias saem.
+export function registrarTrava(trava, decisao, ms, entrada) {
+  try {
+    const pasta = pastaDiario();
+    fs.mkdirSync(pasta, { recursive: true });
+    const agora = new Date();
+    const mes = agora.toISOString().slice(0, 7);
+    const linha = [agora.toISOString(), limpo(trava), limpo(decisao), Math.max(0, Math.round(Number(ms) || 0)), limpo(tipoDoAgente(entrada)), limpo(chaveDaChamada(entrada) || '')].join('\t');
+    fs.appendFileSync(path.join(pasta, `travas-${mes}.log`), `${linha}\n`);
+    if (Math.random() < 0.02) {
+      const limite = Date.now() - 60 * 86400000;
+      for (const n of fs.readdirSync(pasta)) {
+        if (!/^travas-\d{4}-\d{2}\.log$/.test(n)) continue;
+        try { if (fs.statSync(path.join(pasta, n)).mtimeMs < limite) fs.unlinkSync(path.join(pasta, n)); } catch { /* segue */ }
+      }
+    }
+  } catch { /* o registro nunca atrapalha */ }
+}
+
+// Interruptor de emergência das travas de economia e de retrabalho: EQUIPE_DESLIGAR com
+// os nomes separados por vírgula (ou "tudo"), no bloco env do settings.json. As travas
+// de segurança (banco, segredos, SQL) não desligam por aqui.
+export const TRAVAS_DESLIGAVEIS = ['leitura', 'mapa', 'orcamento', 'briefing', 'analisar', 'verificar', 'escopo', 'revisao'];
+export function desligada(nome) {
+  const lista = String(process.env.EQUIPE_DESLIGAR || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').split(/[\s,;]+/).filter(Boolean);
+  if (!TRAVAS_DESLIGAVEIS.includes(nome)) return false;
+  return lista.includes(nome) || lista.includes('tudo');
+}
+
+// Estado de uma chamada (marcas e anotações em arquivos pequenos, por chave da chamada).
+// Anotar acrescenta no fim do arquivo: duas ferramentas ao mesmo tempo não se perdem.
+function pastaEstado() {
+  return path.join(pastaDiario(), 'estado');
+}
+const nomeEstado = (chave, nome) => path.join(pastaEstado(), `${String(chave).replace(/[^A-Za-z0-9_-]/g, '')}.${nome}`);
+
+export function anotar(chave, nome, valor = '1') {
+  if (!chave) return;
+  try {
+    fs.mkdirSync(pastaEstado(), { recursive: true });
+    fs.appendFileSync(nomeEstado(chave, nome), `${String(valor).replace(/[\r\n]+/g, ' ')}\n`);
+    if (Math.random() < 0.02) limparEstadoVelho();
+  } catch { /* segue */ }
+}
+export function anotacoes(chave, nome) {
+  if (!chave) return [];
+  try { return fs.readFileSync(nomeEstado(chave, nome), 'utf8').split('\n').filter(Boolean); } catch { return []; }
+}
+export function gravarEstado(chave, nome, valor) {
+  if (!chave) return;
+  try {
+    fs.mkdirSync(pastaEstado(), { recursive: true });
+    fs.writeFileSync(nomeEstado(chave, nome), JSON.stringify(valor));
+  } catch { /* segue */ }
+}
+export function lerEstado(chave, nome) {
+  return chave ? lerJson(nomeEstado(chave, nome)) : null;
+}
+export function apagarEstado(chave, nome) {
+  if (!chave) return;
+  try { fs.rmSync(nomeEstado(chave, nome), { force: true }); } catch { /* segue */ }
+}
+// Fim da chamada: tudo o que foi anotado para ela sai (um agente retomado começa de novo).
+export function limparChamada(chave, manter = []) {
+  if (!chave) return;
+  const prefixo = `${String(chave).replace(/[^A-Za-z0-9_-]/g, '')}.`;
+  try {
+    for (const n of fs.readdirSync(pastaEstado())) {
+      if (n.startsWith(prefixo) && !manter.includes(n.slice(prefixo.length))) fs.rmSync(path.join(pastaEstado(), n), { force: true });
+    }
+  } catch { /* segue */ }
+}
+function limparEstadoVelho() {
+  const limite = Date.now() - 3 * 86400000;
+  for (const n of fs.readdirSync(pastaEstado())) {
+    const arq = path.join(pastaEstado(), n);
+    try { if (fs.statSync(arq).mtimeMs < limite) fs.unlinkSync(arq); } catch { /* segue */ }
+  }
+}
+
+// Servidor MCP declarado para o projeto: no .mcp.json da raiz ou no .claude.json do
+// usuário (geral ou do projeto).
+export function servidorDeclarado(nome, raiz) {
+  const tem = (servidores) => Boolean(servidores && typeof servidores === 'object' && servidores[nome]);
+  if (raiz) {
+    const mcp = lerJson(path.join(raiz, '.mcp.json'));
+    if (mcp && tem(mcp.mcpServers)) return true;
+  }
+  const base = process.env.CLAUDE_CONFIG_DIR || os.homedir();
+  const usuario = lerJson(path.join(base, '.claude.json'));
+  if (!usuario) return false;
+  if (tem(usuario.mcpServers)) return true;
+  if (raiz && usuario.projects && typeof usuario.projects === 'object') {
+    const norm = (p) => path.resolve(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+    const alvo = norm(raiz);
+    for (const [p, v] of Object.entries(usuario.projects)) {
+      if (norm(p) === alvo && v && tem(v.mcpServers)) return true;
+    }
+  }
+  return false;
+}
+
+// Fatos do projeto para as travas, guardados por 10 minutos: o git ls-files não roda a
+// cada leitura. null fora de um repositório git.
+const CACHE_MS = 10 * 60000;
+export function fatosRapidos(cwd) {
+  if (!cwd) return null;
+  const chave = crypto.createHash('sha1').update(`${path.resolve(cwd)}|${process.env.CLAUDE_PROJECT_DIR || ''}`).digest('hex').slice(0, 16);
+  const arq = path.join(pastaDiario(), 'cache', `${chave}.json`);
+  const guardado = lerJson(arq);
+  const listaMudou = (f) => {
+    try { return Boolean(f && f.raiz) && fs.statSync(path.join(f.raiz, '.claude', 'verificador-comandos.txt')).mtimeMs > guardado.em; } catch { return false; }
+  };
+  if (guardado && typeof guardado.em === 'number' && Date.now() - guardado.em < CACHE_MS && !listaMudou(guardado.fatos)) return guardado.fatos;
+  const f = fatosDoProjeto(cwd);
+  const fatos = f ? {
+    raiz: f.raiz,
+    codigo: f.codigo,
+    modulos: f.modulos,
+    mapaObrigatorio: f.mapaObrigatorio,
+    mapaDeclarado: servidorDeclarado('codebase-memory', f.raiz),
+    comandos: f.comandos,
+  } : null;
+  try {
+    fs.mkdirSync(path.dirname(arq), { recursive: true });
+    fs.writeFileSync(arq, JSON.stringify({ em: Date.now(), fatos }));
+  } catch { /* sem cache: roda de novo na próxima */ }
+  return fatos;
+}
+
+// Arquivo de código (a mesma lista do tamanho do projeto). Gerado não conta.
+export function ehCodigo(arquivo) {
+  const a = String(arquivo || '').replace(/\\/g, '/');
+  const nome = a.slice(a.lastIndexOf('/') + 1);
+  if (!nome.includes('.')) return false;
+  const ext = nome.slice(nome.lastIndexOf('.') + 1).toLowerCase();
+  return EXT_CODIGO.has(ext) && !GERADO.test(a);
+}
+export const EXTENSOES_CODIGO = EXT_CODIGO;
+
+// Texto sem acento e em minúsculas, para comparar rótulos e pedidos com tolerância.
+export function normalizar(texto) {
+  return String(texto || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 }

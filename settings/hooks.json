@@ -6,14 +6,32 @@
           {
             "type": "command",
             "command": "__NODE__",
-            "args": ["__PASTA_CLAUDE__/hooks/equipe-boletim.mjs"],
+            "args": [
+              "__PASTA_CLAUDE__/hooks/equipe-boletim.mjs"
+            ],
             "timeout": 15
           },
           {
             "type": "command",
             "command": "__NODE__",
-            "args": ["__PASTA_CLAUDE__/hooks/equipe-memoria.mjs"],
+            "args": [
+              "__PASTA_CLAUDE__/hooks/equipe-memoria.mjs"
+            ],
             "timeout": 20
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__NODE__",
+            "args": [
+              "__PASTA_CLAUDE__/hooks/equipe-eventos.mjs"
+            ],
+            "timeout": 10
           }
         ]
       }
@@ -25,7 +43,22 @@
           {
             "type": "command",
             "command": "__NODE__",
-            "args": ["__PASTA_CLAUDE__/hooks/equipe-contexto.mjs"],
+            "args": [
+              "__PASTA_CLAUDE__/hooks/equipe-contexto.mjs"
+            ],
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "implementador",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__NODE__",
+            "args": [
+              "__PASTA_CLAUDE__/hooks/equipe-eventos.mjs"
+            ],
             "timeout": 15
           }
         ]
@@ -33,41 +66,60 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "mcp__.*__execute_sql",
+        "matcher": "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|Read|Grep|Glob|Agent|Task|mcp__.*__execute_sql",
         "hooks": [
           {
             "type": "command",
             "command": "__NODE__",
-            "args": ["__PASTA_CLAUDE__/hooks/equipe-sql.mjs"],
-            "timeout": 10
+            "args": [
+              "__PASTA_CLAUDE__/hooks/equipe-pre.mjs"
+            ],
+            "timeout": 15
           }
         ]
-      },
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|Agent|Task|mcp__codebase-memory__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__NODE__",
+            "args": [
+              "__PASTA_CLAUDE__/hooks/equipe-pos.mjs"
+            ],
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
       {
         "matcher": "Bash|PowerShell",
         "hooks": [
           {
             "type": "command",
             "command": "__NODE__",
-            "args": ["__PASTA_CLAUDE__/hooks/equipe-banco.mjs"],
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "__NODE__",
-            "args": ["__PASTA_CLAUDE__/hooks/equipe-segredos.mjs"],
-            "timeout": 10
+            "args": [
+              "__PASTA_CLAUDE__/hooks/equipe-pos.mjs"
+            ],
+            "timeout": 20
           }
         ]
-      },
+      }
+    ],
+    "SubagentStop": [
       {
-        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "matcher": "Explore|revisor|implementador",
         "hooks": [
           {
             "type": "command",
             "command": "__NODE__",
-            "args": ["__PASTA_CLAUDE__/hooks/equipe-segredos.mjs"],
-            "timeout": 10
+            "args": [
+              "__PASTA_CLAUDE__/hooks/equipe-eventos.mjs"
+            ],
+            "timeout": 15
           }
         ]
       }
@@ -78,7 +130,9 @@
           {
             "type": "command",
             "command": "__NODE__",
-            "args": ["__PASTA_CLAUDE__/hooks/equipe-aviso.mjs"],
+            "args": [
+              "__PASTA_CLAUDE__/hooks/equipe-aviso.mjs"
+            ],
             "timeout": 10
           }
         ]
@@ -90,7 +144,17 @@
           {
             "type": "command",
             "command": "__NODE__",
-            "args": ["__PASTA_CLAUDE__/hooks/equipe-memoria.mjs"],
+            "args": [
+              "__PASTA_CLAUDE__/hooks/equipe-eventos.mjs"
+            ],
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "__NODE__",
+            "args": [
+              "__PASTA_CLAUDE__/hooks/equipe-memoria.mjs"
+            ],
             "timeout": 20
           }
         ]
@@ -102,7 +166,9 @@
           {
             "type": "command",
             "command": "__NODE__",
-            "args": ["__PASTA_CLAUDE__/hooks/equipe-memoria.mjs"],
+            "args": [
+              "__PASTA_CLAUDE__/hooks/equipe-memoria.mjs"
+            ],
             "timeout": 20
           }
         ]
