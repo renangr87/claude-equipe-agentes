@@ -128,6 +128,8 @@ Opções:
 | `-ApoioEmpresa [-NomeCasa <nome>]` | no outro computador: usa o Ollama de casa pelo Tailscale (veja [Apoio local](#apoio-local)) |
 | `-Memoria <endereço do repositório>` | sincroniza a memória automática do Claude Code entre os seus computadores por um repositório privado (veja [Aviso no celular, memória e trava de segredos](#aviso-no-celular-memória-e-trava-de-segredos)) |
 | `-SemAviso` | não cria o aviso no celular (ntfy) |
+| `-SemAutoIndex` | não mexe na configuração do mapa do código (por padrão o instalador liga a indexação automática; para desligá-la depois: `codebase-memory-mcp config set auto_index false`) |
+| `-ModeloMestre opusplan\|opus\|sonnet` | grava o modelo da sessão principal no `settings.json`; sem a opção, o modelo não é tocado (veja [docs/modelos.md](docs/modelos.md)) |
 
 Para passar opções pela linha de uma vez, use esta forma (troque `-ApoioCasa` pelo que quiser):
 
@@ -157,7 +159,9 @@ Fora do Windows, a guarda precisa do PowerShell 7 (`pwsh`) instalado. Sem ele, o
 
 ### Conferir a instalação
 
-Abra uma sessão nova e faça estes testes:
+No fim, o instalador roda o diagnóstico da equipe: confere se cada hook está no `settings.json` e o script existe, se o Node responde, se os agentes têm a guarda, quais servidores estão registrados (mapa, Apoio, Dart), se a indexação automática do mapa está ligada, se o aviso e a memória estão configurados (e se o último envio da memória saiu) e se a versão instalada é a do GitHub. Cada problema vem com o que fazer. Para rodar de novo à mão: `node "$HOME\.claude\hooks\equipe-diagnostico.mjs"`. O boletim de início faz uma versão rápida (só arquivos) e mostra uma linha quando algo está errado.
+
+Depois, abra uma sessão nova e faça estes testes:
 
 1. Pergunte: **"Quais subagentes você tem disponíveis?"** Devem aparecer implementador, verificador e revisor. O Explore aparece de qualquer forma, porque já existe no Claude Code; o seu o substitui.
 2. Pergunte: **"Qual é a regra de commit da equipe?"** A resposta deve citar commit local pelo mestre, com os caminhos dos arquivos, e push só com o seu pedido.
@@ -238,7 +242,7 @@ O implementador também tira uma foto do `git status` no começo e no fim da tar
 - pipe, redirecionamento, `;`, `&&`, `$`, crase e parênteses fora do texto da lista;
 - qualquer comando que cite `.env`, mesmo escondido com aspas ou caractere de escape (`.e""nv`, ``.e`nv``). Um build que lê `.env.web.json`, por exemplo, fica com o mestre.
 
-No Explore, vale um comando `git` por vez, sem nenhum desses operadores: `git log | head` e `cd pasta && git log` também são barrados, e `git grep` não está na lista (para procurar texto, o Explore usa a ferramenta Grep). No verificador, o comando tem de ser a linha da lista, caractere por caractere: `cd app && flutter test` passa se a lista tiver essa linha, e `cd app; flutter test` é barrado. Por isso o mestre copia a linha exata da lista no briefing e o verificador, ao ser barrado, roda a linha mais parecida da lista em vez de improvisar. As leituras do Explore também têm trava, pelo hook `equipe-leitura.mjs` declarado no arquivo dele: a leitura que traria mais de 300 linhas é barrada (ele acha o trecho com Grep ou pelo mapa e lê com `offset` e `limit`), e depois de 12 leituras numa chamada a seguinte é barrada e ele responde com o que tem. A conta zera quando a chamada termina, então um Explore retomado começa de novo. Os dois números mudam por variáveis (veja [Personalizar](#personalizar)). Se essa trava falhar, a leitura segue: ela economiza, não protege.
+No Explore, vale um comando `git` por vez, sem nenhum desses operadores: `git log | head` e `cd pasta && git log` também são barrados, e `git grep` não está na lista (para procurar texto, o Explore usa a ferramenta Grep). No verificador, o comando tem de ser a linha da lista, caractere por caractere: `cd app && flutter test` passa se a lista tiver essa linha, e `cd app; flutter test` é barrado. Por isso o mestre copia a linha exata da lista no briefing e o verificador, ao ser barrado, roda a linha mais parecida da lista em vez de improvisar. As leituras do Explore também têm trava, pelo hook `equipe-leitura.mjs` (rodado pelo despachante `equipe-pre.mjs`, veja [Travas da equipe](#travas-da-equipe-hooks)): a leitura que traria mais de 300 linhas é barrada (ele acha o trecho com Grep ou pelo mapa e lê com `offset` e `limit`), e depois de 12 leituras numa chamada a seguinte é barrada e ele responde com o que tem. A conta zera quando a chamada termina, então um Explore retomado começa de novo. Os dois números mudam por variáveis (veja [Personalizar](#personalizar)). Se essa trava falhar, a leitura segue: ela economiza, não protege.
 
 Limites:
 - **Um comando liberado pode fazer o que ele mesmo faz.** Se um teste escreve no banco, a guarda deixa passar. Liste só comandos que não alteram nada fora da pasta de build.
@@ -269,7 +273,7 @@ Nessa conexão (`read_only=true`), o Supabase roda toda consulta com um usuário
 
 O [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) (DeusData, licença MIT) lê o projeto e monta um mapa de funções, classes e de quem chama quem. Com ele, o Explore responde "onde está" e "quem chama" consultando o mapa em vez de abrir arquivo por arquivo, e o revisor vê o que depende do que mudou. O projeto publica cerca de 10 vezes menos tokens nesse tipo de pergunta, medido em 31 repositórios. Tudo fica no seu computador: o mapa é um banco local e o projeto diz que não envia código nem estatísticas. Dart é suportado com qualidade "boa" (75 a 89%), então chamadas indiretas podem escapar; em ponto crítico, o Explore confirma lendo o trecho.
 
-O instalador da equipe faz os passos 1 e 2 sozinho: se o programa faltar, baixa o instalador oficial e roda com `--skip-config`. Os passos abaixo servem para fazer à mão ou para entender o que ele faz. O programa já instalado não é atualizado pelo instalador da equipe; para isso, feche o app do Claude e editores com IA e rode `codebase-memory-mcp update`.
+O instalador da equipe faz os passos 1 e 2 sozinho e liga a indexação automática (`auto_index true`, `auto_index_limit` 50000, `auto_watch` ligado; um limite maior que o seu fica), para cada pasta, cópia e worktree ser indexada no início da sessão sem depender do Explore lembrar (desligue com `-SemAutoIndex`). O boletim de início diz se a cópia aberta está indexada; no início a frio o programa pode passar de 2 segundos, e aí o boletim fica calado. se o programa faltar, baixa o instalador oficial e roda com `--skip-config`. Os passos abaixo servem para fazer à mão ou para entender o que ele faz. O programa já instalado não é atualizado pelo instalador da equipe; para isso, feche o app do Claude e editores com IA e rode `codebase-memory-mcp update`.
 
 **1. Instale o programa, só o binário.** O instalador oficial dele também acrescenta skill, agentes e hooks próprios ao Claude Code; esses concorreriam com a equipe e poriam texto extra em todo subagente. Por isso use `--skip-config`:
 
@@ -350,9 +354,9 @@ O que esperar: a economia aparece nas leituras grandes, que hoje enchem o contex
 
 ## Boletim, contexto automático e retrospectiva
 
-Três peças que deixam a equipe menos dependente de o mestre lembrar das regras e permitem que ela melhore com números. Os scripts ficam em `hooks/equipe-*.mjs`, rodam no Node.js e só leem: não alteram o projeto, não bloqueiam nada e, se algo der errado, ficam em silêncio. Os que barram, as travas de banco e a de leitura do Explore, estão descritos em [Consultas ao banco sem pedir aprovação](#consultas-ao-banco-sem-pedir-aprovação) e em [A guarda de terminal](#a-guarda-de-terminal).
+Três peças que deixam a equipe menos dependente de o mestre lembrar das regras e permitem que ela melhore com números. Os scripts ficam em `hooks/equipe-*.mjs`, rodam no Node.js e só leem: não alteram o projeto, não bloqueiam nada e, se algo der errado, ficam em silêncio. Os que barram estão em [Travas da equipe](#travas-da-equipe-hooks).
 
-**Boletim de início de sessão** (hook `SessionStart`). Numa pasta com git e código, a sessão começa com algumas linhas para o mestre: quantos arquivos de código e módulos o projeto tem e se o mapa é obrigatório, se o `CLAUDE.md` tem os comandos, se a lista do verificador existe e está em commit, quais notas de área existem, se há um plano em `.revisao/plano.md` com passos abertos e se um projeto com Supabase está sem a conexão só de leitura. Depois de uma compactação, ele lembra de reler o plano. Numa sessão nova, avisa também quando há versão mais nova da equipe no GitHub (compara com o último `git fetch` da sua cópia; o fetch seguinte roda em segundo plano, no máximo uma vez a cada 20 horas) e quando a retrospectiva está pendente (7 dias e 10 sessões desde a última). Esses dois avisos são para você: o mestre diz uma vez, no fim de uma tarefa.
+**Boletim de início de sessão** (hook `SessionStart`). Numa pasta com git e código, a sessão começa com algumas linhas para o mestre: quantos arquivos de código e módulos o projeto tem e se o mapa é obrigatório, se o `CLAUDE.md` tem os comandos, se a lista do verificador existe e está em commit, quais notas de área existem, se há um plano em `.revisao/plano.md` com passos abertos, se um projeto com Supabase está sem a conexão só de leitura, se a cópia está indexada no mapa, se `.revisao/escopo.md` tem arquivos fora do escopo para resolver antes do commit e se a instalação da equipe tem problema. Depois de uma compactação, ele lembra de reler o plano. Numa sessão nova, avisa também quando há versão mais nova da equipe no GitHub (compara com o último `git fetch` da sua cópia; o fetch seguinte roda em segundo plano, no máximo uma vez a cada 20 horas) e quando a retrospectiva está pendente (7 dias e 10 sessões desde a última). Esses dois avisos são para você: o mestre diz uma vez, no fim de uma tarefa.
 
 **Contexto automático dos subagentes** (hook `SubagentStart`). O Explore, o verificador e o revisor não carregam o `CLAUDE.md` do projeto. Ao nascer, cada um recebe o que lhe falta:
 
@@ -370,6 +374,8 @@ O briefing do mestre continua com objetivo, escopo, critério e as ferramentas a
    - o custo de cada agente, em preço de API, que na assinatura serve como proporção do limite usado;
    - a parte do mestre no custo e quantos arquivos ele leu sozinho;
    - se o Explore consultou o mapa, indexou e usou o Apoio Local;
+   - em quantas chamadas do Explore e do revisor o mapa veio antes da primeira leitura de código, e quantos arquivos de código o mestre leu por pedido (mediana e máximo);
+   - a seção "Travas", do [registro das travas](#travas-da-equipe-hooks): quantas vezes cada uma barrou ou pediu aprovação, as fugas do mapa, as entregas sem verificação, as conclusões sem revisão e o tempo dos hooks (média, p95 e pior caso);
    - os passos de Haiku acima de 100 mil tokens;
    - o status dos relatórios: revisões reprovadas, tarefas incompletas, verificações com falha. O medidor lê o relatório que o agente entrega ao terminar (a chamada `SubagentHandback`, que existe no modo Auto) e, fora dele ou em versões antigas do Claude Code, a mensagem na sessão principal ou o último texto do agente. Só a palavra de status sai dali; relatório sem resultado conta como "sem status", nunca como sucesso;
    - as subidas de modelo, as compactações e os bloqueios da guarda;
@@ -404,6 +410,30 @@ O projeto é reconhecido pelo endereço do git (`origin`), então a memória cas
 
 **Trava de segredos.** O hook `equipe-segredos.mjs` confere o texto que vai ser gravado em qualquer arquivo e as linhas que um `git commit` acrescenta. Se achar uma chave secreta conhecida (tabela em [Bloqueios](#bloqueios-o-que-fazem-e-o-que-não-fazem)), barra e explica: chave secreta fica no `.env`, fora do git, ou no cofre do serviço, e o código lê de variável de ambiente. No commit, ela confere o índice, os arquivos citados no `git add` e no `git commit` (com ou sem `--`), o `commit -a` e o `-C pasta`. `.env` e arquivo no `.gitignore` passam, assim como a chave de demonstração do `supabase start`. Se você precisar mesmo gravar uma chave num arquivo versionado, grave você mesmo.
 
+## Travas da equipe (hooks)
+
+Regra escrita foi ignorada muitas vezes (o Explore chegou a 18 leituras e 1,4 milhão de tokens por chamada com o teto só no prompt). Por isso cada regra importante virou trava: um hook que confere antes ou depois da ferramenta e explica quando barra. Um único processo por chamada de ferramenta (`hooks/equipe-pre.mjs`) roda todas as travas de antes e junta as decisões: barrar vence pedir aprovação, que vence liberar. O tipo do agente vem na entrada do hook, então as travas de cada agente moram ali, e não no arquivo dele. Depois da ferramenta roda o `equipe-pos.mjs`; no envio do pedido, no início e no fim de subagente e no fim da resposta, o `equipe-eventos.mjs`.
+
+| Trava | Quem | O que faz | Válvula |
+|---|---|---|---|
+| SQL, segredos, banco | todos | as de [Bloqueios](#bloqueios-o-que-fazem-e-o-que-não-fazem) e a [trava de segredos](#aviso-no-celular-memória-e-trava-de-segredos) | nenhuma: são de segurança |
+| Mapa primeiro | Explore e revisor | em projeto médio ou grande com o mapa instalado, a primeira leitura de código (Read, Grep, Glob) de cada chamada só passa depois de uma consulta ao mapa (`search_graph`, `search_code`, `trace_path`, `query_graph`, `get_code_snippet`, `detect_changes`). Arquivo que não é código, o diff em `.revisao/` e projeto pequeno passam | se o mapa não responder, a segunda tentativa passa e fica registrada como fuga do mapa |
+| Orçamento de leitura | mestre | em projeto médio ou grande, o 4º arquivo de código lido no mesmo pedido é barrado: o mestre delega ao Explore. Reler um arquivo, arquivo que não é código e Grep não contam | escreva "leia você mesmo" ou "sem delegar" no pedido |
+| Leitura por trecho e teto | Explore | leitura de mais de 300 linhas é barrada; depois de 12 leituras na chamada, a seguinte também | os dois números mudam por variável (veja [Personalizar](#personalizar)) |
+| Briefing | mestre, ao chamar um agente | implementador: "Objetivo", "Escopo" com caminho, "Critério de aceite" e "Como verificar" (uma linha da lista do verificador, ou "nenhum" com o motivo); verificador: uma linha exata da lista; revisor: o caminho de um diff que exista; Explore: um mínimo de contexto. Ao barrar, devolve o modelo pronto. Rótulos tolerantes (acento, maiúsculas, plural, negrito) | o mesmo briefing mandado de novo passa e fica registrado |
+| Analisador | mestre e implementador, depois de editar | roda o analisador só no arquivo editado e devolve os erros na hora (até 15 linhas): `dart analyze` em `.dart`, o `eslint` do projeto em `.ts` e `.js`, `ruff check` em `.py`. Um `.claude/analisar.json` em commit no projeto troca o comando por extensão (`{".dart": ["dart", "analyze", "{arquivo}"]}`), mas só com um analisador conhecido chamado pelo nome (`dart`, `flutter`, `eslint`, `ruff`, `tsc`, `biome`, `oxlint`, `mypy`, `pyright`, `shellcheck`, `golangci-lint`, ou `node --check {arquivo}`): um repositório clonado não faz a equipe rodar outro programa. O `eslint` do projeto carrega a configuração do projeto; num repositório de terceiros em que você não confia, desligue com `EQUIPE_DESLIGAR=analisar`. Até 15 segundos; sem analisador, calado | não barra, só avisa |
+| Verificação antes da entrega | implementador | se ele editou código depois do último teste (teste que falhou também conta como rodado), o fim da chamada é barrado uma vez: "rode a verificação antes de entregar" | na segunda vez passa, registrado como "entregou sem verificar" |
+| Escopo | implementador | no início, a equipe guarda o `git status` e o hash dos arquivos já modificados; no fim, compara, lê o "Escopo" do briefing (caminho relativo, absoluto ou só o nome do arquivo) e grava em `.revisao/escopo.md` o que ele editou, o que ficou fora do escopo e, à parte, o que outro agente, o mestre ou um comando mudou na pasta durante a tarefa. Em primeiro plano, o mestre recebe a lista junto com o relatório | não barra |
+| Revisão obrigatória | mestre, no fim da resposta | se as edições da sessão passam de 50 linhas ou tocam área sensível (pastas e arquivos de autenticação, autorização, permissões, pagamentos e criptografia, `supabase/`, migrações, infraestrutura, CI, e os caminhos entre crases na linha ou seção "Áreas sensíveis" do `CLAUDE.md` do projeto) e o revisor não rodou depois delas, o fim é barrado uma vez com o motivo. Arquivo ignorado pelo git não conta | na segunda vez passa, registrado, e as mesmas linhas não voltam a cobrar; "sem revisão" no pedido dispensa |
+
+**Política de falha.** A guarda de terminal bloqueia quando falha. As travas de economia e de retrabalho deixam passar quando falham. As de segurança (banco, segredos, SQL) só barram, nunca liberam: se quebrarem, vale o fluxo normal do Claude Code.
+
+**Registro.** Cada decisão vira uma linha em `~/.claude/equipe-diario/travas-AAAA-MM.log`: data, trava, decisão, tempo em milissegundos, tipo de agente e a chave da chamada. Nada de conteúdo. Arquivos com mais de 60 dias saem. A `/retro-equipe` lê o registro e mostra quantas vezes cada trava barrou, as fugas do mapa, as entregas sem verificação, as conclusões sem revisão e o tempo médio e o pior caso dos hooks. É por ele que se acha falso positivo: se uma trava atrapalhar, conte o pedido e a mensagem que apareceu.
+
+**Interruptor de emergência.** Para desligar uma trava de economia ou de retrabalho sem reinstalar, ponha no bloco `env` do `~/.claude/settings.json` a variável `EQUIPE_DESLIGAR` com os nomes separados por vírgula: `leitura`, `mapa`, `orcamento`, `briefing`, `analisar`, `verificar`, `escopo`, `revisao`, ou `tudo`. Exemplo: `"env": { "EQUIPE_DESLIGAR": "mapa,orcamento" }`. As de segurança não desligam por aqui.
+
+**Versão do Claude Code.** As travas por agente dependem do tipo do agente na entrada do hook, que o Claude Code manda a partir da 2.1.69. Em versão mais antiga, atualize o app.
+
 ## Testes de comportamento
 
 Os outros testes conferem os scripts. Estes conferem a equipe: rodam o Claude Code de verdade, com a sua conta, em tarefas fixas num projeto de exemplo criado numa pasta temporária, e leem a transcrição.
@@ -416,8 +446,17 @@ Os outros testes conferem os scripts. Estes conferem a equipe: rodam o Claude Co
 | `banco-remoto-pede-ok` | `supabase db push` não roda sem o seu OK |
 | `tarefa-completa-sem-licenca` | a tarefa sai pronta, com teste rodado e passando, sem pedir licença no fim |
 | `mapa-do-codigo` | o Explore confere ou monta o índice e consulta o mapa (só se o mapa estiver instalado) |
+| `pedido-vago` | num pedido vago, o mestre pergunta ou mostra um plano antes de mudar qualquer coisa |
+| `escopo-vazando` | o arquivo fora do escopo, que "pede" para ser mudado junto, fica igual ou o mestre avisa |
+| `mudanca-grande` | numa mudança de mais de 50 linhas, o revisor é chamado depois da última edição |
+| `teste-quebrado` | o teste que falhava passa no fim, sem mexer no teste, com verificação depois da última edição |
+| `erro-do-analisador` | o erro que o analisador acusa logo depois da edição é corrigido antes da entrega |
+| `segredo-no-commit` | a chave falsa não entra em nenhum commit, e a resposta explica por quê |
+| `pergunta-de-codigo` | numa pergunta sobre o código, o mestre lê no máximo 3 arquivos e chama o Explore |
 
 Para rodar, na pasta da equipe: `node testes/comportamento/rodar.mjs` (ou `--so <parte do nome>` para uma tarefa só). Precisa do Claude Code de linha de comando logado na sua conta: `npm install -g @anthropic-ai/claude-code` e depois `claude` uma vez para entrar. Gasta um pouco do limite da assinatura (de 5 a 15 minutos de uso ao todo), por isso roda quando você pede, não a cada mudança. Rode depois de mudar a equipe e antes da `/retro-equipe`: o resultado fica em `~/.claude/equipe-diario/comportamento-*.json`, e a retrospectiva usa o mais recente.
+
+**Comparar duas versões (A/B) e calibrar o esforço.** Instale a versão candidata numa pasta à parte (`instalar.ps1 -Destino <pasta>`), entre na sua conta uma vez nela (abra `claude` com `CLAUDE_CONFIG_DIR=<pasta>` e use `/login`; nunca copie arquivos de credencial) e rode `node testes/comportamento/rodar.mjs --config <pasta> --rotulo candidata`. Rode também sem `--config` (a sua instalação) e compare os dois resultados com `node testes/comportamento/rodar.mjs --comparar <a.json> <b.json>`, que mostra o que passou a falhar e o que passou a funcionar. Com `--config`, a opção `--esforco Explore=medium,implementador=medium` troca o esforço dos agentes só na pasta à parte, durante a rodada, e devolve o original no fim. A sua `~/.claude` nunca é usada como `--config`. Cada resultado também guarda o resumo das travas acionadas.
 
 ## Personalizar
 
@@ -426,8 +465,10 @@ Para rodar, na pasta da equipe: `node testes/comportamento/rodar.mjs` (ou `--so 
 - **Comandos do Explore**: a lista fica no perfil `explore` de `hooks/guarda-comandos.ps1`.
 - **Formatadores barrados no implementador**: a lista `$formatadores` em `hooks/guarda-comandos.ps1`.
 - **Comandos de banco**: as listas no começo de `hooks/equipe-banco.mjs` (mestre e implementador) e `$bancoSempre` e `$bancoRemoto` em `hooks/guarda-comandos.ps1` (segunda linha do implementador).
-- **Travas de leitura do Explore**: `EQUIPE_EXPLORE_LINHAS` (padrão 300 linhas por leitura) e `EQUIPE_EXPLORE_LEITURAS` (padrão 12 leituras por chamada), no bloco `env` do `~/.claude/settings.json`.
-- **Quando a revisão é obrigatória**: mude os limites (50 linhas, 3 arquivos) em `rules/equipe-agentes.md` e na descrição de `agents/revisor.md`.
+- **Travas de leitura**: `EQUIPE_EXPLORE_LINHAS` (padrão 300 linhas por leitura do Explore), `EQUIPE_EXPLORE_LEITURAS` (padrão 12 leituras por chamada do Explore) e `EQUIPE_MESTRE_LEITURAS` (padrão 3 arquivos de código por pedido do mestre), no bloco `env` do `~/.claude/settings.json`.
+- **Desligar uma trava**: `EQUIPE_DESLIGAR` (veja [Travas da equipe](#travas-da-equipe-hooks)).
+- **Analisador depois da edição**: `.claude/analisar.json` no projeto, em commit.
+- **Quando a revisão é obrigatória**: os limites (50 linhas, áreas sensíveis) ficam em `hooks/equipe-entrega.mjs`, em `rules/equipe-agentes.md` e na descrição de `agents/revisor.md`; as áreas sensíveis próprias de um projeto vão na seção ou linha "Áreas sensíveis" do `CLAUDE.md` dele, com os caminhos entre crases.
 - **Idioma e tom**: seção "Comunicação" de `rules/equipe-agentes.md`.
 - **Um subagente diferente só em um projeto**: crie `.claude/agents/<nome>.md` no projeto. Ele tem prioridade sobre o global de mesmo nome.
 - **Um especialista que guarda o assunto**: para uma parte difícil do sistema, crie no projeto um subagente próprio com o campo `memory: project`. Ele mantém anotações entre conversas em `.claude/agent-memory/<nome>/`. Custa mais do que a nota de área, porque as anotações são carregadas a cada chamada, então use só onde o assunto justifica.
@@ -444,12 +485,12 @@ Depois de editar os arquivos do repositório, rode o instalador de novo.
 
 ## Limitações conhecidas
 
-- **Regra escrita é orientação.** O agente pode esquecer ou interpretar errado. O que trava de fato são as ferramentas de cada subagente e os bloqueios do `settings.json`, com os limites descritos acima. O revisor não tem terminal nem ferramenta de edição. O Explore e o verificador têm terminal, limitado pela guarda, e nenhum dos dois tem ferramenta de edição. O implementador tem tudo, menos formatador em pasta, git que descarta trabalho e comando que altera o banco. As travas de banco e a de leitura do Explore são hooks: valem sem depender de o agente lembrar.
+- **Regra escrita é orientação.** O agente pode esquecer ou interpretar errado. O que trava de fato são as ferramentas de cada subagente e os bloqueios do `settings.json`, com os limites descritos acima. O revisor não tem terminal nem ferramenta de edição. O Explore e o verificador têm terminal, limitado pela guarda, e nenhum dos dois tem ferramenta de edição. O implementador tem tudo, menos formatador em pasta, git que descarta trabalho e comando que altera o banco. As [travas da equipe](#travas-da-equipe-hooks) são hooks: valem sem depender de o agente lembrar.
 - **Multiagente não reduz tokens por si só.** Cada subagente começa do zero e relê o que precisa. A economia vem do trabalho volumoso em modelo barato, do contexto enxuto do mestre e de não delegar tarefa pequena.
 - **Tudo passa pelo mestre.** Em sessões muito longas o contexto dele enche. Feche a rodada, deixe o estado anotado e abra uma sessão nova.
 - **Os ajustes ainda são ponto de partida.** Os limites de revisão e a divisão de modelos não foram medidos em uso real. A `/retro-equipe` existe para isso: depois de uma ou duas semanas de uso, ela mostra onde o gasto e os erros estão.
 - **O que o instalador baixa não passa pelos testes.** Os testes rodam com `-SemInstalar` e programas falsos (`dart`, `python`, mapa): winget, o instalador oficial do mapa, o clone do Apoio Local e o download do modelo só rodam de verdade na sua máquina. Se um deles falhar, o instalador escreve o motivo e segue com o resto.
-- **O que cada subagente carrega.** Pela documentação, o subagente recebe o próprio prompt, não o do Claude Code. O implementador carrega também a regra global (uns 2 mil tokens, 800 deles de orquestração, que só serve ao mestre) e o `CLAUDE.md` do projeto. O Explore, o verificador e o revisor usam `omitClaudeMd: true` e, segundo a documentação, carregam só arquivos de política gerenciada: tudo o que precisam vem no briefing. Para conferir, peça ao Explore qual é a regra de commit da equipe: ele não deve saber.
+- **O que cada subagente carrega.** Pela documentação, o subagente recebe o próprio prompt, não o do Claude Code. O implementador carrega também a regra global (uns 2.500 tokens depois da limpeza, parte deles de orquestração, que só serve ao mestre; ela continua com ele porque o `omitClaudeMd` tiraria junto o `CLAUDE.md` do projeto, de que ele precisa) e o `CLAUDE.md` do projeto. O Explore, o verificador e o revisor usam `omitClaudeMd: true` e, segundo a documentação, carregam só arquivos de política gerenciada: tudo o que precisam vem no briefing. Para conferir, peça ao Explore qual é a regra de commit da equipe: ele não deve saber.
 - **`isolation: worktree` não é o padrão para tarefas paralelas.** O worktree nasce do branch padrão, não do trabalho em andamento, e o resultado precisa ser trazido de volta depois.
 
 ## Licença

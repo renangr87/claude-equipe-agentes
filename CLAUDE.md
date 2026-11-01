@@ -17,7 +17,7 @@ Só o que é deste projeto. As regras de trabalho da equipe são globais e já e
 
 - Testar a guarda: `powershell -ExecutionPolicy Bypass -File .\testes\testar-guarda.ps1`
 - Testar o instalador: `powershell -ExecutionPolicy Bypass -File .\testes\testar-instalador.ps1`
-- Testar os hooks e o medidor: `node --test testes/equipe-node.test.mjs`
+- Testar os hooks, as travas e o medidor: `node --test testes/equipe-node.test.mjs testes/travas.test.mjs testes/medidor-travas.test.mjs testes/diagnostico.test.mjs testes/comportamento.test.mjs`
 - Testes de comportamento (rodam o Claude Code de verdade e gastam um pouco da assinatura; só quando o usuário pedir): `node testes/comportamento/rodar.mjs`
 - Conferir as ferramentas do Dart: `powershell -ExecutionPolicy Bypass -File .\testes\conferir-dart.ps1`
 - Os mesmos testes no PowerShell 7: troque `powershell -ExecutionPolicy Bypass -File` por `pwsh -File`.

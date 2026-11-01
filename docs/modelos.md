@@ -44,6 +44,12 @@ Sobre o esforço, a Anthropic afirma que o Opus 5.5 em esforço médio supera o 
 | revisor | Sonnet 5.5, alto; Opus 5.5 em área sensível | o Opus leva a pequena vantagem justamente em julgamento. |
 | — | Fable 5.1 | não usar: custa 2,5 vezes o Opus e fica abaixo dele em todos os testes acima. |
 
+## Mestre em opusplan e esforço calibrado
+
+- **opusplan** é um modo oficial do Claude Code: Opus no modo de planejamento e Sonnet na execução. Na execução, o preço por token do mestre cai pela metade. Só rende se as tarefas médias e grandes começarem no modo de planejamento (a regra do plano diz isso). O instalador aceita `-ModeloMestre opusplan` (ou `opus`, `sonnet`) e, sem a opção, não mexe no modelo. Decida depois de comparar: se as revisões reprovadas ou o retrabalho subirem na `/retro-equipe`, volte para `opus`.
+- **Esforço dos subagentes**: o Explore e o implementador estão em alto, e o padrão dos modelos 5.5 é médio. Fica o menor esforço que mantém 100% das checagens dos testes de comportamento. Para medir sem mexer na sua instalação, instale a equipe numa pasta à parte (`-Destino`) e rode `node testes/comportamento/rodar.mjs --config <pasta> --esforco Explore=medium,implementador=medium`, depois compare com a rodada em alto (`--comparar`). O indicador é o total de tokens de saída (raciocínio) por chamada, que a `/retro-equipe` mostra.
+- **Cache**: a regra global e os prompts dos agentes não mudam de uma sessão para outra (nada de data ou número do dia neles), para o cache cobrar menos por eles; o que muda (boletim, contexto do projeto) vai depois, por hook. A parte de leitura em cache sobre a entrada aparece nos tokens da medição.
+
 ## O que estes números não dizem
 
 - **São médias de testes públicos**, com os ajustes que a Anthropic escolheu. Não mostram como cada modelo se sai no seu código. Meça numa tarefa real antes de mudar um papel de modelo.
