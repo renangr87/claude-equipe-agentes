@@ -45,15 +45,15 @@ Princípios adaptados de karpathy-guidelines (multica-ai, MIT). Onde há trava (
 
 **Ordem padrão.** Entender → explorar (se preciso) → planejar em passos verificáveis → implementar → verificar → revisar (se exigido) → conferir os critérios → commit local → responder.
 
-**Plano (tarefa média ou maior).** Se a tarefa toca mais de 3 arquivos, o banco ou área sensível, comece no modo de planejamento e grave `.revisao/plano.md` antes de implementar: objetivo, dúvidas resolvidas, as opções quando houver escolha real (no máximo 2, com a recomendada) e os passos, cada um com arquivos e critério de aceite. Mostre o plano; espere o OK só com escolha real, escrita em banco, área sensível ou ação irreversível (ou quando o `CLAUDE.md` do projeto mandar perguntar). Marque cada passo concluído e releia o plano depois de uma compactação.
+**Plano (tarefa média ou maior).** Se a tarefa toca mais de 3 arquivos, o banco ou área sensível, comece no modo de planejamento e grave `.revisao/plano.md` antes de implementar: objetivo, dúvidas resolvidas, as opções quando houver escolha real (no máximo 2, com a recomendada), os passos, cada um com arquivos e critério de aceite, e a seção "Já tentado" (o que não funcionou e por quê, para ninguém repetir). Mostre o plano; espere o OK só com escolha real, escrita em banco, área sensível ou ação irreversível (ou quando o `CLAUDE.md` do projeto mandar perguntar). Marque cada passo concluído e releia o plano depois de uma compactação.
 
-**O que pede confirmação fica para o fim.** Push, migração, deploy e descarte de arquivo entram no fim da tarefa: faça antes todo o resto e peça tudo de uma vez. Para consultar o banco, use a conexão só de leitura (`supabase-leitura`), que não pede aprovação; um hook barra o `select` pela conexão que escreve. Se ela faltar, faça o resto e peça ao usuário, uma vez no fim, para configurá-la.
+**Portão pelo custo de desfazer, não pela confiança.** Volta com um clique (texto, documentação, testes, mudança pequena de código): entra com o teste verde. Volta com limpeza (mais de 50 linhas de código, schema, dependências, área sensível): teste verde e revisor. Não volta (migração, apagar dados, produção, dinheiro, push): só o usuário aprova. O pedido de aprovação fica para o fim da tarefa: faça antes todo o resto e peça tudo de uma vez. Para consultar o banco, use a conexão só de leitura (`supabase-leitura`), que não pede aprovação; um hook barra o `select` pela conexão que escreve. Se ela faltar, faça o resto e peça ao usuário, uma vez no fim, para configurá-la.
 
 **Paralelo.** Só para tarefas independentes, com escopos separados: nunca dois agentes no mesmo arquivo. O worktree (`isolation: worktree`) não vê o trabalho não commitado. Tarefas pequenas parecidas vão juntas para um só implementador.
 
 **Continuidade.** Se o trabalho é continuação, retome o agente que já tem o contexto.
 
-**Escalonamento.** Explore inconsistente: repita com `model: sonnet`. Depois de 2 falhas no mesmo bug ou critério (somando todos os agentes), a 3ª tentativa é replanejada ou com `model: opus`; se ela falhar, pare e discuta com o usuário. Área sensível ou migração: revisor com `model: opus`. Antes de subir o modelo, veja se o briefing estava claro.
+**Escalonamento.** Explore inconsistente: repita com `model: sonnet`. Depois de 2 falhas no mesmo bug ou critério (somando todos os agentes), a 3ª tentativa é replanejada (com "Já tentado" no briefing) ou com `model: opus`; se ela falhar, pare e discuta com o usuário. Trava: quando a mesma falha do verificador volta depois de duas tentativas, a tentativa igual é barrada uma vez. Área sensível ou migração: revisor com `model: opus`. Antes de subir o modelo, veja se o briefing estava claro.
 
 **Contexto enxuto.** Arquivo grande e log: peça resumo com caminho e linha. No briefing, aponte caminhos em vez de colar arquivos. Explore e verificador: uma pergunta por chamada.
 
@@ -74,6 +74,8 @@ Escopo: <arquivos ou pastas que pode tocar>; fora do escopo: <o que não pode>
 Critério de aceite: <teste, comando ou comportamento verificável>
 Como verificar: <linha de .claude/verificador-comandos.txt, ou "nenhum: motivo">
 ```
+
+Correção (algo voltou reprovado): devolva só a parte que falhou, com `Falhou:` (teste ou achado, `arquivo:linha`), `Esperado:`, `Apareceu:`, o escopo só daquela parte e `Já tentado:`; o que passou não se mexe.
 
 Verificador: a linha exata da lista. Revisor: o caminho do diff e os arquivos novos. Explore: a pergunta, por onde começar e as ferramentas a usar primeiro (mapa; apoio local). Se o relatório disser que o mapa não foi usado num projeto que o tem, chame de novo pedindo para indexar e usar.
 

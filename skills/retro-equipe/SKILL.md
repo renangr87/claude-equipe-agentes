@@ -49,6 +49,8 @@ Compare os números com a tabela abaixo. Os limites são pontos de partida, não
 | Hook lento: pior caso acima de 300 ms em `pre`, `pos` ou `eventos` | trava que roda `git` ou lê arquivo grande a cada ferramenta | medir qual trava pesa (o tempo de cada uma está no registro); cache ou saída rápida antes da parte cara |
 | Entregas sem verificação | o implementador editou código depois do último teste e insistiu em entregar | frase no prompt do implementador sobre rodar a verificação no fim; conferir a lista de comandos do verificador na nota de área |
 | Mudança grande concluída sem revisão | o mestre fechou a tarefa (mais de 50 linhas ou área sensível) sem chamar o revisor, mesmo avisado | reforçar a regra da revisão no fim da tarefa; conferir se a trava `revisao` não está em `EQUIPE_DESLIGAR` |
+| Correções de bug com teste vermelho antes da correção abaixo de 80% | o implementador corrige antes de reproduzir o bug, e o teste "que passa" pode não provar nada | frase no prompt do implementador; se continuar baixo, trava que exige o teste vermelho antes da primeira edição de código numa correção |
+| A mesma falha voltou (convergência barrou ou avisou várias vezes) | tentativas iguais: falta algo que o agente não vê, ou a tarefa está mal formulada | briefing de correção com "Já tentado" e o esperado e o que apareceu; replanejar mais cedo; nota de área com a armadilha |
 
 Se uma proposta da retrospectiva anterior foi aplicada e o indicador dela não mudou, diga isso e proponha desfazer ou trocar.
 
@@ -60,6 +62,13 @@ No máximo 5 propostas, das que mais economizam ou mais evitam erro. Para cada u
 - **Mudança**: arquivo e o que muda, em uma ou duas linhas.
 - **Como verificar**: o teste novo ou alterado e o indicador que deve mudar na próxima retrospectiva.
 - **Custo e risco**, em uma linha.
+- **Camada**: onde a lição entra, que é onde ela para de se repetir:
+  - **ferramenta** (o agente não tinha como ver ou fazer: uma ferramenta, um acesso só de leitura, um comando liberado);
+  - **memória** (repetiu o que já tinha dado errado: "Já tentado" no plano, nota de área, linha de "nunca" na nota);
+  - **checagem** (deu "pronto" sem prova: teste exigido, trava de verificação, item no checklist do revisor);
+  - **forma do trabalho** (a ordem, a divisão ou o paralelo estavam errados: regra de divisão no briefing, um agente a mais ou a menos);
+  - **portão** (passou o que não devia, ou parou o que podia seguir: a faixa pelo custo de desfazer, quem aprova).
+  Lição na camada errada vira conselho, e conselho é ignorado: "tome cuidado com X" no prompt é a camada errada quando cabe uma trava ou um teste.
 
 Regras:
 
