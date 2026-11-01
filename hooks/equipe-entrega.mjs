@@ -322,6 +322,7 @@ function estadoDaRevisao(entrada) {
     porRaiz.get(raiz).push(rel);
   }
   const agora = {};
+  const conteudo = {};
   const arquivos = [];
   for (const [raiz, rels] of porRaiz) {
     // Faixa pelo custo de desfazer: texto, documentação e testes voltam com um clique e não
@@ -330,19 +331,25 @@ function estadoDaRevisao(entrada) {
     const areasRaiz = areasDoProjeto(raiz);
     const contam = rels.filter((r) => ehSensivel(r, areasRaiz) || ((ehCodigo(r) || CONTA_COMO_CODIGO.test(r)) && !ARQUIVO_DE_TESTE.test(r)));
     const linhas = linhasPorArquivo(raiz, typeof bases[raiz] === 'string' ? bases[raiz] : 'HEAD', contam);
-    for (const [rel, n] of Object.entries(linhas)) {
-      agora[`${raiz}|${rel}`] = n;
-      arquivos.push({ chave: `${raiz}|${rel}`, rel, sensivel: ehSensivel(rel, areasRaiz) });
+    // O conteúdo de cada arquivo (hash do git): um commit não muda o conteúdo, então o que
+    // foi revisado e só commitado depois não conta como mudança nova.
+    const h = hashes(raiz, [...new Set(contam)]);
+    for (const rel of new Set(contam)) {
+      const chave = `${raiz}|${rel}`;
+      // Sem hash (git lento ou com erro), fica de fora: a conta volta a ser por linhas.
+      if (h[rel]) conteudo[chave] = h[rel];
+      if (linhas[rel]) agora[chave] = linhas[rel];
+      arquivos.push({ chave, rel, sensivel: ehSensivel(rel, areasRaiz) });
     }
   }
-  return { sessao, agora, arquivos };
+  return { sessao, agora, conteudo, arquivos };
 }
 
 // O revisor terminou: guarda as linhas de agora, para medir o que mudou depois dele.
 export function anotarRevisao(entrada) {
   const e = estadoDaRevisao(entrada);
   if (!e) return false;
-  gravarEstado(e.sessao, 'revisado', { em: Date.now(), linhas: e.agora });
+  gravarEstado(e.sessao, 'revisado', { em: Date.now(), linhas: e.agora, conteudo: e.conteudo });
   return true;
 }
 
@@ -351,20 +358,40 @@ export function revisaoNoFim(entrada) {
   if (desligada('revisao') || tipoDoAgente(entrada) !== 'mestre') return null;
   const e = estadoDaRevisao(entrada);
   if (!e) return null;
-  const antes = (lerEstado(e.sessao, 'revisado') || {}).linhas || {};
+  const revisado = lerEstado(e.sessao, 'revisado') || {};
+  const antes = revisado.linhas || {};
+  const conteudoAntes = revisado.conteudo || null;
   let linhas = 0;
   const sensiveis = [];
   for (const a of e.arquivos) {
+    if (conteudoAntes) {
+      const hAntes = conteudoAntes[a.chave];
+      const hAgora = e.conteudo[a.chave];
+      // Conteúdo igual ao da revisão (talvez só commitado): nada novo neste arquivo.
+      if (hAntes && hAgora && hAntes === hAgora) continue;
+      // Sem um dos dois hashes (arquivo apagado, git com erro): conta por linhas, como antes.
+      if (!hAntes || !hAgora) {
+        const d = Math.abs((e.agora[a.chave] || 0) - (antes[a.chave] || 0)) || (hAntes || hAgora ? 1 : 0);
+        if (!d) continue;
+        linhas += d;
+        if (a.sensivel) sensiveis.push(a.rel);
+        continue;
+      }
+      // Mudou depois da revisão: conta a diferença de linhas (pelo menos uma).
+      const d = Math.max(1, Math.abs((e.agora[a.chave] || 0) - (antes[a.chave] || 0)));
+      linhas += d;
+      if (a.sensivel) sensiveis.push(a.rel);
+      continue;
+    }
     const d = Math.abs((e.agora[a.chave] || 0) - (antes[a.chave] || 0));
     if (!d) continue;
     linhas += d;
     if (a.sensivel) sensiveis.push(a.rel);
   }
-  for (const k of Object.keys(antes)) if (!(k in e.agora)) linhas += antes[k] || 0;
   // Dispensada ou já cobrada nesta resposta: o que está aí conta como visto, e a trava não
   // volta nas respostas seguintes pelas mesmas linhas.
   const dispensar = (registro) => {
-    gravarEstado(e.sessao, 'revisado', { em: Date.now(), linhas: e.agora, dispensada: true });
+    gravarEstado(e.sessao, 'revisado', { em: Date.now(), linhas: e.agora, conteudo: e.conteudo, dispensada: true });
     return registro ? { bloquear: false, registro } : null;
   };
   const pedido = lerEstado(chaveDaChamada(entrada), 'pedido');

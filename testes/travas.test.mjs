@@ -635,3 +635,40 @@ test('revisão: teste volta com um clique; schema e tela contam', () => {
   assert.equal(caso('t2', 'prisma/schema.prisma').decision, 'block');
   assert.equal(caso('t3', 'web/index.html').decision, 'block');
 });
+
+test('revisão: commit depois da revisão não conta como mudança nova; edição depois, sim', () => {
+  const { env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const sessao = 'rc';
+  const arq = path.join(raiz, 'supabase', 'migrations', '20260101_nova.sql');
+  escrever(arq, 'create table t (id int);\n'.repeat(55));
+  rodar(POS, { session_id: sessao, cwd: raiz, tool_name: 'Write', tool_input: { file_path: arq } }, env);
+  const fim = () => rodar(EVENTOS, { hook_event_name: 'Stop', session_id: sessao, cwd: raiz }, env);
+  assert.equal(fim().decision, 'block');
+  rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: sessao, agent_id: 'r1', agent_type: 'revisor', cwd: raiz }, env);
+  assert.equal(fim(), null);
+  git(raiz, 'add', '--', 'supabase/migrations/20260101_nova.sql');
+  git(raiz, 'commit', '-q', '-m', 'migração revisada');
+  assert.equal(fim(), null, 'só o commit: nada novo');
+  fs.appendFileSync(arq, 'alter table t add column x int;\n');
+  rodar(POS, { session_id: sessao, cwd: raiz, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+  assert.match(fim().reason, /área sensível: supabase\/migrations\/20260101_nova\.sql/);
+});
+
+test('briefing do revisor: sessão numa pasta fora do repositório acha o diff no repositório editado', () => {
+  const { env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const solta = tmp('sessao-solta');
+  const sessao = 'bs';
+  // Como numa sessão de verdade: a pasta do projeto da sessão é a pasta solta.
+  const revisor = (prompt) => rodar(PRE, { session_id: sessao, cwd: solta, tool_name: 'Agent', tool_input: { subagent_type: 'revisor', prompt } }, { ...env, CLAUDE_PROJECT_DIR: solta });
+  // Sem repositório e sem edições na sessão: não dá para conferir, então não barra.
+  assert.equal(revisor('Diff: .revisao/diff.patch. Objetivo: x.'), null);
+  // A sessão editou o repositório: o diff relativo é procurado lá.
+  const arq = path.join(raiz, 'lib', 'a1.dart');
+  fs.appendFileSync(arq, '// x\n');
+  rodar(POS, { session_id: sessao, cwd: solta, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+  escrever(path.join(raiz, '.revisao', 'diff.patch'), 'diff\n');
+  assert.equal(revisor('Diff: .revisao/diff.patch. Objetivo: y.'), null);
+  assert.match(motivo(revisor('Diff: .revisao/outro.patch. Objetivo: z.')), /não foi encontrado/);
+});

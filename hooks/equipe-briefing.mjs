@@ -12,7 +12,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { anotacoes, anotar, chaveDaChamada, desligada, fatosRapidos, normalizar, tipoDoAgente } from './equipe-comum.mjs';
+import { anotacoes, anotar, chaveDaChamada, desligada, fatosRapidos, git, lerEstado, normalizar, tipoDoAgente } from './equipe-comum.mjs';
 
 const MIN_EXPLORE = 60;
 
@@ -85,7 +85,7 @@ function modelo(tipo, comandos) {
 }
 
 // O que falta no briefing deste tipo de agente.
-export function faltas(tipo, texto, { comandos = null, cwd = process.cwd(), raiz = null } = {}) {
+export function faltas(tipo, texto, { comandos = null, cwd = process.cwd(), raiz = null, outras = [] } = {}) {
   const f = [];
   if (tipo === 'implementador') {
     const s = secoes(texto);
@@ -103,10 +103,14 @@ export function faltas(tipo, texto, { comandos = null, cwd = process.cwd(), raiz
     const diffs = caminhos(texto).filter((c) => /\.(patch|diff)$/i.test(c));
     if (!diffs.length) f.push('o caminho do diff (normalmente .revisao/diff.patch)');
     else {
-      const existe = diffs.some((d) => [cwd, raiz].filter(Boolean).some((base) => {
+      // Procura na pasta da sessão, na raiz do repositório e nos repositórios que a sessão
+      // editou (a sessão pode ter começado numa pasta temporária, com o projeto em outra).
+      const existe = diffs.some((d) => [cwd, raiz, ...outras].filter(Boolean).some((base) => {
         try { return fs.statSync(path.resolve(base, d)).isFile(); } catch { return false; }
       }));
-      if (!existe) f.push(`um diff que exista: ${diffs[0]} não foi encontrado (grave com git diff HEAD --output=.revisao/diff.patch)`);
+      // Fora de um repositório e sem saber qual é o do projeto: não dá para conferir.
+      const semRepositorio = !raiz && !outras.length;
+      if (!existe && !semRepositorio) f.push(`um diff que exista: ${diffs[0]} não foi encontrado (grave com git diff HEAD --output=.revisao/diff.patch)`);
     }
   } else if (tipo === 'Explore') {
     if (espaco(texto).length < MIN_EXPLORE) f.push('contexto: o que achar, por onde começar e para que serve (o Explore não vê a conversa)');
@@ -123,7 +127,12 @@ export function decidirBriefing(entrada) {
   const texto = String(ti.prompt || '');
   const cwd = entrada.cwd || process.cwd();
   const fatos = tipo === 'Explore' ? null : fatosRapidos(cwd);
-  const falta = faltas(tipo, texto, { comandos: fatos ? fatos.comandos : null, cwd, raiz: fatos ? fatos.raiz : null });
+  const sessao = String(entrada.session_id || '').replace(/[^A-Za-z0-9_-]/g, '');
+  const editados = sessao ? Object.keys(lerEstado(`${sessao}-sessao`, 'base') || {}) : [];
+  // A pasta do projeto da sessão só vale se for um repositório (pode ser uma pasta temporária).
+  const proj = process.env.CLAUDE_PROJECT_DIR;
+  const outras = [...editados, ...(proj && git(['rev-parse', '--show-toplevel'], proj) ? [proj] : [])];
+  const falta = faltas(tipo, texto, { comandos: fatos ? fatos.comandos : null, cwd, raiz: fatos ? fatos.raiz : null, outras });
   if (!falta.length) return null;
   const chave = chaveDaChamada(entrada);
   const marca = crypto.createHash('sha1').update(`${tipo}\n${texto}`).digest('hex').slice(0, 16);

@@ -103,6 +103,57 @@ Conferir 'outro repositorio: lista dele nao vale' 2 (Rodar 'verificador' (JsonEm
 Conferir 'outro repositorio: vale a do projeto' 0 (Rodar 'verificador' (JsonEm $outro 'flutter test'))
 Remove-Item -LiteralPath $outro -Recurse -Force
 
+# Sessao aberta fora do repositorio (pasta temporaria sem git e sem lista): vale a lista do
+# repositorio em que o comando entra com "cd <pasta absoluta> &&", se estiver em commit.
+$solta = Join-Path ([System.IO.Path]::GetTempPath()) ("guarda-solta-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force -Path $solta | Out-Null
+# A sessao "s1" editou o projeto: os hooks da equipe anotam a raiz do repositorio (como o git
+# a escreve) em <pasta do Claude>\equipe-diario\estado\s1-sessao.base.
+$claudeFalso = Join-Path ([System.IO.Path]::GetTempPath()) ("guarda-claude-" + [guid]::NewGuid().ToString('N'))
+$pastaEstado = Join-Path (Join-Path $claudeFalso 'equipe-diario') 'estado'
+New-Item -ItemType Directory -Force -Path $pastaEstado | Out-Null
+$raizGit = ([string](& git -C $proj rev-parse --show-toplevel 2>$null)).Trim()
+[System.IO.File]::WriteAllText((Join-Path $pastaEstado 's1-sessao.base'), (@{ $raizGit = 'abc' } | ConvertTo-Json -Compress), $utf8)
+function RodarSolta([string]$comando, [string]$ferramenta = 'Bash', [string]$sessao = 's1') {
+    $cmd = "try { & '$guarda' -Perfil verificador; exit `$LASTEXITCODE } catch { exit 2 }"
+    $env:CLAUDE_PROJECT_DIR = $solta
+    $env:EQUIPE_PASTA_CLAUDE = $claudeFalso
+    $json = (@{ tool_name = $ferramenta; tool_input = @{ command = $comando }; cwd = $solta; session_id = $sessao } | ConvertTo-Json -Compress)
+    $saida = $json | & $exe -NoProfile -ExecutionPolicy Bypass -Command $cmd 2>&1
+    $codigo = $LASTEXITCODE
+    $script:mensagem = (($saida | ForEach-Object { "$_" }) -join ' ').Trim()
+    $env:CLAUDE_PROJECT_DIR = $proj
+    Remove-Item Env:\EQUIPE_PASTA_CLAUDE -ErrorAction SilentlyContinue
+    return $codigo
+}
+$semLista = Join-Path ([System.IO.Path]::GetTempPath()) ("guarda-semlista-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force -Path $semLista | Out-Null
+& git -C $semLista init -q 2>$null
+Conferir 'fora do repositorio: cd na raiz e comando da lista' 0 (RodarSolta "cd `"$proj`" && flutter test")
+Conferir 'fora do repositorio: cd na raiz com argumentos' 0 (RodarSolta "cd `"$proj`" && flutter test test/x_test.dart")
+Conferir 'fora do repositorio: cd numa subpasta, como a linha da lista' 0 (RodarSolta "cd $(Join-Path $proj 'app') && flutter test")
+Conferir 'fora do repositorio: PowerShell com ;' 0 (RodarSolta "cd `"$proj`"; flutter analyze" 'PowerShell')
+Conferir 'fora do repositorio: comando fora da lista' 2 (RodarSolta "cd `"$proj`" && rm -rf build")
+Conferir 'fora do repositorio: comando composto depois do cd' 2 (RodarSolta "cd `"$proj`" && flutter test && rm -rf build")
+Conferir 'fora do repositorio: cd relativo nao vale' 2 (RodarSolta 'cd app && flutter test')
+Conferir 'fora do repositorio: repositorio sem lista' 2 (RodarSolta "cd `"$semLista`" && flutter test")
+Conferir 'fora do repositorio: sem cd' 2 (RodarSolta 'flutter test')
+Conferir 'fora do repositorio: repositorio que a sessao nao editou' 2 (RodarSolta "cd `"$proj`" && flutter test" 'Bash' 'outra')
+Conferir 'fora do repositorio: ; so vale no PowerShell' 2 (RodarSolta "cd `"$proj`"; flutter analyze")
+$estranho = Join-Path ([System.IO.Path]::GetTempPath()) ('guarda-r$(id)-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force -Path $estranho | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $estranho '.claude') | Out-Null
+[System.IO.File]::WriteAllText((Join-Path $estranho '.claude\verificador-comandos.txt'), "flutter test`n", $utf8)
+& git -C $estranho init -q 2>$null
+& git -C $estranho -c user.email=t@t -c user.name=t add .claude/verificador-comandos.txt 2>$null
+& git -C $estranho -c user.email=t@t -c user.name=t commit -q -m lista 2>$null
+$raizEstranho = ([string](& git -C $estranho rev-parse --show-toplevel 2>$null)).Trim()
+[System.IO.File]::WriteAllText((Join-Path $pastaEstado 's1-sessao.base'), (@{ $raizGit = 'abc'; $raizEstranho = 'def' } | ConvertTo-Json -Compress), $utf8)
+Conferir 'fora do repositorio: caminho com $( ) nao vale' 2 (RodarSolta "cd `"$estranho`" && flutter test")
+Remove-Item -LiteralPath $estranho -Recurse -Force
+Conferir 'com lista no projeto: cd noutro repositorio nao troca a lista' 2 (Rodar 'verificador' (Json 'Bash' "cd `"$semLista`" && flutter test"))
+Remove-Item -LiteralPath $solta, $semLista, $claudeFalso -Recurse -Force
+
 Remove-Item -LiteralPath $lista
 Conferir 'lista do verificador ausente' 2 (Rodar 'verificador' (Json 'Bash' 'flutter test'))
 

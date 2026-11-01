@@ -363,6 +363,59 @@ try {
             if (-not $pasta) { $pasta = $cwd }
             $arquivoLista = Join-Path (Join-Path $pasta '.claude') 'verificador-comandos.txt'
             if (-not (Test-Path -LiteralPath $arquivoLista)) {
+                # Sessao aberta fora do repositorio (numa pasta temporaria, com o projeto em
+                # outra pasta) e sem lista propria: vale a lista do repositorio em que o comando
+                # entra com "cd <pasta absoluta> && ..." (";" so no PowerShell), se ela estiver
+                # no git e se a propria sessao editou esse repositorio (os hooks da equipe anotam
+                # isso). Repositorio qualquer do disco nao vale. O resto do comando e conferido
+                # contra a lista como sempre.
+                $separador = if ($ferramenta -eq 'PowerShell') { '(&&|;)' } else { '(&&)' }
+                $m = [regex]::Match($comando, '^cd ("([^"]+)"|''([^'']+)''|([^\s"'';&|]+)) ?' + $separador + ' ?(.+)$')
+                if ($m.Success) {
+                    $dirCd = @($m.Groups[2].Value, $m.Groups[3].Value, $m.Groups[4].Value) | Where-Object { $_ } | Select-Object -First 1
+                    $raizCd = $null
+                    # Caminho com $, crase, parenteses ou outro operador seria interpretado pelo shell.
+                    if ($dirCd -and $dirCd -notmatch $operadores -and [System.IO.Path]::IsPathRooted($dirCd) -and (Test-Path -LiteralPath $dirCd -PathType Container)) {
+                        try {
+                            $raizCd = & git -C $dirCd rev-parse --show-toplevel 2>$null
+                            if ($LASTEXITCODE -ne 0) { $raizCd = $null }
+                            $prefixoCd = & git -C $dirCd rev-parse --show-prefix 2>$null
+                            if ($LASTEXITCODE -ne 0) { $raizCd = $null }
+                            if ($raizCd) {
+                                $raizCd = ([string]$raizCd).Trim()
+                                & git -C $raizCd ls-files --error-unmatch -- .claude/verificador-comandos.txt 2>$null | Out-Null
+                                if ($LASTEXITCODE -ne 0) { $raizCd = $null }
+                            }
+                            if ($raizCd) {
+                                # Repositorios que esta sessao editou: <pasta do Claude>\equipe-diario\estado\<sessao>-sessao.base
+                                $pastaClaude = if ($env:EQUIPE_PASTA_CLAUDE) { $env:EQUIPE_PASTA_CLAUDE } else { Split-Path -Parent $PSScriptRoot }
+                                $sessao = ([string]$entrada.session_id) -replace '[^A-Za-z0-9_-]', ''
+                                $editados = @()
+                                if ($sessao) {
+                                    $arqBase = Join-Path (Join-Path (Join-Path $pastaClaude 'equipe-diario') 'estado') "$sessao-sessao.base"
+                                    if (Test-Path -LiteralPath $arqBase) {
+                                        $base = [System.IO.File]::ReadAllText($arqBase) | ConvertFrom-Json
+                                        if ($base) { $editados = @($base.PSObject.Properties | ForEach-Object { ([string]$_.Name).Replace('\', '/').TrimEnd('/') }) }
+                                    }
+                                }
+                                $alvo = $raizCd.Replace('\', '/').TrimEnd('/')
+                                if (-not ($editados | Where-Object { $_ -ieq $alvo })) { $raizCd = $null }
+                            }
+                        } catch { $raizCd = $null }
+                    }
+                    if ($raizCd) {
+                        $pasta = $raizCd
+                        $arquivoLista = Join-Path (Join-Path $pasta '.claude') 'verificador-comandos.txt'
+                        $resto = $m.Groups[6].Value.Trim()
+                        $relCd = ([string]$prefixoCd).Trim().TrimEnd('/')
+                        # Numa subpasta, compara como as linhas "cd app && ..." da lista.
+                        if (-not $relCd) { $comando = $resto }
+                        elseif ($m.Groups[5].Value -eq '&&') { $comando = "cd $relCd && $resto" }
+                        else { $comando = "cd $relCd; $resto" }
+                    }
+                }
+            }
+            if (-not (Test-Path -LiteralPath $arquivoLista)) {
                 Bloquear "nao existe $arquivoLista. Reporte ao mestre: a lista de comandos do projeto precisa ser criada."
             }
             # A lista so vale depois de entrar em commit: assim uma mudanca feita por
