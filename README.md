@@ -434,6 +434,10 @@ Regra escrita foi ignorada muitas vezes (o Explore chegou a 18 leituras e 1,4 mi
 
 **Interruptor de emergência.** Para desligar uma trava de economia ou de retrabalho sem reinstalar, ponha no bloco `env` do `~/.claude/settings.json` a variável `EQUIPE_DESLIGAR` com os nomes separados por vírgula: `leitura`, `mapa`, `orcamento`, `briefing`, `convergencia`, `analisar`, `verificar`, `escopo`, `revisao`, ou `tudo`. Exemplo: `"env": { "EQUIPE_DESLIGAR": "mapa,orcamento" }`. As de segurança não desligam por aqui.
 
+**Só num projeto.** Um projeto com agentes e fluxo próprios (o estúdio do canal, por exemplo) pode desligar travas só para ele, num arquivo `.claude/equipe.json` na pasta do projeto: `{ "desligar": ["orcamento", "mapa"] }`. Os outros projetos continuam com todas. As de segurança também não desligam por ali. E a revisão obrigatória aceita o revisor próprio do projeto: qualquer agente com "revis" ou "review" no nome conta como revisão (`revisor-visual`, `code-reviewer`, os revisores de um plugin).
+
+**Elas estão rodando?** O diagnóstico (no fim do instalador) e o boletim de início conferem o registro dos últimos 3 dias e avisam em dois casos: houve sessões, mas nenhum hook registrou nada (os hooks não estão rodando); ou houve fim de subagente, mas nenhum veio com o tipo do agente (o Claude Code não manda o tipo, e as travas de cada agente ficam sem saber quem chamou: atualize o app).
+
 **Versão do Claude Code.** As travas por agente dependem do tipo do agente na entrada do hook, que o Claude Code manda a partir da 2.1.69. Em versão mais antiga, atualize o app.
 
 ## Testes de comportamento

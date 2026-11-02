@@ -297,3 +297,20 @@ test('boletim: instalação com problema vira uma linha, só no início de sess�
   assert.ok(linhas[0].endsWith(`rode node ${barras(pasta)}/hooks/equipe-diagnostico.mjs`), linhas[0]);
   assert.doesNotMatch(boletim({ cwd: raiz, source: 'compact' }, { EQUIPE_PASTA_CLAUDE: pasta }), /com problema/);
 });
+
+test('diagnóstico: as travas estão rodando? registro vazio com sessões, e sem o tipo do agente', () => {
+  const pasta = instalacao();
+  // Sessões recentes e nenhum registro: os hooks podem não estar rodando.
+  for (const n of ['a', 'b', 'c']) escrever(path.join(pasta, 'projects', '-p', `${n}.jsonl`), '{}\n');
+  assert.match(resumoRapido(pasta), /hooks da equipe não registraram nada/);
+  // Registro com fins de subagente, todos sem o tipo: o Claude Code não manda o tipo.
+  const agora = new Date().toISOString();
+  const reg = (tipo) => [agora, 'eventos', 'SubagentStop', '20', tipo, 's-x'].join('\t');
+  const arq = path.join(pasta, 'equipe-diario', `travas-${agora.slice(0, 7)}.log`);
+  escrever(arq, [reg('mestre'), reg('mestre'), reg('mestre'), [agora, 'pre', 'passou', '30', 'mestre', 's-mestre'].join('\t')].join('\n') + '\n');
+  assert.match(resumoRapido(pasta), /não está mandando aos hooks o tipo do agente/);
+  // Com o tipo: tudo certo.
+  escrever(arq, [reg('Explore'), reg('implementador'), reg('mestre')].join('\n') + '\n');
+  assert.equal(resumoRapido(pasta), '');
+  assert.match(completo(pasta).texto, /Travas rodando: 3 decisões/);
+});

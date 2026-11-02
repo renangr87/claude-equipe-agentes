@@ -382,7 +382,7 @@ test('revisão: mudança grande sem revisor barra o fim uma vez; depois do revis
   editar('// linha\n'.repeat(60));
   let s = fim();
   assert.equal(s.decision, 'block');
-  assert.match(s.reason, /chame o revisor antes de concluir \(61 linhas/);
+  assert.match(s.reason, /chame o revisor \(o da equipe ou o do projeto\) antes de concluir \(61 linhas/);
   assert.equal(fim({ stop_hook_active: true }), null);
   assert.ok(registro(claude).some((l) => l[1] === 'revisao' && l[2] === 'concluiu-sem-revisao'));
   // O revisor roda: a mudança fica revisada; um ajuste pequeno depois não pede outra.
@@ -671,4 +671,32 @@ test('briefing do revisor: sessão numa pasta fora do repositório acha o diff n
   escrever(path.join(raiz, '.revisao', 'diff.patch'), 'diff\n');
   assert.equal(revisor('Diff: .revisao/diff.patch. Objetivo: y.'), null);
   assert.match(motivo(revisor('Diff: .revisao/outro.patch. Objetivo: z.')), /não foi encontrado/);
+});
+
+test('revisão: o revisor próprio do projeto (plugin) também conta', () => {
+  const { env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const arq = path.join(raiz, 'lib', 'a1.dart');
+  fs.appendFileSync(arq, '// linha\n'.repeat(60));
+  rodar(POS, { session_id: 'rp', cwd: raiz, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+  const fim = () => rodar(EVENTOS, { hook_event_name: 'Stop', session_id: 'rp', cwd: raiz }, env);
+  assert.equal(fim().decision, 'block');
+  rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: 'rp', agent_id: 'x1', agent_type: 'estudio-dark:revisor-visual', cwd: raiz }, env);
+  assert.equal(fim(), null);
+});
+
+test('interruptor por projeto: .claude/equipe.json desliga só naquele projeto', () => {
+  const { env } = ambiente();
+  const raiz = projeto();
+  const ler = (cwdProj, i) => rodar(PRE, { session_id: `ip${cwdProj ? 1 : 2}`, cwd: raiz, tool_name: 'Read', tool_input: { file_path: path.join(raiz, 'lib', `a${i}.dart`) } }, { ...env, CLAUDE_PROJECT_DIR: cwdProj });
+  escrever(path.join(raiz, '.claude', 'equipe.json'), JSON.stringify({ desligar: ['orcamento'] }));
+  for (let i = 1; i <= 5; i++) assert.equal(ler(raiz, i), null);
+  // Outro projeto (sem o arquivo): o orçamento vale.
+  const outro = tmp('outro-proj');
+  for (let i = 1; i <= 3; i++) ler(outro, i);
+  assert.equal(decisao(ler(outro, 4)), 'deny');
+  // As de segurança não desligam por ele.
+  escrever(path.join(raiz, '.claude', 'equipe.json'), JSON.stringify({ desligar: 'tudo' }));
+  const s = rodar(PRE, { session_id: 'ip3', cwd: raiz, tool_name: 'Bash', tool_input: { command: 'supabase db push' } }, { ...env, CLAUDE_PROJECT_DIR: raiz });
+  assert.equal(decisao(s), 'ask');
 });

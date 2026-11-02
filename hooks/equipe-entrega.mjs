@@ -403,7 +403,7 @@ export function revisaoNoFim(entrada) {
   if (sensiveis.length) motivos.push(`área sensível: ${[...new Set(sensiveis)].slice(0, 5).join(', ')}`);
   return {
     bloquear: true,
-    motivo: `Trava da equipe: chame o revisor antes de concluir (${motivos.join('; ')}). Grave o diff com git diff HEAD --output=.revisao/diff.patch e passe o caminho e os arquivos novos no briefing${sensiveis.length ? ', com model opus' : ''}. Se você ainda não terminou (vai perguntar algo ao usuário ou esperar uma resposta), diga isso e encerre de novo: a trava não volta por estas linhas. Se o usuário disse "sem revisão", ela também não vale.`,
+    motivo: `Trava da equipe: chame o revisor (o da equipe ou o do projeto) antes de concluir (${motivos.join('; ')}). Grave o diff com git diff HEAD --output=.revisao/diff.patch e passe o caminho e os arquivos novos no briefing${sensiveis.length ? ', com model opus' : ''}. Se você ainda não terminou (vai perguntar algo ao usuário ou esperar uma resposta), diga isso e encerre de novo: a trava não volta por estas linhas. Se o usuário disse "sem revisão", ela também não vale.`,
     registro: 'barrou',
   };
 }

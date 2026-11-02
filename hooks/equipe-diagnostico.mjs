@@ -387,6 +387,71 @@ function conferirVersao(saida) {
   }
 }
 
+// ---------- Travas vivas ----------
+
+// Fim do registro das travas (só o pedaço final de cada mês: rápido mesmo com arquivo grande).
+function linhasRecentes(pasta, desdeMs) {
+  const diario = path.join(pasta, 'equipe-diario');
+  const meses = new Set([new Date().toISOString().slice(0, 7), new Date(desdeMs).toISOString().slice(0, 7)]);
+  const linhas = [];
+  for (const mes of meses) {
+    const arq = path.join(diario, `travas-${mes}.log`);
+    let fd;
+    try {
+      const tam = fs.statSync(arq).size;
+      const ler = Math.min(tam, 256 * 1024);
+      const buf = Buffer.alloc(ler);
+      fd = fs.openSync(arq, 'r');
+      fs.readSync(fd, buf, 0, ler, tam - ler);
+      for (const l of buf.toString('utf8').split('\n')) {
+        const c = l.split('\t');
+        if (c.length >= 6 && Date.parse(c[0]) >= desdeMs) linhas.push(c);
+      }
+    } catch { /* sem registro deste mês */ } finally { if (fd !== undefined) try { fs.closeSync(fd); } catch { /* fechado */ } }
+  }
+  return linhas;
+}
+
+// Sessões gravadas nesta pasta do Claude depois de uma data (para no limite).
+function sessoesDesde(pasta, desdeMs, limite) {
+  let n = 0;
+  const projetos = path.join(pasta, 'projects');
+  let dirs = [];
+  try { dirs = fs.readdirSync(projetos, { withFileTypes: true }).filter((d) => d.isDirectory()); } catch { return 0; }
+  for (const d of dirs) {
+    let nomes = [];
+    try { nomes = fs.readdirSync(path.join(projetos, d.name)); } catch { continue; }
+    for (const x of nomes) {
+      if (!x.endsWith('.jsonl')) continue;
+      try { if (fs.statSync(path.join(projetos, d.name, x)).mtimeMs >= desdeMs && ++n >= limite) return n; } catch { /* sumiu */ }
+    }
+  }
+  return n;
+}
+
+// As travas estão de fato rodando? Dois sinais no registro dos últimos 3 dias:
+// - houve sessões, mas nenhum hook registrou nada: os hooks não estão rodando;
+// - houve fim de subagente, mas nenhum veio com o tipo do agente: o Claude Code não manda
+//   o tipo aos hooks, e as travas de cada agente (e o orçamento do mestre) ficam sem saber
+//   quem chamou.
+function conferirTravasVivas(pasta, saida, hooksRegistrados) {
+  if (!hooksRegistrados) return;
+  const desde = Date.now() - 3 * 86400000;
+  const linhas = linhasRecentes(pasta, desde);
+  if (!linhas.length) {
+    if (sessoesDesde(pasta, desde, 3) >= 3) {
+      saida.push(item('aviso', 'Os hooks da equipe não registraram nada nos últimos 3 dias, mas houve sessões: eles podem não estar rodando.', `Rode node ${barras(path.join(pasta, 'hooks', 'equipe-diagnostico.mjs'))} e confira as linhas de hooks; se estiverem certas, rode a linha de instalação de novo.`));
+    }
+    return;
+  }
+  const fins = linhas.filter((c) => c[1] === 'eventos' && c[2] === 'SubagentStop');
+  if (fins.length >= 3 && fins.every((c) => c[4] === 'mestre')) {
+    saida.push(item('aviso', 'O Claude Code não está mandando aos hooks o tipo do agente: as travas do Explore, do revisor e do implementador e o orçamento do mestre não sabem quem chamou.', 'Atualize o app do Claude (a versão 2.1.69 ou mais nova manda o tipo do agente).'));
+    return;
+  }
+  saida.push(item('ok', `Travas rodando: ${linhas.length} decisões registradas nos últimos 3 dias.`));
+}
+
 // ---------- Modos ----------
 
 // Só arquivos: hooks, agentes, aviso e configuração da memória. Sem a equipe instalada
@@ -400,6 +465,7 @@ export function diagnosticoRapido(pasta = pastaClaude()) {
     const total = conferirHooks(pasta, saida);
     if (!total && !temAgente) return [];
     conferirAgentes(pasta, saida);
+    conferirTravasVivas(pasta, saida, total);
     conferirAviso(pasta, saida);
     conferirMemoria(pasta, saida);
     return saida.filter((i) => i.nivel === 'erro' || i.nivel === 'aviso');
@@ -419,8 +485,9 @@ export function resumoRapido(pasta = pastaClaude()) {
 
 export function diagnosticoCompleto({ pasta = pastaClaude(), claudeJson = '' } = {}) {
   const saida = [];
-  conferirHooks(pasta, saida);
+  const total = conferirHooks(pasta, saida);
   conferirAgentes(pasta, saida);
+  conferirTravasVivas(pasta, saida, total);
   const registrado = conferirServidores(claudeJson || arquivoUsuario(pasta), saida);
   conferirConfigMapa(registrado, saida);
   conferirAviso(pasta, saida);

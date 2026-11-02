@@ -12,7 +12,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  apagarEstado, chaveDaChamada, gravarEstado, lerEntrada, limparChamada, normalizar, registrarTrava, tipoDoAgente,
+  apagarEstado, chaveDaChamada, ehAgenteDeRevisao, gravarEstado, lerEntrada, limparChamada, normalizar, registrarTrava,
+  tipoDoAgente,
 } from './equipe-comum.mjs';
 import { anotarRevisao, fimDoImplementador, fotoInicial, revisaoNoFim } from './equipe-entrega.mjs';
 import { fimDoImplementadorConvergencia, fimDoVerificador } from './equipe-convergencia.mjs';
@@ -61,7 +62,8 @@ export function tratar(entrada) {
       const r = fimDoVerificador(entrada);
       if (r) registrarTrava('convergencia', r, Date.now() - inicio, entrada);
     }
-    if (tipo === 'revisor') anotarRevisao(entrada);
+    // Revisor da equipe ou o próprio do projeto (um plugin com os revisores dele): conta.
+    if (ehAgenteDeRevisao(tipo)) anotarRevisao(entrada);
     // Explore e revisor: as contas da chamada zeram (um agente retomado começa de novo).
     if (tipo === 'Explore') { try { leitura.decidir({ ...entrada, hook_event_name: 'SubagentStop' }); } catch { /* segue */ } }
     limparChamada(chave);

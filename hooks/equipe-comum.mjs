@@ -383,11 +383,26 @@ export function registrarTrava(trava, decisao, ms, entrada) {
 // os nomes separados por vírgula (ou "tudo"), no bloco env do settings.json. As travas
 // de segurança (banco, segredos, SQL) não desligam por aqui.
 export const TRAVAS_DESLIGAVEIS = ['leitura', 'mapa', 'orcamento', 'briefing', 'convergencia', 'analisar', 'verificar', 'escopo', 'revisao'];
+// Também por projeto: {"desligar": ["orcamento", "mapa"]} em .claude/equipe.json da pasta
+// do projeto da sessão (um projeto com agentes próprios, por exemplo), sem mexer nos outros.
+let desligadasDoProjeto = null;
+function doProjeto() {
+  if (desligadasDoProjeto !== null) return desligadasDoProjeto;
+  const proj = process.env.CLAUDE_PROJECT_DIR;
+  const cfg = proj ? lerJson(path.join(proj, '.claude', 'equipe.json')) : null;
+  const v = cfg && cfg.desligar;
+  desligadasDoProjeto = Array.isArray(v) ? v.join(',') : typeof v === 'string' ? v : '';
+  return desligadasDoProjeto;
+}
 export function desligada(nome) {
-  const lista = String(process.env.EQUIPE_DESLIGAR || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').split(/[\s,;]+/).filter(Boolean);
+  const lista = normalizar(`${process.env.EQUIPE_DESLIGAR || ''},${doProjeto()}`).split(/[\s,;]+/).filter(Boolean);
   if (!TRAVAS_DESLIGAVEIS.includes(nome)) return false;
   return lista.includes(nome) || lista.includes('tudo');
 }
+
+// Agente de revisão: o nosso revisor ou o revisor próprio de um projeto ou plugin
+// ("revisor-roteiro", "estudio:revisores", "code-reviewer").
+export const ehAgenteDeRevisao = (tipo) => /revis|review/i.test(String(tipo || ''));
 
 // Estado de uma chamada (marcas e anotações em arquivos pequenos, por chave da chamada).
 // Anotar acrescenta no fim do arquivo: duas ferramentas ao mesmo tempo não se perdem.

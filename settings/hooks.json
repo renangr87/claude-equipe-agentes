@@ -111,7 +111,7 @@
     ],
     "SubagentStop": [
       {
-        "matcher": "Explore|revisor|implementador|verificador",
+        "matcher": "Explore|implementador|verificador|.*[Rr]evis.*|.*[Rr]eview.*",
         "hooks": [
           {
             "type": "command",
