@@ -4,8 +4,11 @@
 //
 // Travas, nesta ordem (as que anotam algo ficam por último, para só anotar o que passou):
 //   segurança: SQL pela conexão que escreve, chave secreta em arquivo ou commit, comando que
-//              altera o banco (pede aprovação no mestre, barra no implementador);
-//   retrabalho: briefing do mestre para os agentes; a mesma falha que voltou (convergência);
+//              altera o banco (pede aprovação no mestre, barra no implementador), push sem o
+//              pedido do usuário (pede aprovação);
+//   retrabalho: briefing do mestre para os agentes; diff em dia, completo e opus em área
+//              sensível para o revisor; a mesma falha que voltou e a parada depois de três
+//              tentativas (convergência); dois implementadores no mesmo arquivo (paralelo);
 //   economia:  mapa primeiro (Explore e revisor), orçamento de leitura do mestre, leitura
 //              por trecho e teto de leituras do Explore.
 // O tipo do agente vem na entrada do hook, então as travas de cada agente moram aqui, e não
@@ -15,17 +18,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { desligada, lerEntrada, registrarTrava, tipoDoAgente } from './equipe-comum.mjs';
+import { carregarModulo, desligada, lerEntrada, registrarTrava, tipoDoAgente } from './equipe-comum.mjs';
 
 // Cada trava num módulo carregado à parte: se um faltar ou quebrar (instalação pela metade),
-// as outras continuam valendo, as de segurança inclusive.
-async function carregar(arquivo) {
-  try { return await import(new URL(arquivo, import.meta.url).href); } catch { return null; }
-}
-const [sql, segredos, banco, briefing, mapa, leitura, convergencia] = await Promise.all([
-  carregar('./equipe-sql.mjs'), carregar('./equipe-segredos.mjs'), carregar('./equipe-banco.mjs'),
-  carregar('./equipe-briefing.mjs'), carregar('./equipe-mapa.mjs'), carregar('./equipe-leitura.mjs'),
-  carregar('./equipe-convergencia.mjs'),
+// as outras continuam valendo, as de segurança inclusive, e a falha vai para o registro.
+const carregar = (arquivo) => carregarModulo(import.meta.url, arquivo);
+const [sql, segredos, banco, push, briefing, revisao, convergencia, paralelo, mapa, leitura] = await Promise.all([
+  carregar('./equipe-sql.mjs'), carregar('./equipe-segredos.mjs'), carregar('./equipe-banco.mjs'), carregar('./equipe-push.mjs'),
+  carregar('./equipe-briefing.mjs'), carregar('./equipe-revisao.mjs'), carregar('./equipe-convergencia.mjs'),
+  carregar('./equipe-paralelo.mjs'), carregar('./equipe-mapa.mjs'), carregar('./equipe-leitura.mjs'),
 ]);
 const nada = () => null;
 
@@ -36,10 +37,13 @@ export const TRAVAS = [
   { nome: 'sql', quando: /^mcp__.+__execute_sql$/, rodar: sql ? (e) => deHook(sql.decidir(e)) : nada },
   { nome: 'segredos', quando: /^(Write|Edit|MultiEdit|NotebookEdit|Bash|PowerShell)$/, rodar: segredos ? (e) => deHook(segredos.decidir(e)) : nada },
   { nome: 'banco', quando: /^(Bash|PowerShell)$/, rodar: banco ? (e) => deHook(banco.decidir(e)) : nada },
+  { nome: 'push', quando: /^(Bash|PowerShell)$/, rodar: push ? push.decidirPush : nada },
   { nome: 'briefing', quando: /^(Agent|Task)$/, rodar: briefing ? briefing.decidirBriefing : nada },
+  { nome: 'revisor', quando: /^(Agent|Task)$/, rodar: revisao ? revisao.decidirRevisor : nada },
   { nome: 'convergencia', quando: /^(Agent|Task)$/, rodar: convergencia ? convergencia.decidirConvergencia : nada },
+  { nome: 'paralelo', quando: /^(Agent|Task)$/, rodar: paralelo ? paralelo.decidirParalelo : nada },
   { nome: 'mapa', quando: /^(Read|Grep|Glob)$/, rodar: mapa ? mapa.decidirMapa : nada },
-  { nome: 'orcamento', quando: /^Read$/, rodar: mapa ? mapa.decidirOrcamento : nada },
+  { nome: 'orcamento', quando: /^(Read|Grep|Bash|PowerShell)$/, rodar: mapa ? mapa.decidirOrcamento : nada },
   { nome: 'leitura', quando: /^Read$/, rodar: (e) => (leitura && tipoDoAgente(e) === 'Explore' && !desligada('leitura') ? deHook(leitura.decidir(e)) : null) },
 ];
 

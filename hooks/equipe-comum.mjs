@@ -382,7 +382,7 @@ export function registrarTrava(trava, decisao, ms, entrada) {
 // Interruptor de emergência das travas de economia e de retrabalho: EQUIPE_DESLIGAR com
 // os nomes separados por vírgula (ou "tudo"), no bloco env do settings.json. As travas
 // de segurança (banco, segredos, SQL) não desligam por aqui.
-export const TRAVAS_DESLIGAVEIS = ['leitura', 'mapa', 'orcamento', 'briefing', 'convergencia', 'analisar', 'verificar', 'escopo', 'revisao'];
+export const TRAVAS_DESLIGAVEIS = ['leitura', 'mapa', 'orcamento', 'briefing', 'convergencia', 'analisar', 'verificar', 'escopo', 'revisao', 'prova', 'paralelo'];
 // Também por projeto: {"desligar": ["orcamento", "mapa"]} em .claude/equipe.json da pasta
 // do projeto da sessão (um projeto com agentes próprios, por exemplo), sem mexer nos outros.
 let desligadasDoProjeto = null;
@@ -401,8 +401,62 @@ export function desligada(nome) {
 }
 
 // Agente de revisão: o nosso revisor ou o revisor próprio de um projeto ou plugin
-// ("revisor-roteiro", "estudio:revisores", "code-reviewer").
+// ("revisor-de-texto", "meu-plugin:revisores", "code-reviewer").
 export const ehAgenteDeRevisao = (tipo) => /revis|review/i.test(String(tipo || ''));
+
+// Despachante (pre, pos, eventos): cada módulo carregado à parte. Se um faltar ou quebrar
+// (instalação pela metade), os outros continuam valendo e a falha vai para o registro, onde
+// o diagnóstico a encontra.
+export async function carregarModulo(base, arquivo, entrada = null) {
+  try {
+    return await import(new URL(arquivo, base).href);
+  } catch {
+    registrarTrava('modulo', `falhou:${arquivo.replace(/^\.\/(equipe-)?|\.mjs$/g, '')}`, 0, entrada);
+    return null;
+  }
+}
+
+// Relatório do subagente que terminou: a entrega (SubagentHandback) da transcrição dele; se
+// não houver, a última mensagem (SubagentStop) ou o último texto.
+export function relatorioDaChamada(entrada) {
+  let entrega = '';
+  let ultimo = '';
+  const texto = lerTexto(String((entrada && entrada.agent_transcript_path) || ''));
+  for (const linha of texto ? texto.split('\n') : []) {
+    if (!linha.includes('"assistant"')) continue;
+    let j;
+    try { j = JSON.parse(linha); } catch { continue; }
+    const c = j && j.message && Array.isArray(j.message.content) ? j.message.content : [];
+    for (const b of c) {
+      if (b && b.type === 'tool_use' && b.name === 'SubagentHandback' && b.input && typeof b.input.message === 'string') entrega = b.input.message;
+      else if (b && b.type === 'text' && typeof b.text === 'string' && b.text.trim()) ultimo = b.text;
+    }
+  }
+  if (entrega) return entrega;
+  if (entrada && typeof entrada.last_assistant_message === 'string' && entrada.last_assistant_message.trim()) return entrada.last_assistant_message;
+  return ultimo;
+}
+
+// Briefing que o subagente recebeu: a primeira mensagem da transcrição dele.
+export function briefingDaTranscricao(arquivoTranscricao) {
+  const texto = lerTexto(String(arquivoTranscricao || ''));
+  if (!texto) return null;
+  for (const linha of texto.split('\n')) {
+    let j;
+    try { j = JSON.parse(linha); } catch { continue; }
+    if (!j || j.type !== 'user' || !j.message) continue;
+    const c = j.message.content;
+    const t = typeof c === 'string' ? c : Array.isArray(c) ? c.map((b) => (b && typeof b.text === 'string' ? b.text : '')).join('\n') : '';
+    if (t.trim()) return t;
+  }
+  return null;
+}
+
+// Marca curta de um texto (briefing), sem depender de espaços e quebras de linha.
+export const marcaDoTexto = (texto) => crypto.createHash('sha1').update(String(texto || '').replace(/\s+/g, ' ').trim()).digest('hex').slice(0, 16);
+
+// Comando que roda testes de verdade (não lint nem tipos).
+export const TESTE_DE_VERDADE = /\b(flutter|dart)\s+test\b|\b(npm|pnpm|yarn|bun)\s+(run\s+)?test\b|\bnpx\s+(vitest|jest|playwright)\b|\b(vitest|jest|pytest)\b|\bpython\d*(\.exe)?\s+-m\s+(pytest|unittest)\b|\bnode(\.exe)?\s+--test\b|\bgo\s+test\b|\bcargo\s+test\b|\bInvoke-Pester\b|\bdotnet\s+test\b|\bmvn\w*\s+(test|verify)\b|\bgradlew?\w*\s+\S*test/i;
 
 // Estado de uma chamada (marcas e anotações em arquivos pequenos, por chave da chamada).
 // Anotar acrescenta no fim do arquivo: duas ferramentas ao mesmo tempo não se perdem.
@@ -535,14 +589,25 @@ export function statusDoRelatorio(tipo, texto) {
     return m ? m[1].toLowerCase() : 'sem status';
   }
   if (tipo === 'verificador') {
-    if (/bloque/i.test(t) && !/passou|passaram|passed/i.test(t)) return 'bloqueado';
-    // Com contagem ("3 falharam", "0 failed"), vale o número; sem contagem, a palavra.
-    const n = [...t.matchAll(/(\d+)\s+(?:testes?\s+|tests?\s+)?(falh|fail)/gi)].map((x) => Number(x[1]));
-    if (n.length) return n.some((x) => x > 0) ? 'com falha' : 'passou';
-    if (/\b(nenhum|nenhuma|sem|no)\b[^.\n]{0,20}(falh|fail)/i.test(t)) return 'passou';
-    if (/\b(falhou|falharam|failed|failures?)\b/i.test(t)) return 'com falha';
+    const n = normalizar(t);
+    // A palavra vale se não vier logo depois de uma negação ("nenhum teste falhou").
+    const semNegacao = (x, re) => [...x.matchAll(re)].some((m) => !/\b(nao|nenhum|nenhuma|sem|no|not|nada|zero)\b[^.\n]{0,20}$/.test(x.slice(Math.max(0, m.index - 30), m.index)));
+    // Contagens de falha e de erro: qualquer uma acima de zero é falha ("0 falhas, mas 3
+    // erros de compilação" não passou).
+    const FALHAS = /(\d+)\s+(?:testes?\s+|tests?\s+)?(falh\w*|fail\w*)/g;
+    const ERROS = /(\d+)\s+(?:[a-z]+\s+)?(erros?|errors?)\b/g;
+    const contagens = [...n.matchAll(FALHAS), ...n.matchAll(ERROS)].map((x) => Number(x[1]));
+    if (contagens.some((x) => x > 0)) return 'com falha';
+    const resto = n.replace(FALHAS, ' ').replace(ERROS, ' ');
+    if (semNegacao(resto, /\b(falhou|falharam|failed|failures?|quebrou|quebrad[oa]|broke|broken|nao compil\w*|build failed)\b/g)) return 'com falha';
+    // Comando barrado pela guarda: a verificação ficou incompleta, mesmo que outra passasse.
+    if (semNegacao(resto, /bloquead|blocked/g)) return 'bloqueado';
+    // Nenhum teste rodou ("0 testes", "no tests ran"): não é sucesso.
+    if (/\b(0|zero|nenhum)\s+(testes?|tests?)\b(?!\s*(falh|fail))|\bno tests? (ran|run|found|were run)\b/.test(resto)) return 'sem status';
+    if (contagens.length) return 'passou';
+    if (/\b(nenhum|nenhuma|sem|no)\b[^.\n]{0,20}(falh|fail)/.test(n)) return 'passou';
     // "passou" só com sinal de sucesso; relatório sem resultado não conta como sucesso.
-    if (/\b(passou|passaram|passed|sucesso|tudo ok|ok)\b/i.test(t)) return 'passou';
+    if (/\b(passou|passaram|passed|sucesso|tudo ok|ok)\b/.test(n)) return 'passou';
     return 'sem status';
   }
   return '';

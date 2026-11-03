@@ -26,6 +26,10 @@
                    descarta trabalho (checkout, restore, reset, stash, clean, switch),
                    git show/cat-file gravado em arquivo e os comandos que alteram o banco
                    remoto ou apagam dados (supabase db push, psql, prisma migrate reset...).
+                   E bloqueia acao sem volta: git que grava historico ou mexe no remoto
+                   (commit, push, merge, pull...), instalar dependencia nova (npm install
+                   pacote, pip install pacote, flutter pub add...) e apagar pasta inteira
+                   (rm -r, Remove-Item -Recurse, rd /s).
 
   Compativel com Windows PowerShell 5.1 e PowerShell 7. Os casos de teste ficam em
   testes/casos-guarda.txt.
@@ -107,11 +111,28 @@ function Separar-Tokens([string]$texto) {
     return ,$lista
 }
 
-function Testar-Formatadores([string]$texto, [string]$pastaAtual) {
-    # Tira redirecionamentos (2>&1, > arquivo, < arquivo) antes de separar as partes.
+# Comando dentro de $(...) ou de crases roda mesmo dentro de echo: o texto de dentro de cada um.
+function Comandos-Embutidos([string]$texto) {
+    $r = @()
+    foreach ($m in [regex]::Matches($texto, '\$\(([^()]*)\)|`([^`]+)`')) {
+        if ($m.Groups[1].Success) { $r += $m.Groups[1].Value } else { $r += $m.Groups[2].Value }
+    }
+    return ,$r
+}
+
+# Programas que executam o texto que recebem entre aspas (bash -c "...", iex '...').
+$avaliadores = '^(bash|sh|zsh|dash|cmd|powershell|pwsh|iex|invoke-expression|start-process|saps|xargs|sudo|env|nohup|watch)$'
+
+# Tira redirecionamentos (2>&1, > arquivo, < arquivo): o alvo nao e argumento do comando.
+function Tirar-Redirecionamentos([string]$texto) {
     $semRedir = $texto -replace '(\*|\d)?>&\d+', ' '
     $semRedir = $semRedir -replace '(\*|\d)?>>?\s*("[^"]*"|''[^'']*''|[^\s;&|]+)', ' '
-    $semRedir = $semRedir -replace '<\s*("[^"]*"|''[^'']*''|[^\s;&|]+)', ' '
+    return ($semRedir -replace '<\s*("[^"]*"|''[^'']*''|[^\s;&|]+)', ' ')
+}
+
+function Testar-Formatadores([string]$texto, [string]$pastaAtual) {
+    # Tira redirecionamentos antes de separar as partes.
+    $semRedir = Tirar-Redirecionamentos $texto
 
     foreach ($parte in ($semRedir -split '&&|\|\||[;&|\r\n]')) {
         $seg = ($parte -replace '\s+', ' ').Trim()
@@ -191,7 +212,20 @@ $gitDescarte = '^(checkout|checkout-index|restore|reset|stash|clean|switch)$'
 # Opcoes do git que levam um valor no token seguinte.
 $gitOpcaoComValor = '^(-C|-c|--git-dir|--work-tree|--namespace|--exec-path|--config-env)$'
 
+# Posicao do subcomando do git que esta na posicao $i (pula as opcoes globais e seus
+# valores); -1 se nao ha subcomando.
+function Indice-SubGit([string[]]$tokens, [int]$i) {
+    $j = $i + 1
+    while ($j -lt $tokens.Count -and $tokens[$j].StartsWith('-')) {
+        if ($tokens[$j] -cmatch $gitOpcaoComValor) { $j++ }
+        $j++
+    }
+    if ($j -ge $tokens.Count) { return -1 }
+    return $j
+}
+
 function Testar-Descarte([string]$texto) {
+    foreach ($dentro in (Comandos-Embutidos $texto)) { if ($dentro.Trim()) { Testar-Descarte $dentro } }
     # Saida gravada em arquivo (> arquivo, Out-File, Set-Content, tee): o "2>&1" nao conta.
     $grava = ($texto -replace '(\*|\d)?>&\d+', ' ') -match '>|(?i)\b(out-file|set-content|add-content|tee|tee-object)\b'
 
@@ -211,12 +245,8 @@ function Testar-Descarte([string]$texto) {
         }
         for ($i = 0; $i -lt $tokens.Count; $i++) {
             if ($nomes[$i] -ne 'git') { continue }
-            $j = $i + 1
-            while ($j -lt $tokens.Count -and $tokens[$j].StartsWith('-')) {
-                if ($tokens[$j] -cmatch $gitOpcaoComValor) { $j++ }
-                $j++
-            }
-            if ($j -ge $tokens.Count) { break }
+            $j = Indice-SubGit $tokens $i
+            if ($j -lt 0) { break }
             $sub = $tokens[$j].ToLowerInvariant()
             if ($sub -match $gitDescarte) {
                 Bloquear "git $sub descarta ou troca trabalho nao commitado. Nao use: relate ao mestre o que precisa voltar, e ele decide com o usuario."
@@ -239,6 +269,7 @@ $bancoRemoto = '^supabase( -\S+( [^-\s]\S*)?)* (db reset|migration (up|down))( .
 $programasBanco = '^(supabase|psql|dropdb|pg_restore|prisma|drizzle-kit)$'
 
 function Testar-Banco([string]$texto) {
+    foreach ($dentro in (Comandos-Embutidos $texto)) { if ($dentro.Trim()) { Testar-Banco $dentro } }
     foreach ($parte in ($texto -split '&&|\|\||[;&|\r\n]')) {
         $seg = ($parte -replace '\s+', ' ').Trim()
         if (-not $seg) { continue }
@@ -262,6 +293,165 @@ function Testar-Banco([string]$texto) {
                 Bloquear "comando que altera o banco ou aponta para o banco remoto ('$($nomes[$i])'). Escreva a migracao ou o script e relate ao mestre: quem aplica e ele, com o OK do usuario."
             }
             break
+        }
+    }
+}
+
+# Acao sem volta (so o mestre, com o OK do usuario): git que grava historico ou mexe no
+# remoto, dependencia nova e apagar pasta inteira.
+
+# Git que grava historico ou mexe no remoto. git tag so e bloqueado quando nao e listagem;
+# git branch, so com -d, -D ou --delete.
+$gitGrava = '^(commit|push|merge|rebase|tag|cherry-pick|am|pull|revert)$'
+# Letras de opcao do git branch que podem vir juntas (-dr, -Df); com d ou D, apaga.
+$gitBranchApaga = '^-[afqrvdD]*[dD][afqrvdD]*$'
+
+# Instaladores de dependencia. nome: o programa. subs: os subcomandos, em ordem (opcoes no
+# meio sao puladas; '.' aceita qualquer palavra, como o projeto em "dotnet add app.csproj
+# package"). valor: opcoes cujo token seguinte e um valor, nao um pacote ($null: nenhuma).
+# Qualquer outra palavra depois do subcomando e pacote: o comando e bloqueado.
+$instaladores = @(
+    @{ nome = '^npm$';                subs = @('^(install|i|in|ins|inst|insta|instal|isnt|isnta|isntal|isntall|add|install-test|it)$'); valor = '^(--prefix|-C|--workspace|-w)$' },
+    @{ nome = '^pnpm$';               subs = @('^(add|install|i)$');            valor = '^(--filter|-F|--dir|-C)$' },
+    @{ nome = '^yarn$';               subs = @('^add$');                        valor = '^--cwd$' },
+    @{ nome = '^yarn$';               subs = @('^global$', '^add$');            valor = $null },
+    @{ nome = '^yarn$';               subs = @('^workspace$', '.', '^add$');    valor = $null },
+    @{ nome = '^bun$';                subs = @('^(add|a|install|i)$');          valor = '^--cwd$' },
+    @{ nome = '^pip(3(\.\d+)?)?$';    subs = @('^install$');                    valor = '^(-r|--requirement|-c|--constraint|-e|--editable|-t|--target|--prefix|--root|-i|--index-url|--extra-index-url|-f|--find-links|-p|--python)$' },
+    @{ nome = '^uv$';                 subs = @('^add$');                        valor = $null },
+    @{ nome = '^poetry$';             subs = @('^add$');                        valor = $null },
+    @{ nome = '^flutter$';            subs = @('^(pub|packages)$', '^add$');    valor = $null },
+    @{ nome = '^dart$';               subs = @('^pub$', '^add$');               valor = $null },
+    @{ nome = '^cargo$';              subs = @('^add$');                        valor = $null },
+    @{ nome = '^go$';                 subs = @('^(get|install)$');              valor = $null },
+    @{ nome = '^dotnet$';             subs = @('^add$', '^package$');           valor = $null },
+    @{ nome = '^dotnet$';             subs = @('^add$', '.', '^package$');      valor = $null },
+    @{ nome = '^dotnet$';             subs = @('^package$', '^add$');           valor = $null },
+    @{ nome = '^composer$';           subs = @('^req(u(i(r(e)?)?)?)?$');        valor = $null },
+    @{ nome = '^gem$';                subs = @('^install$');                    valor = $null }
+)
+# python -m pip, uv pip, sudo npm...: a varredura acha o instalador em qualquer posicao.
+
+# Comandos que apagam (rm do bash; Remove-Item e seus apelidos no PowerShell; rd e del do cmd).
+$programasApagar = '^(rm|remove-item|ri|del|erase|rd|rmdir)$'
+# rm -r, -R, -rf, -fr, -rfv...: letras de opcao do rm juntas, com r ou R.
+$rmRecursivo = '^-[fiIrRdv]*[rR][fiIrRdv]*$'
+# -Recurse do PowerShell e suas abreviacoes (-r, -rec...), com ou sem :$true.
+$psRecurse = '(?i)^-r(e(c(u(r(s(e)?)?)?)?)?)?(:\S*)?$'
+# /s do cmd (rd /s, rmdir /s, del /s), sozinho ou junto de outras (/s/q).
+$cmdSubpastas = '(?i)^(/[a-z](:[a-z-]+)?)*/s(/[a-z](:[a-z-]+)?)*$'
+
+# Posicao do primeiro token, a partir de $inicio, que casa com $padrao. Pula opcoes e a palavra
+# logo depois de uma opcao (o valor dela); outra palavra antes do subcomando: -1.
+function Indice-Sub([string[]]$tokens, [int]$inicio, [string]$padrao) {
+    for ($k = $inicio; $k -lt $tokens.Count; $k++) {
+        $t = $tokens[$k]
+        if ($t.StartsWith('-')) { continue }
+        if ($t -match $padrao) { return $k }
+        $ehValor = ($k -gt $inicio) -and $tokens[$k - 1].StartsWith('-') -and -not $tokens[$k - 1].Contains('=')
+        if (-not $ehValor) { return -1 }
+    }
+    return -1
+}
+
+function Testar-GitGrava([string[]]$tokens, [int]$i) {
+    $j = Indice-SubGit $tokens $i
+    if ($j -lt 0) { return }
+    $sub = $tokens[$j].ToLowerInvariant()
+    $resto = @()
+    if ($j + 1 -lt $tokens.Count) { $resto = @($tokens[($j + 1)..($tokens.Count - 1)]) }
+    $grava = $sub -match $gitGrava
+    # git tag so lista quando tem -l/--list, ou quando nao cria nem apaga e nao da nome a uma tag
+    # (--sort, --contains abc, -n).
+    if ($sub -eq 'tag') {
+        $cria = @($resto | Where-Object { $_ -cmatch '^(-a|-s|-u|-f|-d|-m.*|-F.*|--annotate|--sign|--force|--delete|--local-user.*|--message.*|--file.*)$' }).Count -gt 0
+        $lista = @($resto | Where-Object { $_ -cmatch '^(-l|--list)$' }).Count -gt 0
+        $nomesTag = 0
+        for ($k = 0; $k -lt $resto.Count; $k++) {
+            if ($resto[$k].StartsWith('-')) { continue }
+            if ($k -gt 0 -and $resto[$k - 1] -cmatch '^(--contains|--no-contains|--merged|--no-merged|--points-at|--sort|--format|--color|--column)$') { continue }
+            $nomesTag++
+        }
+        $grava = $cria -or (-not $lista -and $nomesTag -gt 0)
+    }
+    if ($sub -eq 'branch') {
+        # --delete aceita abreviacao (--del).
+        $apaga = @($resto | Where-Object { $_ -cmatch $gitBranchApaga -or ($_.Length -ge 3 -and '--delete'.StartsWith($_, [System.StringComparison]::Ordinal)) })
+        if ($apaga.Count -gt 0) { $grava = $true; $sub = "branch $($apaga[0])" }
+    }
+    if ($grava) {
+        Bloquear "acao sem volta: git $sub mexe no historico ou no remoto, e commit e push sao do mestre; reporte ao mestre como pendencia."
+    }
+}
+
+function Testar-Instalacao([string[]]$tokens, [string]$nome, [int]$i) {
+    foreach ($inst in $instaladores) {
+        if ($nome -notmatch $inst.nome) { continue }
+        $k = $i
+        $palavras = @($nome)
+        foreach ($padrao in $inst.subs) {
+            $k = Indice-Sub $tokens ($k + 1) $padrao
+            if ($k -lt 0) { break }
+            $palavras += $tokens[$k]
+        }
+        if ($k -lt 0) { continue }
+        for ($m = $k + 1; $m -lt $tokens.Count; $m++) {
+            $t = $tokens[$m]
+            if ($t.StartsWith('-')) { continue }
+            # O proprio projeto ou uma pasta dele (pip install ., go install ./cmd/x) nao e dependencia nova.
+            if ($t -eq '.' -or $t -match '^\.{1,2}([\\/]|$)') { continue }
+            $anterior = $tokens[$m - 1]
+            if ($inst.valor -and $anterior -cmatch $inst.valor) {
+                # -e com endereco (git+https://...) instala pacote de fora; -e . e o proprio projeto.
+                $deFora = ($anterior -cmatch '^(-e|--editable)$') -and ($t -match '://|^[A-Za-z]+\+|^git@')
+                if (-not $deFora) { continue }
+            }
+            Bloquear "acao sem volta: $($palavras -join ' ') com '$t' instala dependencia nova; reporte ao mestre como pendencia, com o pacote e o motivo."
+        }
+    }
+}
+
+function Testar-Apagar([string[]]$tokens, [string]$nome, [int]$i) {
+    if ($nome -notmatch $programasApagar) { return }
+    for ($m = $i + 1; $m -lt $tokens.Count; $m++) {
+        $t = $tokens[$m]
+        # --recursive aceita abreviacao (--rec).
+        $recursivo = ($t -cmatch $rmRecursivo) -or ($t -match $psRecurse) -or
+                     ($t.Length -ge 3 -and '--recursive'.StartsWith($t, [System.StringComparison]::Ordinal))
+        if ($nome -match '^(rd|rmdir|del|erase)$' -and $t -match $cmdSubpastas) { $recursivo = $true }
+        if ($recursivo) {
+            Bloquear "acao sem volta: $($tokens[$i]) com $t apaga uma pasta inteira; reporte ao mestre como pendencia."
+        }
+    }
+}
+
+function Testar-SemVolta([string]$texto) {
+    foreach ($dentro in (Comandos-Embutidos $texto)) { if ($dentro.Trim()) { Testar-SemVolta $dentro } }
+    foreach ($parte in ((Tirar-Redirecionamentos $texto) -split '&&|\|\||[;&|\r\n]')) {
+        $seg = ($parte -replace '\s+', ' ').Trim()
+        if (-not $seg) { continue }
+        $tokens = Separar-Tokens $seg
+        if ($tokens.Count -eq 0) { continue }
+        $nomes = @($tokens | ForEach-Object { Nome-Programa $_ })
+
+        # Busca e eco so citam o comando.
+        if ($nomes[0] -ne 'git' -and $nomes[0] -match $comandosDeTexto) { continue }
+        # Texto entre aspas so e comando quando quem recebe o executa (bash -c "...", cmd /c
+        # "...", iex '...'): o filtro de um teste ("rd -r") nao e.
+        if (@($nomes | Where-Object { $_ -match $avaliadores }).Count -gt 0) {
+            foreach ($t in $tokens) {
+                if ($t -match '\s') { Testar-SemVolta $t }
+            }
+        }
+        for ($i = 0; $i -lt $tokens.Count; $i++) {
+            if ($nomes[$i] -eq 'git') {
+                # O resto e argumento do git (mensagem de commit, busca).
+                Testar-GitGrava $tokens $i
+                break
+            }
+            # Versao no nome (npx pnpm@8) nao muda o programa.
+            Testar-Instalacao $tokens ($nomes[$i] -replace '(?<=.)@[^@]*$', '') $i
+            Testar-Apagar $tokens $nomes[$i] $i
         }
     }
 }
@@ -304,6 +494,7 @@ try {
         Testar-Formatadores $comando ([string]$entrada.cwd)
         Testar-Descarte $comando
         Testar-Banco $comando
+        Testar-SemVolta $comando
         exit 0
     }
 

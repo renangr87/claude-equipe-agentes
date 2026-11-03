@@ -49,6 +49,10 @@ Compare os números com a tabela abaixo. Os limites são pontos de partida, não
 | Hook lento: pior caso acima de 300 ms em `pre`, `pos` ou `eventos` | trava que roda `git` ou lê arquivo grande a cada ferramenta | medir qual trava pesa (o tempo de cada uma está no registro); cache ou saída rápida antes da parte cara |
 | Entregas sem verificação | o implementador editou código depois do último teste e insistiu em entregar | frase no prompt do implementador sobre rodar a verificação no fim; conferir a lista de comandos do verificador na nota de área |
 | Mudança grande concluída sem revisão | o mestre fechou a tarefa (mais de 50 linhas ou área sensível) sem chamar o revisor, mesmo avisado | reforçar a regra da revisão no fim da tarefa; conferir se a trava `revisao` não está em `EQUIPE_DESLIGAR` |
+| Trava `prova` com `concluiu-sem-prova` | o mestre fechou com código mudado e sem verificação verde com o código de agora, mesmo avisado | conferir se o briefing do verificador traz a linha da lista sem filtro; se o projeto não tem teste possível, dizer isso ao usuário em vez de encerrar calado |
+| Trava `revisao` com `reprovou` ou `concluiu-com-reprovacao` | o revisor reprovou e o mestre encerrou sem corrigir | conferir se os achados chegaram ao usuário; se o mesmo tipo de achado se repete, levar a lição à camada certa (checagem no revisor, teste, nota de área) |
+| Trava `convergencia` com `parou` | a mesma falha voltou depois de três tentativas no mesmo pedido | olhar o briefing das três: faltou contexto, a tarefa estava mal formulada, ou a causa estava fora do escopo; nota de área com o que se descobriu |
+| Trava `modulo` com `falhou:<nome>` | um módulo das travas não carregou (instalação pela metade, erro no script) | rodar a linha de instalação de novo; se continuar, abrir o diagnóstico e corrigir o script com caso de teste |
 | Correções de bug com teste vermelho antes da correção abaixo de 80% | o implementador corrige antes de reproduzir o bug, e o teste "que passa" pode não provar nada | frase no prompt do implementador; se continuar baixo, trava que exige o teste vermelho antes da primeira edição de código numa correção |
 | A mesma falha voltou (convergência barrou ou avisou várias vezes) | tentativas iguais: falta algo que o agente não vê, ou a tarefa está mal formulada | briefing de correção com "Já tentado" e o esperado e o que apareceu; replanejar mais cedo; nota de área com a armadilha |
 
@@ -87,7 +91,7 @@ Mostre o diagnóstico e as propostas de uma vez e faça uma única pergunta ao u
 - **Mudança na equipe:** é feita na cópia da equipe, cuja pasta aparece na saída da medição. Se esta sessão não estiver aberta nessa pasta, não edite de fora: guarde as propostas (passo 6) e diga ao usuário para abrir uma sessão na pasta da equipe e pedir "aplique a última retrospectiva" (o comando `--ultima` mostra as propostas guardadas).
 - **Na pasta da equipe:**
   1. Faça a mudança.
-  2. Rode os testes: `powershell -ExecutionPolicy Bypass -File .\testes\testar-guarda.ps1`, `powershell -ExecutionPolicy Bypass -File .\testes\testar-instalador.ps1` e `node --test testes/equipe-node.test.mjs testes/travas.test.mjs testes/medidor-travas.test.mjs`.
+  2. Rode os testes: `powershell -ExecutionPolicy Bypass -File .\testes\testar-guarda.ps1`, `powershell -ExecutionPolicy Bypass -File .\testes\testar-instalador.ps1` e `node --test testes/equipe-node.test.mjs testes/travas.test.mjs testes/medidor-travas.test.mjs testes/diagnostico.test.mjs`.
   3. Faça o commit com os caminhos dos arquivos.
   4. Faça push só se o usuário pedir.
   5. Diga ao usuário para rodar de novo a linha de instalação.

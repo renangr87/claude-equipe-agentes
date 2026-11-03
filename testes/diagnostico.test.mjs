@@ -309,8 +309,24 @@ test('diagnóstico: as travas estão rodando? registro vazio com sessões, e sem
   const arq = path.join(pasta, 'equipe-diario', `travas-${agora.slice(0, 7)}.log`);
   escrever(arq, [reg('mestre'), reg('mestre'), reg('mestre'), [agora, 'pre', 'passou', '30', 'mestre', 's-mestre'].join('\t')].join('\n') + '\n');
   assert.match(resumoRapido(pasta), /não está mandando aos hooks o tipo do agente/);
-  // Com o tipo: tudo certo.
-  escrever(arq, [reg('Explore'), reg('implementador'), reg('mestre')].join('\n') + '\n');
+  // Com o tipo e os três despachantes: tudo certo.
+  const linha = (trava, decisao) => [agora, trava, decisao, '30', 'mestre', 's-mestre'].join('\t');
+  escrever(arq, [reg('Explore'), reg('implementador'), linha('pre', 'passou'), linha('pos', 'passou')].join('\n') + '\n');
   assert.equal(resumoRapido(pasta), '');
-  assert.match(completo(pasta).texto, /Travas rodando: 3 decisões/);
+  assert.match(completo(pasta).texto, /Travas rodando: 4 decisões/);
+  // Um despachante calado (os outros registram): pode não estar rodando.
+  escrever(arq, [reg('Explore'), reg('implementador'), linha('pre', 'passou')].join('\n') + '\n');
+  assert.match(resumoRapido(pasta), /equipe-pos\.mjs não registraram nada/);
+  // Um módulo de trava que não carregou: as travas dele pararam.
+  escrever(arq, [reg('Explore'), linha('pre', 'passou'), linha('pos', 'passou'), linha('modulo', 'falhou:prova')].join('\n') + '\n');
+  assert.match(resumoRapido(pasta), /não carregaram nos últimos 3 dias: equipe-prova\.mjs/);
+});
+
+test('diagnóstico: módulo carregado à parte pelo despachante também precisa existir', () => {
+  const pasta = instalacao();
+  escrever(path.join(pasta, 'hooks', 'equipe-pre.mjs'), "import { a } from './equipe-comum.mjs';\nconst [p] = await Promise.all([carregar('./equipe-prova.mjs')]);\n");
+  escrever(path.join(pasta, 'hooks', 'equipe-prova.mjs'), '// prova\n');
+  assert.doesNotMatch(completo(pasta).texto, /Faltam scripts/);
+  fs.rmSync(path.join(pasta, 'hooks', 'equipe-prova.mjs'));
+  assert.match(completo(pasta).texto, /Faltam scripts que os hooks usam: .*equipe-prova\.mjs/);
 });

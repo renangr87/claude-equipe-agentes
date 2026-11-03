@@ -85,7 +85,7 @@ if ($temNode) {
     $ini = @($s.hooks.SessionStart)
     $sub = @($s.hooks.SubagentStart)
     Conferir 'limpa: hook de inicio aponta para o boletim' ($ini.Count -eq 1 -and [string](@(@($ini[0].hooks)[0].args)[0]) -like '*/hooks/equipe-boletim.mjs')
-    Conferir 'limpa: contexto so para Explore, verificador e revisor; eventos do implementador' ($sub.Count -eq 2 -and $sub[0].matcher -eq 'Explore|verificador|revisor' -and [string](@(@($sub[0].hooks)[0].args)[0]) -like '*/hooks/equipe-contexto.mjs' -and $sub[1].matcher -eq 'implementador' -and [string](@(@($sub[1].hooks)[0].args)[0]) -like '*/hooks/equipe-eventos.mjs')
+    Conferir 'limpa: contexto so para Explore, verificador e revisor; eventos do implementador e dos revisores' ($sub.Count -eq 2 -and $sub[0].matcher -eq 'Explore|verificador|revisor' -and [string](@(@($sub[0].hooks)[0].args)[0]) -like '*/hooks/equipe-contexto.mjs' -and $sub[1].matcher -eq 'implementador|.*[Rr]evis.*|.*[Rr]eview.*' -and [string](@(@($sub[1].hooks)[0].args)[0]) -like '*/hooks/equipe-eventos.mjs')
     $pre = @($s.hooks.PreToolUse)
     Conferir 'limpa: um grupo so antes das ferramentas, com o equipe-pre' ($pre.Count -eq 1 -and @($pre[0].hooks).Count -eq 1 -and [string](@(@($pre[0].hooks)[0].args)[0]) -like '*/hooks/equipe-pre.mjs')
     Conferir 'limpa: diagnostico rodou no fim, sem erro' ($r.texto -match 'Diagn.stico da equipe' -and $r.texto -match 'Resumo:' -and $r.texto -notmatch '  ERRO ')

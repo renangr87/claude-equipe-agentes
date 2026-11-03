@@ -51,7 +51,7 @@
         ]
       },
       {
-        "matcher": "implementador",
+        "matcher": "implementador|.*[Rr]evis.*|.*[Rr]eview.*",
         "hooks": [
           {
             "type": "command",
@@ -81,7 +81,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|Agent|Task|mcp__codebase-memory__.*",
+        "matcher": "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|Agent|Task|AskUserQuestion|mcp__codebase-memory__.*",
         "hooks": [
           {
             "type": "command",
@@ -96,7 +96,7 @@
     ],
     "PostToolUseFailure": [
       {
-        "matcher": "Bash|PowerShell",
+        "matcher": "Bash|PowerShell|Agent|Task",
         "hooks": [
           {
             "type": "command",

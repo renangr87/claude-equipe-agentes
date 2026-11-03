@@ -367,7 +367,7 @@ test('escopo: lista o que mudou e o que ficou fora do escopo do briefing', () =>
 // ---------- revisão obrigatória ----------
 
 test('revisão: mudança grande sem revisor barra o fim uma vez; depois do revisor, passa', () => {
-  const { claude, env } = ambiente();
+  const { claude, env } = ambiente({ EQUIPE_DESLIGAR: 'prova' });
   const raiz = projeto({ mapa: false });
   const arq = path.join(raiz, 'lib', 'a1.dart');
   const pedido = (prompt) => rodar(EVENTOS, { hook_event_name: 'UserPromptSubmit', session_id: 'sr', cwd: raiz, prompt }, env);
@@ -386,7 +386,7 @@ test('revisão: mudança grande sem revisor barra o fim uma vez; depois do revis
   assert.equal(fim({ stop_hook_active: true }), null);
   assert.ok(registro(claude).some((l) => l[1] === 'revisao' && l[2] === 'concluiu-sem-revisao'));
   // O revisor roda: a mudança fica revisada; um ajuste pequeno depois não pede outra.
-  rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: 'sr', agent_id: 'r1', agent_type: 'revisor', cwd: raiz }, env);
+  rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: 'sr', agent_id: 'r1', agent_type: 'revisor', cwd: raiz, last_assistant_message: 'Veredito: APROVADO' }, env);
   assert.equal(fim(), null);
   editar('// ajuste\n');
   assert.equal(fim(), null);
@@ -413,7 +413,7 @@ test('revisão: mudança grande sem revisor barra o fim uma vez; depois do revis
 });
 
 test('revisão: área sensível (padrão e do CLAUDE.md) pede revisor mesmo em mudança pequena', () => {
-  const { env } = ambiente();
+  const { env } = ambiente({ EQUIPE_DESLIGAR: 'prova' });
   const raiz = projeto({ mapa: false });
   escrever(path.join(raiz, 'CLAUDE.md'), '# P\n\n## Regras deste projeto\n\n- Áreas sensíveis além das globais: `lib/a5.dart`, `scripts/`.\n');
   escrever(path.join(raiz, 'supabase', 'migrations', '001.sql'), 'select 1;\n');
@@ -515,23 +515,29 @@ test('convergência: a mesma falha depois de duas tentativas avisa o mestre e ba
   const raiz = projeto({ mapa: false });
   const sessao = 'sc';
   let n = 0;
-  const fimVerificador = (relatorio) => rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: sessao, agent_id: `v${++n}`, agent_type: 'verificador', cwd: raiz, last_assistant_message: relatorio }, env);
+  // O verificador roda os comandos (o hook anota o resultado) e depois entrega o relatório.
+  const fimVerificador = (relatorio, comandos = []) => {
+    const id = `v${++n}`;
+    for (const [comando, ok] of comandos) rodar(POS, { hook_event_name: ok ? 'PostToolUse' : 'PostToolUseFailure', session_id: sessao, agent_id: id, agent_type: 'verificador', cwd: raiz, tool_name: 'Bash', tool_input: { command: comando } }, env);
+    return rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: sessao, agent_id: id, agent_type: 'verificador', cwd: raiz, last_assistant_message: relatorio }, env);
+  };
   const fimImplementador = () => rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: sessao, agent_id: `i${++n}`, agent_type: 'implementador', cwd: raiz }, env);
   const depoisDoVerificador = () => rodar(POS, { session_id: sessao, cwd: raiz, tool_name: 'Agent', tool_input: { subagent_type: 'verificador', prompt: 'Rode: flutter test' } }, env);
   const implementador = (prompt, extra = {}) => rodar(PRE, { session_id: sessao, cwd: raiz, tool_name: 'Agent', tool_input: { subagent_type: 'implementador', prompt, ...extra } }, env);
   const falha = 'flutter test: falhou (1 de 12).\n- cupom reduz o total, test/cupom_test.dart:12: esperado 90, apareceu 100.';
+  const vermelho = [['flutter test', false]];
   const bom = 'Objetivo: corrigir o cupom.\nEscopo: lib/cupom.dart e test/cupom_test.dart.\nCritério de aceite: o teste passa.\nComo verificar: flutter test test/cupom_test.dart';
 
   // A verificação que reproduz o bug, antes de qualquer tentativa, não conta.
-  fimVerificador(falha);
+  fimVerificador(falha, vermelho);
   fimImplementador();
-  fimVerificador(falha);
+  fimVerificador(falha, vermelho);
   assert.equal(depoisDoVerificador(), null, 'uma tentativa só: nada a dizer');
   assert.equal(implementador(bom), null);
-  // Segunda tentativa com a mesma falha.
+  // Segunda tentativa com a mesma falha (noutra linha: a correção mudou o arquivo).
   fimImplementador();
-  fimVerificador(falha.replace('(1 de 12)', '(1 de 12, de novo)'));
-  assert.match(contexto(depoisDoVerificador()), /mesma falha voltou depois de 2 tentativas do implementador \(test\/cupom_test\.dart:12\)/);
+  fimVerificador(falha.replace('(1 de 12)', '(1 de 12, de novo)').replace(':12:', ':15:'), vermelho);
+  assert.match(contexto(depoisDoVerificador()), /mesma falha voltou depois de 2 tentativas do implementador \(test\/cupom_test\.dart\)/);
   assert.equal(depoisDoVerificador(), null, 'o aviso sai uma vez');
   let s = implementador(bom);
   assert.equal(decisao(s), 'deny');
@@ -540,19 +546,90 @@ test('convergência: a mesma falha depois de duas tentativas avisa o mestre e ba
   assert.equal(implementador(bom), null);
   assert.ok(registro(claude).some((l) => l[1] === 'convergencia' && l[2] === 'valvula'));
   assert.equal(decisao(implementador(`${bom}\nContexto: tente de novo.`)), 'deny');
+  // "Já tentado" vazio não é abordagem nova.
+  assert.equal(decisao(implementador(`${bom}\nJá tentado: -`)), 'deny');
   // Com outra abordagem registrada (título e lista numerada), com opus, ou noutra tarefa: segue.
   assert.equal(implementador(`${bom}\n\n## Já tentado\n1. trocar a ordem do desconto: o total continuou 100`), null);
   assert.equal(implementador(bom, { model: 'opus' }), null);
   assert.equal(implementador('Objetivo: tela de perfil.\nEscopo: lib/perfil.dart.\nCritério de aceite: abre.\nComo verificar: flutter test'), null);
-  // Verificação que passou zera tudo; a mesma falha num episódio novo volta a ser cobrada.
+  // "Passou" só no texto, ou só o lint verde, não zera: o teste que falhou continua aberto.
   fimVerificador('flutter test: passou (12 de 12).');
-  assert.equal(implementador(bom), null);
+  fimVerificador('flutter analyze: sem problemas.', [['flutter analyze', true]]);
+  assert.equal(decisao(implementador(`${bom}\nContexto: depois do lint.`)), 'deny');
+  // O mesmo comando passou sem filtro: zera; a mesma falha num episódio novo volta a ser cobrada.
+  fimVerificador('flutter test: passou (12 de 12).', [['flutter test', true]]);
+  assert.equal(implementador(`${bom}\nContexto: depois do verde.`), null);
   fimImplementador();
-  fimVerificador(falha);
+  fimVerificador(falha, vermelho);
   fimImplementador();
-  fimVerificador(falha);
+  fimVerificador(falha, vermelho);
   assert.match(contexto(depoisDoVerificador()), /depois de 2 tentativas/);
   assert.equal(decisao(implementador(bom)), 'deny');
+});
+
+test('convergência: três tentativas com a mesma falha param o implementador até o usuário falar', () => {
+  const { env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const sessao = 'sp';
+  let n = 0;
+  const fimVerificador = (relatorio) => {
+    const id = `v${++n}`;
+    rodar(POS, { hook_event_name: 'PostToolUseFailure', session_id: sessao, agent_id: id, agent_type: 'verificador', cwd: raiz, tool_name: 'Bash', tool_input: { command: 'flutter test' } }, env);
+    return rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: sessao, agent_id: id, agent_type: 'verificador', cwd: raiz, last_assistant_message: relatorio }, env);
+  };
+  const fimImplementador = (escopo) => rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: sessao, agent_id: `i${++n}`, agent_type: 'implementador', cwd: raiz, agent_transcript_path: transcricaoComBriefing(env.EQUIPE_PASTA_CLAUDE, `Objetivo: x\nEscopo: ${escopo}\nCritério de aceite: y`) }, env);
+  const implementador = (prompt, extra = {}) => rodar(PRE, { session_id: sessao, cwd: raiz, tool_name: 'Agent', tool_input: { subagent_type: 'implementador', prompt, ...extra } }, env);
+  const brief = (k) => `Objetivo: corrigir o cupom, tentativa ${k}.\nEscopo: lib/cupom.dart.\nCritério de aceite: passa.\nComo verificar: flutter test\n\n## Já tentado\n- a abordagem anterior, que não resolveu o desconto (${k})`;
+  rodar(EVENTOS, { hook_event_name: 'UserPromptSubmit', session_id: sessao, cwd: raiz, prompt: 'faça a, b e c, e corrija o cupom' }, env);
+  // Tarefas diferentes, cada uma com a sua falha: não somam.
+  for (const t of ['a', 'b', 'c']) { fimImplementador(`lib/${t}.dart`); fimVerificador(`Falhou: test/${t}_test.dart:1`); }
+  assert.equal(implementador(brief(0)), null, 'três tarefas diferentes vermelhas: segue');
+  // A mesma falha (noutra linha a cada vez) em três tentativas que mexeram nela: para.
+  for (const k of [1, 2]) { fimImplementador('lib/cupom.dart'); fimVerificador(`Falhou: test/cupom_test.dart:${10 + k}`); }
+  assert.equal(implementador(brief(3)), null, 'duas tentativas, com "Já tentado": ainda segue');
+  fimImplementador('lib/cupom.dart');
+  fimVerificador('Falhou: test/cupom_test.dart:15');
+  const s = implementador(brief(4), { model: 'opus' });
+  assert.equal(decisao(s), 'deny');
+  assert.match(motivo(s), /3 tentativas do implementador terminaram com a mesma falha.*Pare aqui e explique ao usuário/s);
+  assert.equal(decisao(implementador(brief(4), { model: 'opus' })), 'deny', 'sem válvula');
+  // O fim da resposta não cobra revisão nem teste: o mestre foi mandado parar e explicar.
+  const arq = path.join(raiz, 'lib', 'a1.dart');
+  fs.appendFileSync(arq, '// x\n'.repeat(80));
+  rodar(POS, { session_id: sessao, cwd: raiz, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+  assert.equal(rodar(EVENTOS, { hook_event_name: 'Stop', session_id: sessao, cwd: raiz }, env), null);
+  // A próxima mensagem do usuário tira a parada, e a conta recomeça.
+  rodar(EVENTOS, { hook_event_name: 'UserPromptSubmit', session_id: sessao, cwd: raiz, prompt: 'tente mais uma vez, olhando o fuso' }, env);
+  assert.equal(implementador(brief(5)), null);
+});
+
+test('convergência: falha só anterior à mudança (teste legado vermelho) não conta', () => {
+  const { env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const sessao = 'sl2';
+  let n = 0;
+  const legado = 'flutter test: falhou (1 de 40).\n- Falhas que parecem anteriores à mudança:\n  - test/legado_test.dart:9 (já falhava)';
+  for (let k = 0; k < 4; k++) {
+    rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: sessao, agent_id: `i${++n}`, agent_type: 'implementador', cwd: raiz }, env);
+    const id = `v${++n}`;
+    rodar(POS, { hook_event_name: 'PostToolUseFailure', session_id: sessao, agent_id: id, agent_type: 'verificador', cwd: raiz, tool_name: 'Bash', tool_input: { command: 'flutter test' } }, env);
+    rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: sessao, agent_id: id, agent_type: 'verificador', cwd: raiz, last_assistant_message: legado }, env);
+  }
+  const s = rodar(PRE, { session_id: sessao, cwd: raiz, tool_name: 'Agent', tool_input: { subagent_type: 'implementador', prompt: 'Objetivo: x.\nEscopo: lib/legado.dart.\nCritério de aceite: y.\nComo verificar: flutter test' } }, env);
+  assert.equal(s, null);
+  assert.equal(rodar(POS, { session_id: sessao, cwd: raiz, tool_name: 'Bash', tool_input: { command: 'git status' } }, env), null, 'sem aviso de falha repetida');
+});
+
+test('convergência: o implementador recebe a falha aberta ao começar', () => {
+  const { env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const inicio = () => rodar(EVENTOS, { hook_event_name: 'SubagentStart', session_id: 'sa', agent_id: 'i9', agent_type: 'implementador', cwd: raiz }, env);
+  assert.equal(inicio(), null, 'sem falha aberta: nada');
+  rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: 'sa', agent_id: 'v1', agent_type: 'verificador', cwd: raiz, last_assistant_message: 'flutter test: falhou (1 de 9).\n- total com cupom, test/cupom_test.dart:12: esperado 90, apareceu 100.\n- Falhas anteriores à mudança:\n  - test/velho_test.dart:3' }, env);
+  const s = inicio();
+  assert.equal(s.hookSpecificOutput.hookEventName, 'SubagentStart');
+  assert.match(s.hookSpecificOutput.additionalContext, /test\/cupom_test\.dart:12: esperado 90, apareceu 100/);
+  assert.ok(!s.hookSpecificOutput.additionalContext.includes('velho_test'));
 });
 
 test('convergência: relatório aprovado, falha anterior à mudança e aviso do analisador não contam', async () => {
@@ -560,8 +637,10 @@ test('convergência: relatório aprovado, falha anterior à mudança e aviso do 
   const { statusDoRelatorio } = await import(new URL('../hooks/equipe-comum.mjs', import.meta.url).href);
   assert.equal(statusDoRelatorio('verificador', 'flutter analyze: 0 erros, 0 falhas; info em lib/a.dart:3'), 'passou');
   assert.equal(statusDoRelatorio('verificador', 'Nenhuma falha. Teste novo test/x_test.dart:12 passou.'), 'passou');
-  assert.equal(assinaturaDaFalha('Falhou (2):\n- total, test/a_test.dart:5: esperado 1, apareceu 2\n- Falhas que parecem anteriores à mudança:\n  - test/velho_test.dart:9 (já falhava)\n- info - lib/b.dart:3 - prefer const'), 'test/a_test.dart:5');
-  assert.equal(assinaturaDaFalha('FAILED src\\Pedidos\\Cupom.ts:7 e test/x.test.ts:20'), 'src/pedidos/cupom.ts:7 test/x.test.ts:20');
+  assert.equal(assinaturaDaFalha('Falhou (2):\n- total, test/a_test.dart:5: esperado 1, apareceu 2\n- Falhas que parecem anteriores à mudança:\n  - test/velho_test.dart:9 (já falhava)\n- info - lib/b.dart:3 - prefer const'), 'test/a_test.dart');
+  assert.equal(assinaturaDaFalha('FAILED src\\Pedidos\\Cupom.ts:7 e test/x.test.ts:20'), 'src/pedidos/cupom.ts test/x.test.ts');
+  // A linha não entra: a própria correção a muda, e a falha é a mesma.
+  assert.equal(assinaturaDaFalha('Falhou: test/a_test.dart:12'), assinaturaDaFalha('Falhou: test/a_test.dart:15'));
   assert.equal(assinaturaDaFalha('Falhou, mas sem dizer onde.'), null);
 });
 
@@ -618,7 +697,7 @@ test('boletim: o plano lembra o que já foi tentado', () => {
 });
 
 test('revisão: teste volta com um clique; schema e tela contam', () => {
-  const { env } = ambiente();
+  const { env } = ambiente({ EQUIPE_DESLIGAR: 'prova' });
   const raiz = projeto({ mapa: false });
   escrever(path.join(raiz, 'prisma', 'schema.prisma'), 'model A {}\n');
   escrever(path.join(raiz, 'web', 'index.html'), '<p></p>\n');
@@ -637,7 +716,7 @@ test('revisão: teste volta com um clique; schema e tela contam', () => {
 });
 
 test('revisão: commit depois da revisão não conta como mudança nova; edição depois, sim', () => {
-  const { env } = ambiente();
+  const { env } = ambiente({ EQUIPE_DESLIGAR: 'prova' });
   const raiz = projeto({ mapa: false });
   const sessao = 'rc';
   const arq = path.join(raiz, 'supabase', 'migrations', '20260101_nova.sql');
@@ -645,7 +724,7 @@ test('revisão: commit depois da revisão não conta como mudança nova; ediçã
   rodar(POS, { session_id: sessao, cwd: raiz, tool_name: 'Write', tool_input: { file_path: arq } }, env);
   const fim = () => rodar(EVENTOS, { hook_event_name: 'Stop', session_id: sessao, cwd: raiz }, env);
   assert.equal(fim().decision, 'block');
-  rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: sessao, agent_id: 'r1', agent_type: 'revisor', cwd: raiz }, env);
+  rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: sessao, agent_id: 'r1', agent_type: 'revisor', cwd: raiz, last_assistant_message: '- **Veredito**: APROVADO COM RESSALVAS' }, env);
   assert.equal(fim(), null);
   git(raiz, 'add', '--', 'supabase/migrations/20260101_nova.sql');
   git(raiz, 'commit', '-q', '-m', 'migração revisada');
@@ -668,20 +747,21 @@ test('briefing do revisor: sessão numa pasta fora do repositório acha o diff n
   const arq = path.join(raiz, 'lib', 'a1.dart');
   fs.appendFileSync(arq, '// x\n');
   rodar(POS, { session_id: sessao, cwd: solta, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
-  escrever(path.join(raiz, '.revisao', 'diff.patch'), 'diff\n');
+  fs.mkdirSync(path.join(raiz, '.revisao'), { recursive: true });
+  git(raiz, 'diff', 'HEAD', '--output=.revisao/diff.patch');
   assert.equal(revisor('Diff: .revisao/diff.patch. Objetivo: y.'), null);
   assert.match(motivo(revisor('Diff: .revisao/outro.patch. Objetivo: z.')), /não foi encontrado/);
 });
 
 test('revisão: o revisor próprio do projeto (plugin) também conta', () => {
-  const { env } = ambiente();
+  const { env } = ambiente({ EQUIPE_DESLIGAR: 'prova' });
   const raiz = projeto({ mapa: false });
   const arq = path.join(raiz, 'lib', 'a1.dart');
   fs.appendFileSync(arq, '// linha\n'.repeat(60));
   rodar(POS, { session_id: 'rp', cwd: raiz, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
   const fim = () => rodar(EVENTOS, { hook_event_name: 'Stop', session_id: 'rp', cwd: raiz }, env);
   assert.equal(fim().decision, 'block');
-  rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: 'rp', agent_id: 'x1', agent_type: 'estudio-dark:revisor-visual', cwd: raiz }, env);
+  rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: 'rp', agent_id: 'x1', agent_type: 'meu-plugin:revisor-visual', cwd: raiz }, env);
   assert.equal(fim(), null);
 });
 
@@ -700,3 +780,492 @@ test('interruptor por projeto: .claude/equipe.json desliga só naquele projeto',
   const s = rodar(PRE, { session_id: 'ip3', cwd: raiz, tool_name: 'Bash', tool_input: { command: 'supabase db push' } }, { ...env, CLAUDE_PROJECT_DIR: raiz });
   assert.equal(decisao(s), 'ask');
 });
+
+// ---------- revisão: só a aprovação conta, e vale para o que o revisor viu ----------
+
+test('revisão: revisor que reprova não libera; o fim cobra uma vez com os achados', () => {
+  const { claude, env } = ambiente({ EQUIPE_DESLIGAR: 'prova' });
+  const raiz = projeto({ mapa: false });
+  const arq = path.join(raiz, 'lib', 'a1.dart');
+  fs.appendFileSync(arq, '// linha\n'.repeat(60));
+  rodar(POS, { session_id: 'rr', cwd: raiz, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+  const fim = (extra = {}) => rodar(EVENTOS, { hook_event_name: 'Stop', session_id: 'rr', cwd: raiz, ...extra }, env);
+  const revisor = (id, tipo, msg) => rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: 'rr', agent_id: id, agent_type: tipo, cwd: raiz, last_assistant_message: msg }, env);
+  revisor('r1', 'revisor', '- **Veredito**: REPROVADO\n- **Achados**: crítico, 95, lib/a1.dart:3, a consulta junta texto do usuário no SQL.');
+  let s = fim();
+  assert.equal(s.decision, 'block');
+  assert.match(s.reason, /o revisor reprovou a mudança \(.*a consulta junta texto do usuário/);
+  assert.equal(fim({ stop_hook_active: true }), null);
+  assert.ok(registro(claude).some((l) => l[1] === 'revisao' && l[2] === 'reprovou'));
+  // Revisor da equipe sem veredito (bloqueado, faltou o diff) não conta como revisão.
+  revisor('r2', 'revisor', 'Bloqueado: faltou o diff.');
+  assert.ok(registro(claude).some((l) => l[1] === 'revisao' && l[2] === 'sem-veredito'));
+  // Aprovado: passa.
+  revisor('r3', 'revisor', 'Veredito: APROVADO');
+  assert.equal(fim(), null);
+  // Revisor de plugin que reprova do jeito dele também não libera.
+  fs.appendFileSync(arq, '// mais\n'.repeat(60));
+  rodar(POS, { session_id: 'rr', cwd: raiz, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+  revisor('p1', 'meu-plugin:revisor', 'Nota 4. Rejeitado: o texto não segue o roteiro.');
+  assert.match(fim().reason, /o revisor reprovou/);
+});
+
+test('revisão: o que muda enquanto o revisor lê conta como mudança nova', () => {
+  const { env } = ambiente({ EQUIPE_DESLIGAR: 'prova' });
+  const raiz = projeto({ mapa: false });
+  const a1 = path.join(raiz, 'lib', 'a1.dart');
+  const a2 = path.join(raiz, 'lib', 'a2.dart');
+  fs.appendFileSync(a1, '// linha\n'.repeat(60));
+  rodar(POS, { session_id: 'rf', cwd: raiz, tool_name: 'Edit', tool_input: { file_path: a1 } }, env);
+  const base = { session_id: 'rf', agent_id: 'r1', agent_type: 'revisor', cwd: raiz };
+  rodar(EVENTOS, { ...base, hook_event_name: 'SubagentStart' }, env);
+  // Durante a revisão, outra mudança grande.
+  fs.appendFileSync(a2, '// outra\n'.repeat(60));
+  rodar(POS, { session_id: 'rf', cwd: raiz, tool_name: 'Edit', tool_input: { file_path: a2 } }, env);
+  rodar(EVENTOS, { ...base, hook_event_name: 'SubagentStop', last_assistant_message: 'Veredito: APROVADO' }, env);
+  const s = rodar(EVENTOS, { hook_event_name: 'Stop', session_id: 'rf', cwd: raiz }, env);
+  assert.match(s.reason, /60 linhas mudadas sem revisão/);
+});
+
+test('briefing do revisor: diff velho, diff que não cobre a mudança e área sensível sem opus', () => {
+  const { claude, env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const sessao = 'bv';
+  const editar = (rel, texto) => {
+    const arq = path.join(raiz, rel);
+    if (fs.existsSync(arq)) fs.appendFileSync(arq, texto); else escrever(arq, texto);
+    rodar(POS, { session_id: sessao, cwd: raiz, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+  };
+  const revisor = (prompt, extra = {}) => rodar(PRE, { session_id: sessao, cwd: raiz, tool_name: 'Agent', tool_input: { subagent_type: 'revisor', prompt, ...extra } }, env);
+  const gravarDiff = () => { fs.mkdirSync(path.join(raiz, '.revisao'), { recursive: true }); git(raiz, 'diff', 'HEAD', '--output=.revisao/diff.patch'); };
+  editar('lib/a1.dart', '// um\n');
+  gravarDiff();
+  assert.equal(revisor('Diff: .revisao/diff.patch. Objetivo: x.'), null);
+  // Editou depois de gravar o diff: o diff está velho.
+  editar('lib/a1.dart', '// dois\n');
+  assert.match(motivo(revisor('Diff: .revisao/diff.patch. Objetivo: y.')), /diff\.patch está velho: lib\/a1\.dart/);
+  gravarDiff();
+  // Arquivo novo fora do git: não está no diff, precisa estar no briefing.
+  editar('lib/novo.dart', 'void n() {}\n');
+  assert.match(motivo(revisor('Diff: .revisao/diff.patch. Objetivo: z.')), /o diff não inclui lib\/novo\.dart/);
+  assert.equal(revisor('Diff: .revisao/diff.patch. Arquivos novos: lib/novo.dart. Objetivo: z.'), null);
+  // Área sensível pede opus.
+  editar('lib/auth/sessao.dart', 'void s() {}\n');
+  const p = 'Diff: .revisao/diff.patch. Arquivos novos: lib/novo.dart, lib/auth/sessao.dart. Objetivo: w.';
+  assert.match(motivo(revisor(p)), /área sensível \(lib\/auth\/sessao\.dart\): chame o revisor com model: opus/);
+  assert.equal(revisor(p, { model: 'opus' }), null);
+  // Válvula: o mesmo briefing de novo passa e fica registrado.
+  assert.equal(revisor(p), null);
+  assert.ok(registro(claude).some((l) => l[1] === 'revisor' && l[2] === 'valvula'));
+});
+
+// ---------- o que a sessão mudou: também pelo terminal ----------
+
+test('revisão: mudança feita pelo terminal conta; o que já estava mudado antes da sessão, não', () => {
+  const { env } = ambiente({ EQUIPE_DESLIGAR: 'prova' });
+  const raiz = projeto({ mapa: false });
+  // O usuário já tinha uma mudança grande antes da sessão.
+  fs.appendFileSync(path.join(raiz, 'lib', 'a9.dart'), '// do usuário\n'.repeat(80));
+  rodar(EVENTOS, { hook_event_name: 'UserPromptSubmit', session_id: 'tb', cwd: raiz, prompt: 'arrume a tela' }, env);
+  const fim = () => rodar(EVENTOS, { hook_event_name: 'Stop', session_id: 'tb', cwd: raiz }, env);
+  assert.equal(fim(), null);
+  // Um script (ou um agente sem as travas) escreve 70 linhas sem Edit/Write.
+  escrever(path.join(raiz, 'lib', 'gerado_por_script.dart'), '// x\n'.repeat(70));
+  assert.match(fim().reason, /7\d linhas mudadas sem revisão/);
+  // Código gerado (build_runner) não conta.
+  rodar(EVENTOS, { hook_event_name: 'UserPromptSubmit', session_id: 'tb2', cwd: raiz, prompt: 'gere os modelos' }, env);
+  escrever(path.join(raiz, 'lib', 'modelo.g.dart'), '// gerado\n'.repeat(300));
+  const s = rodar(EVENTOS, { hook_event_name: 'Stop', session_id: 'tb2', cwd: raiz }, env);
+  assert.equal(s, null);
+});
+
+// ---------- prova: verificação verde com o código de agora ----------
+
+test('prova: o fim barra uma vez sem verde; linha da lista sem filtro passando libera', () => {
+  const { claude, env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const sessao = 'pv';
+  const arq = path.join(raiz, 'lib', 'a1.dart');
+  const pedido = (prompt) => rodar(EVENTOS, { hook_event_name: 'UserPromptSubmit', session_id: sessao, cwd: raiz, prompt }, env);
+  const editar = () => { fs.appendFileSync(arq, `// ${Math.random()}\n`); rodar(POS, { session_id: sessao, cwd: raiz, tool_name: 'Edit', tool_input: { file_path: arq } }, env); };
+  const rodou = (comando, ok, extra = {}) => rodar(POS, { hook_event_name: ok ? 'PostToolUse' : 'PostToolUseFailure', session_id: sessao, cwd: raiz, tool_name: 'Bash', tool_input: { command: comando }, ...extra }, env);
+  const fim = (extra = {}) => rodar(EVENTOS, { hook_event_name: 'Stop', session_id: sessao, cwd: raiz, ...extra }, env);
+  pedido('corrija o total');
+  editar();
+  let s = fim();
+  assert.equal(s.decision, 'block');
+  assert.match(s.reason, /nenhuma linha da lista rodou depois da última mudança.*flutter test/s);
+  assert.equal(fim({ stop_hook_active: true }), null);
+  assert.equal(fim(), null, 'a mesma versão do código não cobra de novo');
+  // No mesmo pedido, código novo depois da cobrança não cobra de novo.
+  editar();
+  assert.equal(fim(), null, 'uma vez por pedido');
+  // Pedido novo, código novo: só o filtro passou ("-t nada" passa sem rodar teste), e o lint.
+  pedido('agora o frete');
+  editar();
+  rodou('flutter test --name nao_existe', true, { agent_type: 'verificador', agent_id: 'v1' });
+  rodou('flutter analyze', true, { agent_type: 'verificador', agent_id: 'v1' });
+  assert.match(fim().reason, /passou flutter analyze, mas nenhum teste rodou sem filtro/);
+  // Pedido novo, código novo: a linha falhou.
+  pedido('e o desconto');
+  editar();
+  rodou('flutter test', false, { agent_type: 'verificador', agent_id: 'v2' });
+  assert.match(fim().reason, /falhou com o código de agora \(flutter test\)/);
+  // Código novo: a linha passou sem filtro (qualquer agente, com o código de agora; "2>&1" não
+  // muda o comando). Libera, e o commit depois não muda nada.
+  pedido('mais um ajuste');
+  editar();
+  rodou('flutter test 2>&1', true, { agent_type: 'implementador', agent_id: 'i1' });
+  assert.equal(fim(), null);
+  git(raiz, 'add', '--', 'lib/a1.dart');
+  git(raiz, 'commit', '-q', '-m', 'total');
+  assert.equal(fim(), null);
+  // Com pipe, o código de saída é o do último programa: não prova.
+  pedido('outro ajuste');
+  editar();
+  rodou('flutter test | tail -5', true);
+  assert.equal(fim().decision, 'block');
+  assert.ok(registro(claude).some((l) => l[1] === 'prova' && l[2] === 'barrou'));
+  // Saída que mostra falha, mesmo dada como certa, não é verde.
+  pedido('de novo');
+  editar();
+  rodou('flutter test', true, { tool_response: { stdout: '00:02 +11 -1: Some tests failed.', stderr: '' } });
+  assert.match(fim().reason, /falhou com o código de agora/);
+});
+
+test('prova: "sem testes" no pedido, projeto sem lista e só documentação não cobram', () => {
+  const { env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const editar = (sessao, rel) => {
+    const arq = path.join(raiz, rel);
+    fs.appendFileSync(arq, '// x\n');
+    rodar(POS, { session_id: sessao, cwd: raiz, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+    return rodar(EVENTOS, { hook_event_name: 'Stop', session_id: sessao, cwd: raiz }, env);
+  };
+  rodar(EVENTOS, { hook_event_name: 'UserPromptSubmit', session_id: 'p1', cwd: raiz, prompt: 'ajuste o texto, sem rodar os testes' }, env);
+  assert.equal(editar('p1', 'lib/a2.dart'), null);
+  assert.equal(editar('p2', 'README.md'), null);
+  const semLista = tmp('sem-lista');
+  git(semLista, 'init', '-q');
+  escrever(path.join(semLista, 'lib', 'a.dart'), 'void a() {}\n');
+  git(semLista, 'add', '-A');
+  git(semLista, 'commit', '-q', '-m', 'i');
+  fs.appendFileSync(path.join(semLista, 'lib', 'a.dart'), '// x\n');
+  rodar(POS, { session_id: 'p3', cwd: semLista, tool_name: 'Edit', tool_input: { file_path: path.join(semLista, 'lib', 'a.dart') } }, env);
+  assert.equal(rodar(EVENTOS, { hook_event_name: 'Stop', session_id: 'p3', cwd: semLista }, env), null);
+});
+
+test('prova: o status do verificador sai do resultado dos comandos', () => {
+  const { env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const sessao = 'ps';
+  const fimImpl = (id) => rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: sessao, agent_id: id, agent_type: 'implementador', cwd: raiz }, env);
+  const verificador = (id, ok, relatorio) => {
+    rodar(POS, { hook_event_name: ok ? 'PostToolUse' : 'PostToolUseFailure', session_id: sessao, agent_id: id, agent_type: 'verificador', cwd: raiz, tool_name: 'Bash', tool_input: { command: 'flutter test' } }, env);
+    rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: sessao, agent_id: id, agent_type: 'verificador', cwd: raiz, last_assistant_message: relatorio }, env);
+  };
+  const chamar = () => rodar(PRE, { session_id: sessao, cwd: raiz, tool_name: 'Agent', tool_input: { subagent_type: 'implementador', prompt: `Objetivo: x ${Math.random()}.\nEscopo: lib/cupom.dart.\nCritério de aceite: y.\nComo verificar: flutter test` } }, env);
+  // O comando passou; o texto fala de uma falha antiga que agora passa: não é falha.
+  for (const k of ['1', '2', '3']) { fimImpl(`i${k}`); verificador(`v${k}`, true, 'O teste de test/cupom_test.dart:3, que falhou na rodada anterior, agora passa.'); }
+  assert.equal(chamar(), null);
+  // O relatório diz "passou", mas o comando falhou: conta como falha.
+  for (const k of ['4', '5', '6']) { fimImpl(`i${k}`); verificador(`v${k}`, false, 'Tudo passou. Detalhe em test/cupom_test.dart:3.'); }
+  assert.match(motivo(chamar()), /3 tentativas do implementador terminaram com a mesma falha/);
+});
+
+test('status do relatório do verificador: contagem de erro, comando barrado e nenhum teste', async () => {
+  const { statusDoRelatorio: st } = await import(new URL('../hooks/equipe-comum.mjs', import.meta.url).href);
+  assert.equal(st('verificador', '0 falhas, mas a compilação quebrou com 3 erros'), 'com falha');
+  assert.equal(st('verificador', 'pytest: 0 failed, 2 errors (collection)'), 'com falha');
+  assert.equal(st('verificador', 'flutter test: comando bloqueado pela guarda; o analyze passou'), 'bloqueado');
+  assert.equal(st('verificador', 'Rodei npm test -- -t nada: 0 testes, 0 falhas'), 'sem status');
+  assert.equal(st('verificador', 'Exit code 1. Tudo ok com os testes de unidade, mas o build falhou'), 'com falha');
+  assert.equal(st('verificador', 'Nada foi bloqueado. flutter test passou: 40 testes, 0 falharam.'), 'passou');
+  assert.equal(st('verificador', 'flutter test: 12 testes, 0 falhas. flutter analyze: nenhum problema.'), 'passou');
+});
+
+// ---------- verificação do implementador: o programa de teste tem de ser o comando ----------
+
+test('implementador: citar o nome do programa de teste não é verificação', async () => {
+  const { ehVerificacao } = await import(new URL('../hooks/equipe-entrega.mjs', import.meta.url).href);
+  for (const c of ['cat jest.config.js', 'grep -rn pytest .', 'echo vitest', 'ls test/']) assert.equal(ehVerificacao(c, ['flutter test']), false, c);
+  for (const c of ['flutter test test/a_test.dart', 'cd app && npm test', 'CI=1 npx jest x', './gradlew test', 'python -m pytest -q', 'pnpm exec vitest run']) assert.equal(ehVerificacao(c, null), true, c);
+  assert.equal(ehVerificacao('cd app && flutter test', ['cd app && flutter test']), true);
+});
+
+// ---------- agente genérico, push, paralelo e caixa de entrega ----------
+
+test('briefing: agente genérico mandado mudar código é barrado uma vez; só leitura passa', () => {
+  const { env } = ambiente();
+  const raiz = projeto();
+  const agente = (subagent_type, prompt) => rodar(PRE, { session_id: 'gp', cwd: raiz, tool_name: 'Agent', tool_input: { subagent_type, prompt } }, env);
+  const p = 'Corrija o bug do total em lib/a1.dart e escreva o teste.';
+  assert.match(motivo(agente('general-purpose', p)), /chame o implementador com o briefing/);
+  assert.equal(agente('general-purpose', p), null, 'válvula');
+  assert.equal(agente('general-purpose', 'Pesquise como corrigir o fuso do lib/a1.dart. Só leitura: não edite nada.'), null);
+  assert.equal(agente('general-purpose', 'Resuma as notícias da semana sobre Flutter.'), null);
+  assert.equal(agente('general-purpose', 'Pesquise bibliotecas para Node.js e escreva um resumo com links de docs.example.com.'), null);
+});
+
+test('push: pede confirmação quando o pedido não falou em push', () => {
+  const { claude, env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const transcricao = path.join(claude, 'projects', '-p', 'pp.jsonl');
+  const falaDoMestre = (texto) => escrever(transcricao, `${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: texto }] } })}\n`);
+  const pedido = (prompt) => rodar(EVENTOS, { hook_event_name: 'UserPromptSubmit', session_id: 'pp', cwd: raiz, prompt, transcript_path: transcricao }, env);
+  const bash = (command, extra = {}) => rodar(PRE, { session_id: 'pp', cwd: raiz, tool_name: 'Bash', tool_input: { command }, ...extra }, env);
+  const fezPush = () => rodar(POS, { session_id: 'pp', cwd: raiz, tool_name: 'Bash', tool_input: { command: 'git push origin main' } }, env);
+  falaDoMestre('Pronto, está no commit local.');
+  pedido('corrija o total');
+  assert.equal(decisao(bash('git push origin main')), 'ask');
+  assert.equal(decisao(bash('cd app && git -C . push')), 'ask');
+  assert.equal(bash('git commit -m "docs: como fazer git push"'), null);
+  assert.equal(bash('echo git push'), null);
+  // Palavra solta não é pedido de push.
+  for (const p of ['o servidor sobe na porta 3000 e o app envia notificação', 'suba o servidor local e rode os testes', 'envie um e-mail de teste', 'mande o resumo do erro aqui']) {
+    pedido(p);
+    assert.equal(decisao(bash('git push')), 'ask', p);
+  }
+  // Pedido com a palavra: passa, e continua valendo nas mensagens seguintes até o push.
+  pedido('implemente X, faça o commit e envie');
+  assert.equal(bash('git push origin main'), null);
+  pedido('ah, use dd/mm/aaaa');
+  assert.equal(bash('git push origin main'), null);
+  fezPush();
+  assert.equal(bash('git push origin main'), null, 'no mesmo pedido, um segundo push (correção do CI) passa');
+  pedido('agora ajuste o README');
+  assert.equal(decisao(bash('git push')), 'ask', 'depois do push, a próxima mensagem precisa pedir de novo');
+  // "ok" logo depois de o mestre perguntar se envia: passa; "ok" para outra coisa, não.
+  falaDoMestre('Commit feito. Envio para o GitHub?');
+  pedido('ok');
+  assert.equal(bash('git push'), null);
+  fezPush();
+  falaDoMestre('Quer que eu rode os testes de novo?');
+  pedido('ok');
+  assert.equal(decisao(bash('git push')), 'ask');
+  // A resposta a uma pergunta de múltipla escolha sobre o envio também conta ("Enviar agora").
+  rodar(POS, { session_id: 'pp', cwd: raiz, tool_name: 'AskUserQuestion', tool_input: { questions: [{ question: 'Envio para o GitHub?' }], answers: { 'Envio para o GitHub?': 'Enviar agora' } } }, env);
+  assert.equal(bash('git push'), null);
+  fezPush();
+  pedido('mais nada');
+  rodar(POS, { session_id: 'pp', cwd: raiz, tool_name: 'AskUserQuestion', tool_input: { questions: [{ question: 'Envio para o GitHub?' }], answers: { 'Envio para o GitHub?': 'Não, deixe para depois' } } }, env);
+  assert.equal(decisao(bash('git push')), 'ask');
+  // Vale para o subagente também (o pedido é o do mestre); não desliga pelo interruptor.
+  assert.equal(decisao(bash('git push', { agent_type: 'general-purpose', agent_id: 'g1' })), 'ask');
+  assert.equal(decisao(rodar(PRE, { session_id: 'pp', cwd: raiz, tool_name: 'Bash', tool_input: { command: 'git push' } }, { ...env, EQUIPE_DESLIGAR: 'tudo' })), 'ask');
+});
+
+test('paralelo: dois implementadores em segundo plano no mesmo arquivo; o fim de um libera', () => {
+  const { claude, env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const brief = (escopo, objetivo) => `Objetivo: ${objetivo}.\nEscopo: ${escopo}.\nCritério de aceite: passa.\nComo verificar: flutter test`;
+  const lancar = (prompt, fundo = true) => rodar(PRE, { session_id: 'pl', cwd: raiz, tool_name: 'Agent', tool_input: { subagent_type: 'implementador', prompt, run_in_background: fundo } }, env);
+  const a = brief('lib/a1.dart e lib/a2.dart', 'tarefa A');
+  assert.equal(lancar(a), null);
+  assert.equal(lancar(brief('lib/a5.dart', 'tarefa B')), null, 'escopos separados');
+  const c = brief('lib/', 'tarefa C');
+  assert.match(motivo(lancar(c)), /outro implementador em segundo plano ainda trabalha em lib\/a1\.dart/);
+  // Válvula (em primeiro plano, que não fica na lista: o mestre espera por ele).
+  assert.equal(lancar(c, false), null, 'válvula');
+  assert.ok(registro(claude).some((l) => l[1] === 'paralelo' && l[2] === 'valvula'));
+  // A termina: o escopo dele sai da lista.
+  const transcricao = transcricaoComBriefing(claude, a);
+  rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: 'pl', agent_id: 'ia', agent_type: 'implementador', cwd: raiz, agent_transcript_path: transcricao }, env);
+  assert.equal(lancar(brief('lib/a2.dart', 'tarefa D')), null);
+  // Nome de tecnologia e prosa no escopo não são caminho: "Node.js" e "e/ou" não se cruzam.
+  assert.equal(lancar(brief('lib/a8.dart e/ou o teste dele, usando Node.js', 'tarefa E')), null);
+  assert.equal(lancar(brief('lib/a9.dart e/ou o teste dele, usando Node.js', 'tarefa F')), null);
+  // Nome de arquivo com maiúscula também é caminho: o cruzamento é visto.
+  assert.equal(lancar(brief('web/App.tsx', 'tarefa I')), null);
+  assert.match(motivo(lancar(brief('App.tsx', 'tarefa J'))), /ainda trabalha em/);
+  // Agent que falhou ao lançar sai da lista.
+  const g = brief('lib/a6.dart', 'tarefa G');
+  assert.equal(lancar(g), null);
+  rodar(POS, { hook_event_name: 'PostToolUseFailure', session_id: 'pl', cwd: raiz, tool_name: 'Agent', tool_input: { subagent_type: 'implementador', prompt: g, run_in_background: true } }, env);
+  assert.equal(lancar(brief('lib/a6.dart', 'tarefa H')), null);
+});
+
+test('escopo: a lista do implementador de segundo plano chega ao mestre na próxima ferramenta', () => {
+  const { claude, env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const base = { session_id: 'cx', agent_type: 'implementador', agent_id: 'ib', cwd: raiz };
+  rodar(EVENTOS, { ...base, hook_event_name: 'SubagentStart' }, env);
+  const arq = path.join(raiz, 'lib', 'a7.dart');
+  fs.appendFileSync(arq, '// fora\n');
+  rodar(POS, { ...base, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+  rodar(POS, { ...base, tool_name: 'Bash', tool_input: { command: 'flutter test' } }, env);
+  const transcricao = transcricaoComBriefing(claude, 'Objetivo: tarefa de fundo\nEscopo: lib/a1.dart\nCritério de aceite: y');
+  rodar(EVENTOS, { ...base, hook_event_name: 'SubagentStop', agent_transcript_path: transcricao }, env);
+  // O mestre roda outra coisa qualquer: recebe a lista uma vez.
+  const outra = () => rodar(POS, { session_id: 'cx', cwd: raiz, tool_name: 'Bash', tool_input: { command: 'git status' } }, env);
+  const t = contexto(outra());
+  assert.match(t, /objetivo: tarefa de fundo/);
+  assert.match(t, /FORA DO ESCOPO \(1\): lib\/a7\.dart/);
+  assert.equal(outra(), null);
+});
+
+test('orçamento do mestre: cat pelo terminal e busca com muito contexto contam como leitura', () => {
+  const { env } = ambiente();
+  const raiz = projeto();
+  rodar(EVENTOS, { hook_event_name: 'UserPromptSubmit', session_id: 'oc', cwd: raiz, prompt: 'entenda o fluxo' }, env);
+  const pre = (tool_name, tool_input) => rodar(PRE, { session_id: 'oc', cwd: raiz, tool_name, tool_input }, env);
+  assert.equal(pre('Bash', { command: `cat ${path.join(raiz, 'lib', 'a1.dart')}` }), null);
+  assert.equal(pre('Grep', { pattern: 'f', path: path.join(raiz, 'lib'), output_mode: 'content', '-C': 40 }), null);
+  assert.equal(pre('Grep', { pattern: 'f', path: path.join(raiz, 'lib'), output_mode: 'content', '-C': 2 }), null, 'pouco contexto: não conta');
+  assert.equal(pre('Read', { file_path: path.join(raiz, 'lib', 'a2.dart') }), null);
+  assert.equal(decisao(pre('Bash', { command: 'cat lib/a3.dart' })), 'deny');
+});
+
+test('despachante de eventos: módulo quebrado vai para o registro e não derruba os outros', () => {
+  const { claude, env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const copia = tmp('hooks');
+  for (const n of fs.readdirSync(HOOKS)) if (n.endsWith('.mjs')) fs.copyFileSync(path.join(HOOKS, n), path.join(copia, n));
+  fs.writeFileSync(path.join(copia, 'equipe-prova.mjs'), 'export const x = ;\n'); // erro de sintaxe
+  const arq = path.join(raiz, 'lib', 'a1.dart');
+  fs.appendFileSync(arq, '// linha\n'.repeat(60));
+  rodar(path.join(copia, 'equipe-pos.mjs'), { session_id: 'mq', cwd: raiz, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+  const s = rodar(path.join(copia, 'equipe-eventos.mjs'), { hook_event_name: 'Stop', session_id: 'mq', cwd: raiz }, env);
+  assert.match(s.reason, /chame o revisor/);
+  assert.ok(registro(claude).some((l) => l[1] === 'modulo' && l[2] === 'falhou:prova'));
+});
+
+test('briefing do revisor: o que já foi aprovado e não mudou não precisa entrar no diff de novo', () => {
+  const { env } = ambiente({ EQUIPE_DESLIGAR: 'prova' });
+  const raiz = projeto({ mapa: false });
+  const sessao = 'ba';
+  const editar = (rel, texto) => { const arq = path.join(raiz, rel); fs.appendFileSync(arq, texto); rodar(POS, { session_id: sessao, cwd: raiz, tool_name: 'Edit', tool_input: { file_path: arq } }, env); };
+  const revisor = (prompt, extra = {}) => rodar(PRE, { session_id: sessao, cwd: raiz, tool_name: 'Agent', tool_input: { subagent_type: 'revisor', prompt, ...extra } }, env);
+  fs.mkdirSync(path.join(raiz, '.revisao'), { recursive: true });
+  // Tarefa 1: área sensível, aprovada e commitada.
+  escrever(path.join(raiz, 'lib', 'auth', 'login.dart'), 'void l() {}\n');
+  rodar(POS, { session_id: sessao, cwd: raiz, tool_name: 'Write', tool_input: { file_path: path.join(raiz, 'lib', 'auth', 'login.dart') } }, env);
+  rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: sessao, agent_id: 'r1', agent_type: 'revisor', cwd: raiz, last_assistant_message: 'Veredito: APROVADO' }, env);
+  git(raiz, 'add', '--', 'lib/auth/login.dart');
+  git(raiz, 'commit', '-q', '-m', 'login');
+  // Tarefa 2: o diff de agora (HEAD) basta, e não pede opus pela área sensível antiga.
+  editar('lib/a3.dart', '// tarefa 2\n');
+  git(raiz, 'diff', 'HEAD', '--output=.revisao/diff.patch');
+  assert.equal(revisor('Diff: .revisao/diff.patch. Objetivo: tarefa 2.'), null);
+});
+
+test('revisão e prova: o que chegou por merge não é da sessão', () => {
+  const { env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  rodar(EVENTOS, { hook_event_name: 'UserPromptSubmit', session_id: 'mg', cwd: raiz, prompt: 'traga a branch do colega' }, env);
+  git(raiz, 'checkout', '-q', '-b', 'colega');
+  escrever(path.join(raiz, 'lib', 'payments', 'pix.dart'), '// do colega\n'.repeat(80));
+  git(raiz, 'add', '-A');
+  git(raiz, 'commit', '-q', '-m', 'pix');
+  git(raiz, 'checkout', '-q', 'main');
+  git(raiz, 'merge', '-q', '--no-ff', '-m', 'merge colega', 'colega');
+  assert.equal(rodar(EVENTOS, { hook_event_name: 'Stop', session_id: 'mg', cwd: raiz }, env), null);
+  // O que a sessão muda depois do merge conta.
+  fs.appendFileSync(path.join(raiz, 'lib', 'a1.dart'), '// da sessão\n'.repeat(60));
+  rodar(POS, { session_id: 'mg', cwd: raiz, tool_name: 'Edit', tool_input: { file_path: path.join(raiz, 'lib', 'a1.dart') } }, env);
+  const s = rodar(EVENTOS, { hook_event_name: 'Stop', session_id: 'mg', cwd: raiz }, env);
+  assert.match(s.reason, /60 linhas mudadas sem revisão/);
+  assert.ok(!s.reason.includes('pix.dart'));
+});
+
+test('revisão: reprovação na continuação dispensa as linhas; dois revisores em paralelo', () => {
+  const { env } = ambiente({ EQUIPE_DESLIGAR: 'prova' });
+  const raiz = projeto({ mapa: false });
+  const arq = path.join(raiz, 'lib', 'a1.dart');
+  fs.appendFileSync(arq, '// linha\n'.repeat(60));
+  rodar(POS, { session_id: 'rc2', cwd: raiz, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+  const fim = (extra = {}) => rodar(EVENTOS, { hook_event_name: 'Stop', session_id: 'rc2', cwd: raiz, ...extra }, env);
+  const revisor = (id, msg, evento = 'SubagentStop') => rodar(EVENTOS, { hook_event_name: evento, session_id: 'rc2', agent_id: id, agent_type: 'revisor', cwd: raiz, last_assistant_message: msg }, env);
+  assert.equal(fim().decision, 'block');
+  revisor('r1', 'Veredito: REPROVADO. Achados: crítico, lib/a1.dart:2.');
+  assert.equal(fim({ stop_hook_active: true }), null);
+  // O usuário deixa pendente e pergunta outra coisa: as mesmas linhas não voltam a cobrar.
+  rodar(EVENTOS, { hook_event_name: 'UserPromptSubmit', session_id: 'rc2', cwd: raiz, prompt: 'deixe pendente e me explique o fluxo' }, env);
+  assert.equal(fim(), null);
+  // Dois revisores em paralelo: a aprovação do que começou antes não apaga a reprovação do outro.
+  fs.appendFileSync(arq, '// mais\n'.repeat(60));
+  rodar(POS, { session_id: 'rc2', cwd: raiz, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+  revisor('ra', '', 'SubagentStart');
+  revisor('rb', '', 'SubagentStart');
+  revisor('rb', 'Veredito: REPROVADO. Achados: alto, lib/a1.dart:70.');
+  revisor('ra', 'Veredito: APROVADO');
+  assert.match(fim().reason, /o revisor reprovou/);
+});
+
+test('escopo: o fim da resposta entrega a lista com algo fora do escopo que o mestre não viu', () => {
+  const { claude, env } = ambiente({ EQUIPE_DESLIGAR: 'prova,revisao' });
+  const raiz = projeto({ mapa: false });
+  const base = { session_id: 'ef', agent_type: 'implementador', agent_id: 'ib', cwd: raiz };
+  rodar(EVENTOS, { ...base, hook_event_name: 'SubagentStart' }, env);
+  const arq = path.join(raiz, 'lib', 'a7.dart');
+  fs.appendFileSync(arq, '// fora\n');
+  rodar(POS, { ...base, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+  rodar(POS, { ...base, tool_name: 'Bash', tool_input: { command: 'flutter test' } }, env);
+  rodar(EVENTOS, { ...base, hook_event_name: 'SubagentStop', agent_transcript_path: transcricaoComBriefing(claude, 'Objetivo: fundo\nEscopo: lib/a1.dart\nCritério de aceite: y') }, env);
+  const s = rodar(EVENTOS, { hook_event_name: 'Stop', session_id: 'ef', cwd: raiz }, env);
+  assert.match(s.reason, /FORA DO ESCOPO \(1\): lib\/a7\.dart/);
+  assert.equal(rodar(EVENTOS, { hook_event_name: 'Stop', session_id: 'ef', cwd: raiz }, env), null, 'uma vez');
+});
+
+test('travas de retrabalho: git sem tempo (ou com erro) deixa passar', () => {
+  const { env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const arq = path.join(raiz, 'lib', 'a1.dart');
+  fs.appendFileSync(arq, '// linha\n'.repeat(60));
+  rodar(POS, { session_id: 'gt', cwd: raiz, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+  fs.mkdirSync(path.join(raiz, '.revisao'), { recursive: true });
+  git(raiz, 'diff', 'HEAD', '--output=.revisao/diff.patch');
+  // Orçamento de tempo do git esgotado: toda chamada ao git devolve nada.
+  const semTempo = { ...env, EQUIPE_ORCAMENTO_MS: '1' };
+  assert.equal(rodar(PRE, { session_id: 'gt', cwd: raiz, tool_name: 'Agent', tool_input: { subagent_type: 'revisor', prompt: 'Diff: .revisao/diff.patch. Objetivo: x.' } }, semTempo), null);
+  assert.equal(rodar(EVENTOS, { hook_event_name: 'Stop', session_id: 'gt', cwd: raiz }, semTempo), null);
+  // Depois de uma revisão aprovada, o git sem tempo também não vira "linhas mudadas".
+  rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: 'gt', agent_id: 'r1', agent_type: 'revisor', cwd: raiz, last_assistant_message: 'Veredito: APROVADO' }, env);
+  fs.appendFileSync(arq, '// depois\n');
+  rodar(POS, { session_id: 'gt', cwd: raiz, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+  assert.equal(rodar(EVENTOS, { hook_event_name: 'Stop', session_id: 'gt', cwd: raiz }, semTempo), null);
+});
+
+test('convergência: tentativa conta pelos arquivos editados, não pela pasta do escopo', () => {
+  const { claude, env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const sessao = 'ce';
+  let n = 0;
+  rodar(EVENTOS, { hook_event_name: 'UserPromptSubmit', session_id: sessao, cwd: raiz, prompt: 'faça as três telas' }, env);
+  // Teste legado vermelho, sem a marca de anterior; cada tarefa com "Escopo: lib/" mexe noutro arquivo.
+  for (const k of [1, 2, 3, 4]) {
+    const id = `i${++n}`;
+    const base = { session_id: sessao, agent_id: id, agent_type: 'implementador', cwd: raiz };
+    const arq = path.join(raiz, 'lib', `a${k}.dart`);
+    fs.appendFileSync(arq, '// tela\n');
+    rodar(POS, { ...base, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+    rodar(POS, { ...base, tool_name: 'Bash', tool_input: { command: 'flutter test' } }, env);
+    rodar(EVENTOS, { ...base, hook_event_name: 'SubagentStop', agent_transcript_path: transcricaoComBriefing(claude, `Objetivo: tela ${k}\nEscopo: lib/\nCritério de aceite: y`) }, env);
+    const v = `v${++n}`;
+    rodar(POS, { hook_event_name: 'PostToolUseFailure', session_id: sessao, agent_id: v, agent_type: 'verificador', cwd: raiz, tool_name: 'Bash', tool_input: { command: 'flutter test' } }, env);
+    rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: sessao, agent_id: v, agent_type: 'verificador', cwd: raiz, last_assistant_message: 'Falhou: lib/legado_test.dart:9' }, env);
+  }
+  const s = rodar(PRE, { session_id: sessao, cwd: raiz, tool_name: 'Agent', tool_input: { subagent_type: 'implementador', prompt: 'Objetivo: tela 5.\nEscopo: lib/.\nCritério de aceite: y.\nComo verificar: flutter test' } }, env);
+  assert.equal(s, null);
+});
+
+test('base da sessão: só anda quando o HEAD anda por merge, pull ou checkout de outro commit', () => {
+  // Num processo novo: o orçamento de tempo do git conta desde o começo do processo.
+  const url = new URL('../hooks/equipe-entrega.mjs', import.meta.url).href;
+  const baseEfetiva = (r, b) => execFileSync(process.execPath, ['--input-type=module', '-e', `const m = await import(${JSON.stringify(url)}); process.stdout.write(String(m.baseEfetiva(${JSON.stringify(r)}, ${JSON.stringify(b)})));`], { encoding: 'utf8' });
+  const raiz = projeto({ mapa: false });
+  const base = git(raiz, 'rev-parse', 'HEAD');
+  fs.appendFileSync(path.join(raiz, 'lib', 'a1.dart'), '// sessão\n');
+  git(raiz, 'commit', '-q', '-am', 'da sessão');
+  // checkout -b não move o HEAD: a base continua a do começo.
+  git(raiz, 'checkout', '-q', '-b', 'nova');
+  assert.equal(baseEfetiva(raiz, base), base);
+  // Merge de outra branch: a base passa a ser o commit do merge.
+  git(raiz, 'checkout', '-q', '-b', 'outra', base);
+  fs.appendFileSync(path.join(raiz, 'lib', 'a2.dart'), '// outra\n');
+  git(raiz, 'commit', '-q', '-am', 'outra');
+  git(raiz, 'checkout', '-q', 'nova');
+  git(raiz, 'merge', '-q', '--no-ff', '-m', 'merge', 'outra');
+  assert.equal(baseEfetiva(raiz, base), git(raiz, 'rev-parse', 'HEAD'));
+});
+

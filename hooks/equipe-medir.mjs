@@ -18,14 +18,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pastaClaude, pastaDiario, lerJson, lerTexto, ehCodigo, EXTENSOES_CODIGO, normalizar, statusDoRelatorio } from './equipe-comum.mjs';
+import { pastaClaude, pastaDiario, lerJson, lerTexto, ehCodigo, EXTENSOES_CODIGO, normalizar, statusDoRelatorio, TESTE_DE_VERDADE } from './equipe-comum.mjs';
 
 // Briefing de correção de bug (só o sim ou não sai daqui, nunca o texto): "bug" ou
 // "regressão", ou "corrigir"/"consertar" perto de erro, falha ou quebra. "Corrigir o texto"
 // não conta.
 const PEDE_CORRECAO = /\b(bug|bugs|regress\w*)\b|\b(corrig\w*|corre[cç][aã]o|consert\w*|fix|fixes)\b[^.\n]{0,50}\b(erro|errado|falha\w*|quebr\w*|problema|crash|exce[cç][aã]o|bug)/;
 // Só teste de verdade: analisador, lint e checagem de tipos não reproduzem o bug.
-const TESTE_DE_VERDADE = /\b(flutter|dart)\s+test\b|\b(npm|pnpm|yarn|bun)\s+(run\s+)?test\b|\bnpx\s+(vitest|jest|playwright)\b|\b(vitest|jest|pytest)\b|\bpython\d*(\.exe)?\s+-m\s+(pytest|unittest)\b|\bnode(\.exe)?\s+--test\b|\bgo\s+test\b|\bcargo\s+test\b|\bInvoke-Pester\b|\bdotnet\s+test\b|\bmvn\w*\s+(test|verify)\b|\bgradlew?\w*\s+\S*test/i;
+// TESTE_DE_VERDADE (comando que roda testes de verdade) vem do equipe-comum.mjs, o mesmo da prova.
 // Arquivo de teste: a edição dele não é "a correção".
 const ARQUIVO_DE_TESTE = /(^|[\\/])(test|tests|spec|specs|__tests__|testes)[\\/]|[._-](test|spec)\.[a-z0-9]+$|^test_[^\\/]*$|[\\/]test_[^\\/]*$/i;
 

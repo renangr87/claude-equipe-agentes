@@ -99,12 +99,49 @@ const chaveArquivo = (f) => {
   return process.platform === 'win32' ? r.toLowerCase() : r;
 };
 
-// Orçamento de leitura do mestre. Devolve { decisao, motivo, registro } ou null.
+// Programas que mostram o arquivo inteiro no terminal (o mesmo que um Read).
+const MOSTRA_ARQUIVO = /^(cat|type|get-content|gc|head|tail|less|more|bat|nl)$/i;
+
+// O que esta ferramenta do mestre lê de código: lista de chaves (arquivo, ou busca com muito
+// contexto), ou [] se não lê código.
+export function leiturasDoMestre(entrada) {
+  const nome = String(entrada.tool_name || '');
+  const ti = entrada.tool_input || {};
+  const cwd = entrada.cwd || process.cwd();
+  if (nome === 'Read') {
+    const arq = String(ti.file_path || '');
+    return arq && ehCodigo(arq) && !naRevisao(arq) && existeArquivo(arq) ? [chaveArquivo(arq)] : [];
+  }
+  if (nome === 'Grep') {
+    // Busca que devolve trechos grandes (-C 20, por exemplo) é leitura de arquivo inteiro.
+    const ctx = Math.max(...['-C', 'context', '-A', '-B'].map((k) => Number(ti[k]) || 0));
+    if (ti.output_mode !== 'content' || ctx < 10) return [];
+    const alvo = alvoDeCodigo(entrada);
+    return alvo ? [`grep:${chaveArquivo(path.resolve(cwd, alvo))}`] : [];
+  }
+  if (nome === 'Bash' || nome === 'PowerShell') {
+    const r = [];
+    for (const parte of String(ti.command || '').split(/&&|\|\||[;|\r\n]/)) {
+      const tokens = parte.trim().match(/"[^"]*"|'[^']*'|\S+/g) || [];
+      if (!tokens.length || !MOSTRA_ARQUIVO.test(path.basename(tokens[0]))) continue;
+      for (const t of tokens.slice(1)) {
+        const arq = t.replace(/^["']|["']$/g, '');
+        if (arq.startsWith('-')) continue;
+        const abs = path.resolve(cwd, arq);
+        if (ehCodigo(arq) && !naRevisao(arq) && existeArquivo(abs)) r.push(chaveArquivo(abs));
+      }
+    }
+    return r;
+  }
+  return [];
+}
+
+// Orçamento de leitura do mestre (Read, busca com muito contexto e cat pelo terminal).
+// Devolve { decisao, motivo, registro } ou null.
 export function decidirOrcamento(entrada) {
   if (tipoDoAgente(entrada) !== 'mestre' || desligada('orcamento')) return null;
-  if (String(entrada.tool_name || '') !== 'Read') return null;
-  const arq = String((entrada.tool_input || {}).file_path || '');
-  if (!arq || !ehCodigo(arq) || naRevisao(arq) || !existeArquivo(arq)) return null;
+  const alvos = leiturasDoMestre(entrada);
+  if (!alvos.length) return null;
   const chave = chaveDaChamada(entrada);
   if (!chave) return null;
   const pedido = pedidoAtual(chave);
@@ -118,16 +155,16 @@ export function decidirOrcamento(entrada) {
     const [em, nome] = l.split('\t');
     if (Number(em) >= desde && nome) lidos.add(nome);
   }
-  const este = chaveArquivo(arq);
-  if (lidos.has(este)) return null;
+  const novos = [...new Set(alvos)].filter((a) => !lidos.has(a));
+  if (!novos.length) return null;
   const limite = LIMITE_MESTRE();
-  if (lidos.size >= limite) {
+  if (lidos.size + novos.length > limite) {
     return {
-      ...negar(`Orçamento de leitura do mestre (trava da equipe): já são ${lidos.size} arquivos de código lidos neste pedido, num projeto médio ou grande. Não leia mais código direto: delegue ao Explore, que usa o mapa, com uma pergunta precisa e o caminho por onde começar (ou ao implementador, se for para mudar o arquivo). Se o usuário pediu para você mesmo ler, ele precisa dizer "leia você mesmo" ou "sem delegar" no pedido.`),
+      ...negar(`Orçamento de leitura do mestre (trava da equipe): já são ${lidos.size} arquivos de código lidos neste pedido, num projeto médio ou grande (cat pelo terminal e busca com muito contexto contam como leitura). Não leia mais código direto: delegue ao Explore, que usa o mapa, com uma pergunta precisa e o caminho por onde começar (ou ao implementador, se for para mudar o arquivo). Se o usuário pediu para você mesmo ler, ele precisa dizer "leia você mesmo" ou "sem delegar" no pedido.`),
       registro: 'barrou',
     };
   }
-  anotar(chave, 'lidos', `${Date.now()}\t${este}`);
+  for (const a of novos) anotar(chave, 'lidos', `${Date.now()}\t${a}`);
   return null;
 }
 

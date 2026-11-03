@@ -1,30 +1,40 @@
 #!/usr/bin/env node
 // Hooks de evento da equipe (um script para todos):
-//   - UserPromptSubmit: começa um pedido novo do mestre (zera o orçamento de leitura e lê
-//     "leia você mesmo", "sem delegar" e "sem revisão" no texto do pedido);
-//   - SubagentStart do implementador: tira a foto do git status (escopo);
+//   - UserPromptSubmit: começa um pedido novo do mestre (zera o orçamento de leitura; lê
+//     "leia você mesmo", "sem delegar", "sem revisão", "sem testes" e o pedido de push no
+//     texto), guarda a base do repositório e tira a parada do 2º degrau da convergência;
+//   - SubagentStart do implementador: tira a foto do git status (escopo) e entrega a falha
+//     aberta do verificador; de um revisor: a foto do que ele vai revisar;
 //   - SubagentStop: zera as contas da chamada (leituras, mapa); no implementador, barra uma
-//     vez a entrega sem verificação e grava a lista do escopo; no verificador, guarda a
-//     assinatura da falha (a mesma falha duas vezes); no revisor, anota a revisão;
-//   - Stop do mestre: revisão obrigatória em mudança grande ou sensível.
+//     vez a entrega sem verificação, grava a lista do escopo e conta a tentativa; no
+//     verificador, guarda o resultado e a assinatura da falha; no revisor, o veredito;
+//   - Stop do mestre: revisão obrigatória (mudança grande, sensível ou reprovada) e prova
+//     (verificação verde com o código de agora), numa cobrança só.
 // Erro vira silêncio: nunca impede a sessão por defeito próprio.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  apagarEstado, chaveDaChamada, ehAgenteDeRevisao, gravarEstado, lerEntrada, limparChamada, normalizar, registrarTrava,
-  tipoDoAgente,
+  apagarEstado, carregarModulo, chaveDaChamada, ehAgenteDeRevisao, gravarEstado, lerEntrada, limparChamada, normalizar,
+  registrarTrava, tipoDoAgente,
 } from './equipe-comum.mjs';
-import { anotarRevisao, fimDoImplementador, fotoInicial, revisaoNoFim } from './equipe-entrega.mjs';
-import { fimDoImplementadorConvergencia, fimDoVerificador } from './equipe-convergencia.mjs';
-import * as leitura from './equipe-leitura.mjs';
+
+// Cada módulo à parte: um quebrado não leva os outros junto, e a falha vai para o registro.
+const carregar = (arquivo) => carregarModulo(import.meta.url, arquivo);
+const [entrega, convergencia, leitura, prova, paralelo, push] = await Promise.all([
+  carregar('./equipe-entrega.mjs'), carregar('./equipe-convergencia.mjs'), carregar('./equipe-leitura.mjs'),
+  carregar('./equipe-prova.mjs'), carregar('./equipe-paralelo.mjs'), carregar('./equipe-push.mjs'),
+]);
+
+const tentar = (f) => { try { return f(); } catch { return null; } };
 
 const LIVRE = /\b(leia (voce|vc|tu) mesmo|le (voce|vc) mesmo|sem delegar|nao delegue|nao precisa delegar)\b/;
 const SEM_REVISAO = /\b(sem revisao|nao precisa (de )?revis(ao|ar)|dispensa (a )?revisao)\b/;
+const SEM_VERIFICAR = /\b(sem (rodar )?(os )?testes?|sem verifica(r|cao)|nao (precisa )?(rodar|de) (os )?testes?|nao precisa (testar|verificar)|pul[ea] (os )?testes?|dispensa (os )?testes?)\b/;
 
 export function flagsDoPedido(texto) {
   const t = normalizar(texto);
-  return { livre: LIVRE.test(t), semRevisao: SEM_REVISAO.test(t) };
+  return { livre: LIVRE.test(t), semRevisao: SEM_REVISAO.test(t), semVerificar: SEM_VERIFICAR.test(t) };
 }
 
 // Devolve a saída do hook (objeto) ou null.
@@ -38,11 +48,26 @@ export function tratar(entrada) {
     if (tipo !== 'mestre' || !chave) return null;
     apagarEstado(chave, 'lidos');
     gravarEstado(chave, 'pedido', { em: Date.now(), ...flagsDoPedido(entrada.prompt) });
+    if (push) tentar(() => push.novoPedidoPush(entrada));
+    if (entrega) tentar(() => entrega.inicioDaSessao(entrada));
+    if (convergencia) tentar(() => convergencia.novoPedidoConvergencia(entrada));
+    // Listas de escopo de implementadores de segundo plano que o mestre ainda não viu.
+    const escopo = entrega ? tentar(() => entrega.escopoParaMestre(entrada)) : null;
+    if (escopo) return { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: escopo } };
     return null;
   }
 
   if (evento === 'SubagentStart') {
-    if (tipo === 'implementador') fotoInicial(entrada);
+    if (tipo === 'implementador') {
+      if (entrega) tentar(() => entrega.fotoInicial(entrada));
+      const falha = convergencia ? tentar(() => convergencia.falhaParaImplementador(entrada)) : null;
+      if (falha) {
+        registrarTrava('convergencia', 'entregou-falha', 0, entrada);
+        return { hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: falha } };
+      }
+    } else if (ehAgenteDeRevisao(tipo) && entrega) {
+      tentar(() => entrega.fotoDaRevisao(entrada));
+    }
     return null;
   }
 
@@ -51,30 +76,51 @@ export function tratar(entrada) {
     if (tipo === 'mestre') return null;
     const inicio = Date.now();
     if (tipo === 'implementador') {
-      const r = fimDoImplementador(entrada);
+      const r = entrega ? tentar(() => entrega.fimDoImplementador(entrada)) : null;
       // Só conta como tentativa quando ele termina de verdade (não na vez em que foi barrado).
-      if (!(r && r.bloquear)) fimDoImplementadorConvergencia(entrada);
+      if (!(r && r.bloquear)) {
+        if (convergencia) tentar(() => convergencia.fimDoImplementadorConvergencia(entrada, r ? r.editados : []));
+        if (paralelo) tentar(() => paralelo.fimDoImplementadorParalelo(entrada));
+      }
       if (r && r.registro) registrarTrava(r.registro === 'barrou' || r.registro === 'entregou-sem-verificar' ? 'verificar' : 'escopo', r.registro, Date.now() - inicio, entrada);
       if (r && r.bloquear) return { decision: 'block', reason: r.motivo };
       return null;
     }
-    if (tipo === 'verificador') {
-      const r = fimDoVerificador(entrada);
+    if (tipo === 'verificador' && convergencia) {
+      const r = tentar(() => convergencia.fimDoVerificador(entrada));
       if (r) registrarTrava('convergencia', r, Date.now() - inicio, entrada);
     }
-    // Revisor da equipe ou o próprio do projeto (um plugin com os revisores dele): conta.
-    if (ehAgenteDeRevisao(tipo)) anotarRevisao(entrada);
+    // Revisor da equipe ou o próprio do projeto (um plugin com os revisores dele): só a
+    // aprovação conta como revisão.
+    if (ehAgenteDeRevisao(tipo) && entrega) {
+      const r = tentar(() => entrega.fimDaRevisao(entrada));
+      if (r) registrarTrava('revisao', r, Date.now() - inicio, entrada);
+    }
     // Explore e revisor: as contas da chamada zeram (um agente retomado começa de novo).
-    if (tipo === 'Explore') { try { leitura.decidir({ ...entrada, hook_event_name: 'SubagentStop' }); } catch { /* segue */ } }
+    if (tipo === 'Explore' && leitura) tentar(() => leitura.decidir({ ...entrada, hook_event_name: 'SubagentStop' }));
     limparChamada(chave);
     return null;
   }
 
   if (evento === 'Stop') {
+    if (tipo !== 'mestre') return null;
     const inicio = Date.now();
-    const r = revisaoNoFim(entrada);
-    if (r && r.registro) registrarTrava('revisao', r.registro, Date.now() - inicio, entrada);
-    if (r && r.bloquear) return { decision: 'block', reason: r.motivo };
+    // O 2º degrau mandou parar e explicar: cobrar revisão ou teste agora só atrasaria isso.
+    if (convergencia && tentar(() => convergencia.pararAtivo(entrada))) return null;
+    const sessao = entrega ? tentar(() => entrega.chaveDaSessao(entrada)) : null;
+    const arquivos = sessao ? tentar(() => entrega.arquivosDaSessao(sessao)) : null;
+    const revisao = entrega ? tentar(() => entrega.revisaoNoFim(entrada, arquivos)) : null;
+    if (revisao && revisao.registro) registrarTrava('revisao', revisao.registro, Date.now() - inicio, entrada);
+    const verde = prova ? tentar(() => prova.provaNoFim(entrada, arquivos)) : null;
+    if (verde && verde.registro) registrarTrava('prova', verde.registro, Date.now() - inicio, entrada);
+    const motivos = [revisao, verde].filter((r) => r && r.bloquear).map((r) => r.motivo);
+    // Lista de escopo com problema (fora do escopo, entrega sem verificação) que o mestre não viu.
+    const escopo = !entrada.stop_hook_active && entrega ? tentar(() => entrega.escopoParaMestre(entrada, { soComProblema: true })) : null;
+    if (escopo) {
+      registrarTrava('escopo', 'entregou-no-fim', 0, entrada);
+      motivos.push(`Trava da equipe: um implementador terminou com algo a conferir antes de concluir.\n${escopo}`);
+    }
+    if (motivos.length) return { decision: 'block', reason: motivos.join('\n\n') };
     return null;
   }
   return null;

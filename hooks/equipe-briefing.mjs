@@ -12,7 +12,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { anotacoes, anotar, chaveDaChamada, desligada, fatosRapidos, git, lerEstado, normalizar, tipoDoAgente } from './equipe-comum.mjs';
+import { anotacoes, anotar, chaveDaChamada, desligada, ehCodigo, fatosRapidos, git, lerEstado, normalizar, tipoDoAgente } from './equipe-comum.mjs';
 
 const MIN_EXPLORE = 60;
 
@@ -59,6 +59,8 @@ export function caminhos(texto) {
     const c = limpar(m[1]);
     if (c && !/^\d+(\.\d+)*$/.test(c) && !/^https?:/.test(c)) r.push(c);
   }
+  // Pasta citada só com a barra no fim: "lib/".
+  for (const m of t.matchAll(/(?:^|[\s(,;])([A-Za-z0-9_][A-Za-z0-9_.-]*[\\/])(?=[\s.,;:)]|$)/g)) r.push(limpar(m[1]));
   return [...new Set(r)];
 }
 
@@ -69,7 +71,7 @@ const contemLinha = (texto, comandos) => {
 };
 
 function modelo(tipo, comandos) {
-  if (tipo === 'implementador') {
+  if (tipo === 'implementador' || tipo === 'general-purpose' || tipo === '') {
     const verif = comandos && comandos.length ? `<uma linha de .claude/verificador-comandos.txt, como: ${comandos[0]}>` : '<comando que prova o critério, ou "nenhum: motivo">';
     return [
       'Objetivo: <uma frase e para que serve>',
@@ -114,8 +116,39 @@ export function faltas(tipo, texto, { comandos = null, cwd = process.cwd(), raiz
     }
   } else if (tipo === 'Explore') {
     if (espaco(texto).length < MIN_EXPLORE) f.push('contexto: o que achar, por onde começar e para que serve (o Explore não vê a conversa)');
+  } else if (tipo === 'general-purpose' || tipo === '') {
+    // O agente genérico não tem a guarda nem as travas do implementador: mudar código é com ele.
+    if (pedeMudarCodigo(texto)) f.push('um implementador: para mudar código, chame o implementador com o briefing (objetivo, escopo, critério e como verificar); se este agente só vai ler ou pesquisar, diga "só leitura" no pedido');
   }
   return f;
+}
+
+// O pedido manda mudar código? (verbo de mudança e algo de código, sem "só leitura")
+const MUDAR = /\b(implemente|implementar|implementa|corrija|corrigir|conserte|consertar|edite|editar|altere|alterar|modifique|modificar|refatore|refatorar|reescreva|reescrever|escreva|escrever|crie|criar|adicione|adicionar|implement|fix|edit|modify|refactor|rewrite|write|create|add)\b/;
+const CODIGO = /\b(codigo|code|funcao|function|classe|class|metodo|method|componente|component|endpoint|migracao|migration|bug)\b/;
+const SO_LEITURA = /\b(so leitura|somente leitura|apenas leitura|so ler|nao edite|nao altere|nao modifique|nao mude|sem editar|sem alterar|read-only|read only|do not edit|don't edit|do not modify)\b/;
+export function pedeMudarCodigo(texto) {
+  const t = normalizar(texto);
+  if (!MUDAR.test(t) || SO_LEITURA.test(t)) return false;
+  // Um arquivo de código, ou uma pasta (lib/, src/carrinho).
+  return CODIGO.test(t) || caminhos(texto).some((c) => ehCaminhoDeArquivo(c) && (ehCodigo(c) || !/\.[A-Za-z0-9]{1,6}$/.test(c)));
+}
+
+// Um caminho de verdade, não prosa nem nome de tecnologia: "e/ou", "CI/CD", "I/O", "Node.js",
+// "e.g", "docs.example.com" não são. Com barra, um segmento de mais de 2 letras; sem barra,
+// um nome de arquivo com extensão (App.tsx, package.json, cupom.dart).
+const PROSA = /^(e\/ou|and\/or|ci\/cd|i\/o|tcp\/ip|n\/a|km\/h|s\/n|w\/o|24\/7|ux\/ui|ui\/ux)$/i;
+export function ehCaminhoDeArquivo(c) {
+  const p = String(c || '').replace(/\\/g, '/');
+  if (!p || /^https?:|^www\./i.test(p) || /\s/.test(p.trim())) return false;
+  if (p.includes('/')) {
+    if (PROSA.test(p)) return false;
+    const seg = p.split('/').filter((x) => x && x !== '.' && x !== '..');
+    return seg.length > 0 && !seg.every((x) => x.length <= 2) && /[A-Za-z0-9_]/.test(seg.join(''));
+  }
+  if (/^[A-Z][a-z]+\.js$/.test(p)) return false; // Node.js, Vue.js
+  if (/\.(com|org|net|io|br|gov|edu)$/i.test(p)) return false;
+  return /^[^.\s][^\s]*\.[A-Za-z0-9]{1,6}$/.test(p) && /^[^.]{2,}/.test(p);
 }
 
 export function decidirBriefing(entrada) {
@@ -123,7 +156,7 @@ export function decidirBriefing(entrada) {
   if (tipoDoAgente(entrada) !== 'mestre' || desligada('briefing')) return null;
   const ti = entrada.tool_input || {};
   const tipo = String(ti.subagent_type || '');
-  if (!['implementador', 'verificador', 'revisor', 'Explore'].includes(tipo)) return null;
+  if (!['implementador', 'verificador', 'revisor', 'Explore', 'general-purpose', ''].includes(tipo)) return null;
   const texto = String(ti.prompt || '');
   const cwd = entrada.cwd || process.cwd();
   const fatos = tipo === 'Explore' ? null : fatosRapidos(cwd);

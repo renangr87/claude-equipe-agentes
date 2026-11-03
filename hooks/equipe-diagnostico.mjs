@@ -202,8 +202,10 @@ function importsFaltando(script) {
     vistos.add(atual);
     const texto = lerTexto(atual);
     if (texto === null) continue;
-    for (const m of texto.matchAll(/^\s*import\s[^'"]*['"](\.\/[^'"]+\.mjs)['"]/gm)) {
-      const alvo = path.join(path.dirname(atual), m[1]);
+    // import estático e os módulos que o despachante carrega à parte, fora dos comentários.
+    const semComentario = texto.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+    for (const m of semComentario.matchAll(/^\s*import\s[^'"]*['"](\.\/[^'"]+\.mjs)['"]|carregar\(\s*['"](\.\/[^'"]+\.mjs)['"]/gm)) {
+      const alvo = path.join(path.dirname(atual), m[1] || m[2]);
       if (existe(alvo)) fila.push(alvo);
       else faltam.push(path.basename(alvo));
     }
@@ -447,6 +449,19 @@ function conferirTravasVivas(pasta, saida, hooksRegistrados) {
   const fins = linhas.filter((c) => c[1] === 'eventos' && c[2] === 'SubagentStop');
   if (fins.length >= 3 && fins.every((c) => c[4] === 'mestre')) {
     saida.push(item('aviso', 'O Claude Code não está mandando aos hooks o tipo do agente: as travas do Explore, do revisor e do implementador e o orçamento do mestre não sabem quem chamou.', 'Atualize o app do Claude (a versão 2.1.69 ou mais nova manda o tipo do agente).'));
+    return;
+  }
+  // Um módulo de trava que não carregou: as travas dele estão paradas, as outras seguem.
+  const quebrados = [...new Set(linhas.filter((c) => c[1] === 'modulo' && /^falhou:/.test(c[2])).map((c) => c[2].slice(7)))];
+  if (quebrados.length) {
+    saida.push(item('aviso', `Módulos das travas que não carregaram nos últimos 3 dias: ${quebrados.map((q) => `equipe-${q}.mjs`).join(', ')}. As travas deles ficaram paradas.`, 'Rode a linha de instalação de novo (uma atualização pela metade costuma ser a causa).'));
+    return;
+  }
+  // Cada despachante registra uma linha por vez que roda: um que sumiu do registro parou.
+  const sessoes = sessoesDesde(pasta, desde, 3);
+  const calados = ['pre', 'pos', 'eventos'].filter((d) => !linhas.some((c) => c[1] === d));
+  if (sessoes >= 3 && calados.length) {
+    saida.push(item('aviso', `Os hooks ${calados.map((d) => `equipe-${d}.mjs`).join(', ')} não registraram nada nos últimos 3 dias, e os outros sim: eles podem não estar rodando.`, `Confira as linhas deles no settings.json com node ${barras(path.join(pasta, 'hooks', 'equipe-diagnostico.mjs'))} e, se faltarem, rode a linha de instalação de novo.`));
     return;
   }
   saida.push(item('ok', `Travas rodando: ${linhas.length} decisões registradas nos últimos 3 dias.`));

@@ -110,7 +110,7 @@ implementador	0	Bash	eslint src
 implementador	0	Bash	black --check .
 implementador	0	Bash	black -l 100 lib/x.py
 implementador	0	Bash	gofmt -l .
-implementador	0	Bash	git commit -m "fix black screen and dart format issue"
+implementador	0	Bash	git log --grep "fix black screen and dart format issue"
 implementador	0	Bash	git -c core.autocrlf=false status
 implementador	0	Bash	npm test
 implementador	0	Bash	grep -rn "dart format" docs
@@ -182,10 +182,202 @@ implementador	0	Bash	supabase migration list --linked
 implementador	0	Bash	npx prisma migrate dev --name inicial
 implementador	0	Bash	npx prisma generate
 implementador	0	Bash	echo supabase db push
-implementador	0	Bash	git commit -m "supabase db push depois"
+implementador	0	Bash	git log --grep "supabase db push depois"
 implementador	0	Bash	grep -rn "psql" scripts
 # --- implementador: bloqueia com versao no nome e caminho com espaco
 implementador	2	Bash	npx supabase@latest db push
 implementador	2	Bash	pnpm dlx prisma@5 migrate reset --force
 implementador	2	Bash	npx drizzle-kit@latest push
 implementador	2	PowerShell	supabase --workdir "C:\Meus Projetos\app" db push
+# --- implementador: bloqueia git que grava historico ou mexe no remoto (commit e push sao do mestre)
+implementador	2	Bash	git commit -m x src/a.js
+implementador	2	Bash	git commit -m "fix black screen and dart format issue"
+implementador	2	PowerShell	git commit -am x
+implementador	2	Bash	git push origin main
+implementador	2	PowerShell	git push origin main
+implementador	2	Bash	git push --force-with-lease
+implementador	2	Bash	cd app && git push
+implementador	2	PowerShell	cd app; git push
+implementador	2	Bash	git status && git commit -m x
+implementador	2	Bash	git add lib/a.dart\ngit commit -m x
+implementador	2	Bash	bash -c "git push"
+implementador	2	Bash	sh -c 'cd app && git push'
+implementador	2	PowerShell	powershell -Command "git commit -m x"
+implementador	2	PowerShell	Invoke-Expression 'git push'
+implementador	2	PowerShell	Start-Process git -ArgumentList 'push'
+implementador	2	PowerShell	& git push
+implementador	2	Bash	cmd /c git push
+implementador	2	Bash	sudo git push
+implementador	2	Bash	git -C app push
+implementador	2	Bash	git --no-pager -c core.quotepath=off commit -m x
+implementador	2	Bash	git --git-dir=.git push
+implementador	2	Bash	git merge main
+implementador	2	Bash	git rebase -i main
+implementador	2	Bash	git tag v1.0
+implementador	2	Bash	git tag -d v1.0
+implementador	2	Bash	git cherry-pick abc123
+implementador	2	Bash	git am < patch.mbox
+implementador	2	Bash	git pull --rebase
+implementador	2	PowerShell	git pull
+implementador	2	Bash	git revert HEAD
+implementador	2	Bash	git branch -d tarefa
+implementador	2	PowerShell	git branch -D tarefa
+implementador	2	Bash	git branch --delete tarefa
+implementador	2	Bash	git branch -dr origin/tarefa
+# --- implementador: passa (git que nao grava historico; texto que so cita o comando)
+implementador	0	Bash	git log --grep "git push"
+implementador	0	PowerShell	git status
+implementador	0	Bash	git fetch origin
+implementador	0	Bash	git add lib/a.dart
+implementador	0	Bash	git rm lib/a.dart
+implementador	0	Bash	git rm -r --cached build
+implementador	0	Bash	git branch
+implementador	0	Bash	git branch -a
+implementador	0	Bash	git tag
+implementador	0	Bash	git tag -l "v1*"
+implementador	0	Bash	git merge-base HEAD main
+implementador	0	Bash	git help push
+implementador	0	Bash	echo git push
+implementador	0	PowerShell	Write-Output "git push"
+implementador	0	Bash	grep -rn "git push" docs
+# --- implementador: bloqueia dependencia nova
+implementador	2	Bash	npm install left-pad
+implementador	2	PowerShell	npm install left-pad
+implementador	2	Bash	npm i left-pad
+implementador	2	Bash	npm add left-pad
+implementador	2	Bash	npm install -D left-pad
+implementador	2	Bash	npm install --save-dev @types/node
+implementador	2	Bash	npm install left-pad 2>&1
+implementador	2	Bash	npm --prefix app install left-pad
+implementador	2	Bash	cd app && npm i -g typescript
+implementador	2	Bash	sudo npm install -g left-pad
+implementador	2	Bash	bash -c "npm install left-pad"
+implementador	2	PowerShell	cmd /c "npm install left-pad"
+implementador	2	PowerShell	Start-Process npm -ArgumentList 'install','left-pad'
+implementador	2	Bash	pnpm add left-pad
+implementador	2	Bash	pnpm install left-pad
+implementador	2	Bash	pnpm --filter web add left-pad
+implementador	2	Bash	pnpm add -w left-pad
+implementador	2	Bash	yarn add left-pad
+implementador	2	Bash	yarn global add left-pad
+implementador	2	Bash	yarn workspace web add left-pad
+implementador	2	Bash	bun add left-pad
+implementador	2	Bash	bun install left-pad
+implementador	2	Bash	pip install requests
+implementador	2	PowerShell	pip install requests
+implementador	2	Bash	pip3 install requests==2.31
+implementador	2	Bash	python -m pip install requests
+implementador	2	PowerShell	py -m pip install -U requests
+implementador	2	Bash	pip install -r requirements.txt requests
+implementador	2	Bash	pip install -e git+https://exemplo.com/pacote.git#egg=pacote
+implementador	2	Bash	uv pip install requests
+implementador	2	Bash	uv add requests
+implementador	2	Bash	poetry add requests
+implementador	2	Bash	flutter pub add http
+implementador	2	PowerShell	flutter pub add http
+implementador	2	Bash	cd app && flutter pub add http
+implementador	2	Bash	dart pub add http
+implementador	2	Bash	cargo add serde
+implementador	2	Bash	go get example.com/pacote
+implementador	2	Bash	go install example.com/ferramenta@latest
+implementador	2	Bash	dotnet add package Exemplo.Pacote
+implementador	2	PowerShell	dotnet add app.csproj package Exemplo.Pacote
+implementador	2	Bash	composer require exemplo/pacote
+implementador	2	Bash	gem install rake
+# --- implementador: passa (instala so o que o projeto ja declara; texto que so cita)
+implementador	0	Bash	npm install
+implementador	0	PowerShell	npm install
+implementador	0	Bash	npm ci
+implementador	0	PowerShell	npm ci
+implementador	0	Bash	npm i
+implementador	0	Bash	npm install --legacy-peer-deps
+implementador	0	Bash	npm install 2>&1
+implementador	0	Bash	npm install --prefix app
+implementador	0	Bash	cd app && npm install
+implementador	0	Bash	pnpm install
+implementador	0	Bash	pnpm install --frozen-lockfile
+implementador	0	Bash	pnpm install --filter web
+implementador	0	Bash	yarn
+implementador	0	Bash	yarn install
+implementador	0	Bash	bun install
+implementador	0	Bash	pip install -r requirements.txt
+implementador	0	PowerShell	pip install -r requirements.txt
+implementador	0	Bash	python -m pip install -r requirements.txt
+implementador	0	Bash	pip install --upgrade -r requirements-dev.txt
+implementador	0	Bash	pip install -e .
+implementador	0	Bash	uv pip install -r requirements.txt
+implementador	0	Bash	flutter pub get
+implementador	0	PowerShell	flutter pub get
+implementador	0	Bash	dart pub get
+implementador	0	Bash	go build ./...
+implementador	0	Bash	dotnet restore
+implementador	0	Bash	echo npm install left-pad
+implementador	0	Bash	grep -rn "pip install" docs
+# --- implementador: bloqueia apagar pasta inteira
+implementador	2	Bash	rm -rf src
+implementador	2	Bash	rm -r src
+implementador	2	Bash	rm -R src
+implementador	2	Bash	rm -fr src
+implementador	2	Bash	rm -f -r src
+implementador	2	Bash	rm src -rf
+implementador	2	Bash	rm -rfv build/
+implementador	2	Bash	rm --recursive src
+implementador	2	Bash	/bin/rm -rf src
+implementador	2	Bash	sudo rm -rf src
+implementador	2	Bash	cd app && rm -rf build
+implementador	2	Bash	flutter clean; rm -rf build
+implementador	2	Bash	bash -c "rm -rf src"
+implementador	2	Bash	find . -name node_modules | xargs rm -rf
+implementador	2	Bash	cmd /c rd /S/Q build
+implementador	2	PowerShell	Remove-Item -Recurse -Force src
+implementador	2	PowerShell	Remove-Item src -Recurse
+implementador	2	PowerShell	Remove-Item -Path src -Recurse:$true
+implementador	2	PowerShell	ri src -r
+implementador	2	PowerShell	rm -r src
+implementador	2	PowerShell	rm -rf src
+implementador	2	PowerShell	del -Recurse src
+implementador	2	PowerShell	rmdir src -Recurse
+implementador	2	PowerShell	Get-ChildItem build | Remove-Item -Recurse -Force
+implementador	2	PowerShell	if (Test-Path build) { Remove-Item build -Recurse -Force }
+implementador	2	PowerShell	Set-Location app; Remove-Item build -Recurse
+implementador	2	PowerShell	cmd /c rmdir /s /q build
+implementador	2	PowerShell	cmd /c "rd /s /q build"
+implementador	2	PowerShell	cmd /c del /s /q *.tmp
+implementador	2	PowerShell	Invoke-Expression 'Remove-Item -Recurse src'
+implementador	2	PowerShell	powershell -Command "Remove-Item src -Recurse -Force"
+# --- implementador: passa (apaga arquivo, nao pasta; texto que so cita)
+implementador	0	Bash	rm lib/a.dart
+implementador	0	Bash	rm -f lib/a.dart
+implementador	0	Bash	cd app && rm lib/a.dart
+implementador	0	Bash	rmdir lib/vazia
+implementador	0	PowerShell	Remove-Item lib\a.dart
+implementador	0	PowerShell	Remove-Item -Force lib\a.dart
+implementador	0	PowerShell	del lib\a.dart
+implementador	0	PowerShell	rm lib\a.dart
+implementador	0	Bash	echo rm -rf src
+implementador	0	Bash	grep -rn "rm -rf" docs
+implementador	0	Bash	docker rm -f teste
+implementador	0	Bash	ls -R lib
+# --- implementador: comando dentro de $(...) ou de crases tambem conta (revisao independente)
+implementador	2	Bash	echo $(git commit -am wip)
+implementador	2	Bash	echo "$(git push)"
+implementador	2	Bash	echo `git push origin main`
+implementador	2	Bash	echo $(git reset --hard)
+implementador	2	Bash	echo $(npm install left-pad)
+implementador	0	Bash	echo $(git rev-parse HEAD)
+implementador	0	Bash	echo "versao: $(node --version)"
+# --- implementador: texto entre aspas so e comando para quem o executa
+implementador	0	Bash	npm test -- --testNamePattern "rd -r"
+implementador	0	Bash	flutter test --name "git push falha sem rede"
+implementador	2	Bash	bash -c "rm -rf build"
+implementador	2	PowerShell	pwsh -Command "git push"
+# --- implementador: git tag que so lista e instalacao do proprio projeto
+implementador	0	Bash	git tag --sort=-v:refname
+implementador	0	Bash	git tag --contains abc123
+implementador	0	Bash	git tag -n
+implementador	2	Bash	git tag -a v2.0 -m "versao"
+implementador	2	Bash	git tag --sort=-v:refname v3
+implementador	0	Bash	pip install .
+implementador	0	Bash	pip install -e .
+implementador	0	Bash	go install ./cmd/ferramenta
+implementador	2	Bash	pip install . requests
