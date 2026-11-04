@@ -373,6 +373,7 @@ O briefing do mestre continua com objetivo, escopo, critério e as ferramentas a
 1. **Medir:** o `equipe-medir.mjs` lê as sessões dos últimos 7 dias em `%USERPROFILE%\.claude\projects`. Tira só números:
    - o custo de cada agente, em preço de API, que na assinatura serve como proporção do limite usado;
    - a parte do mestre no custo e quantos arquivos ele leu sozinho;
+   - para onde vai o custo, no mestre e nos agentes: o começo de cada conversa (prompt, regras, ferramentas), os seus pedidos, os avisos do Claude Code e dos hooks, a leitura de arquivos, as buscas, a saída de terminal, os relatórios dos agentes, as ferramentas MCP e o que os agentes escrevem. É uma estimativa: o custo de entrada de cada passo (o real) é dividido pelo tamanho de cada parte do contexto e por quantas vezes ela foi relida até a próxima compactação; o de saída é o que os agentes escrevem. Serve para escolher onde economizar (enxugar a regra, pedir o resumo dos testes, ler menos arquivos inteiros);
    - se o Explore consultou o mapa, indexou e usou o Apoio Local;
    - em quantas chamadas do Explore e do revisor o mapa veio antes da primeira leitura de código, e quantos arquivos de código o mestre leu por pedido (mediana e máximo);
    - quantas correções de bug do implementador tiveram o teste vermelho antes da correção (teste que já passava antes não prova nada);

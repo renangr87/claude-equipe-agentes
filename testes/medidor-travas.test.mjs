@@ -276,3 +276,34 @@ test('medidor: "corrigir o texto" não é correção de bug, e analisador não c
   assert.equal(r.porTipo.implementador.correcoes, 1);
   assert.equal(r.porTipo.implementador.vermelhoAntes, 0);
 });
+
+test('para onde vai o custo: cada fonte pelo tamanho e por quantas vezes foi relida', () => {
+  const claude = tmp('claude-gasto');
+  const pasta = path.join(claude, 'projects', '-app-gasto');
+  const t = (n) => new Date(agora - 30 * 60000 + n * 60000).toISOString();
+  let k = 0;
+  // Um passo do Sonnet: a entrada cresce com o que entrou no contexto.
+  const passo = (n, entrada, conteudo) => linha({ type: 'assistant', uuid: `g${++k}`, timestamp: t(n), cwd: '/tmp/app-gasto', message: { id: `gm${k}`, model: 'claude-sonnet-5-5', usage: { input_tokens: 0, output_tokens: 100, cache_read_input_tokens: entrada, cache_creation_input_tokens: 0 }, content: conteudo } });
+  const resultadoDe = (n, id, texto) => linha({ type: 'user', uuid: `gr${++k}`, timestamp: t(n), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: texto }] } });
+  escrever(path.join(pasta, 's-gasto.jsonl'), [
+    linha({ type: 'user', uuid: 'gp', timestamp: t(0), cwd: '/tmp/app-gasto', message: { role: 'user', content: 'leia o arquivo e rode os testes' } }),
+    passo(1, 10000, [{ type: 'tool_use', id: 'u1', name: 'Read', input: { file_path: '/tmp/app-gasto/a.ts' } }]),
+    // Um arquivo grande lido (40 mil caracteres) e uma saída de terminal pequena.
+    resultadoDe(2, 'u1', 'x'.repeat(40000)),
+    passo(3, 20000, [{ type: 'tool_use', id: 'u2', name: 'Bash', input: { command: 'npm test' } }]),
+    resultadoDe(4, 'u2', 'ok '.repeat(1000)),
+    passo(5, 21000, [{ type: 'text', text: 'Pronto.' }]),
+    passo(6, 21100, [{ type: 'text', text: 'Mais um passo.' }]),
+  ].join('\n') + '\n');
+  const r = JSON.parse(medir(claude, '--json', '--dias', '2'));
+  const g = r.gasto.mestre;
+  for (const k2 of ['fixo', 'leitura', 'terminal', 'escrita']) assert.ok(g[k2] > 0, k2);
+  // A leitura grande pesa mais que a saída de terminal pequena, e as partes somam o custo real.
+  assert.ok(g.leitura > 3 * g.terminal, JSON.stringify(g));
+  const soma = Object.values(g).reduce((x, v) => x + v, 0);
+  assert.ok(Math.abs(soma - r.custo.mestre) < 1e-9, `${soma} x ${r.custo.mestre}`);
+  assert.ok(r.indicadores.gasto_leitura_pct > r.indicadores.gasto_terminal_pct);
+  const texto = medir(claude, '--dias', '2');
+  assert.match(texto, /## Para onde vai o custo/);
+  assert.match(texto, /Leitura de arquivos \(Read\)/);
+});

@@ -17,7 +17,7 @@ node "__PASTA_CLAUDE__/hooks/equipe-medir.mjs" --dias 7 --retro
 
 Se o `node` não for encontrado, use o caminho completo `"__NODE__"` no lugar de `node` (no PowerShell, com `&` na frente: `& "__NODE__" "__PASTA_CLAUDE__/hooks/equipe-medir.mjs" --dias 7 --retro`). Se o usuário pedir outro período, troque `--dias 7`; para um projeto só, acrescente `--projeto <parte do nome>`.
 
-A saída traz o gasto por agente, os sinais, a seção das travas, a divisão por projeto, a pasta da cópia da equipe e, a partir da segunda retrospectiva, a comparação com a anterior e as propostas daquela vez. O custo vem em preço de API: na assinatura ele serve como proporção do limite usado, não como conta.
+A saída traz o gasto por agente, para onde vai o custo (por fonte: regras e prompt, pedidos, avisos, leitura de arquivos, terminal, relatórios, o que os agentes escrevem), os sinais, a seção das travas, a divisão por projeto, a pasta da cópia da equipe e, a partir da segunda retrospectiva, a comparação com a anterior e as propostas daquela vez. O custo vem em preço de API: na assinatura ele serve como proporção do limite usado, não como conta.
 
 Se existir um resultado dos testes de comportamento (`__PASTA_CLAUDE__/equipe-diario/comportamento-*.json`, o mais recente), leia também: cada checagem que falhou é um sinal direto e entra no diagnóstico ao lado dos números. Se o último tiver mais de 7 dias ou não existir, sugira rodar `node testes/comportamento/rodar.mjs` na pasta da equipe antes de aplicar mudanças.
 
@@ -53,6 +53,10 @@ Compare os números com a tabela abaixo. Os limites são pontos de partida, não
 | Trava `revisao` com `reprovou` ou `concluiu-com-reprovacao` | o revisor reprovou e o mestre encerrou sem corrigir | conferir se os achados chegaram ao usuário; se o mesmo tipo de achado se repete, levar a lição à camada certa (checagem no revisor, teste, nota de área) |
 | Trava `convergencia` com `parou` | a mesma falha voltou depois de três tentativas no mesmo pedido | olhar o briefing das três: faltou contexto, a tarefa estava mal formulada, ou a causa estava fora do escopo; nota de área com o que se descobriu |
 | Trava `modulo` com `falhou:<nome>` | um módulo das travas não carregou (instalação pela metade, erro no script) | rodar a linha de instalação de novo; se continuar, abrir o diagnóstico e corrigir o script com caso de teste |
+| Saída de terminal acima de 20% do custo | log de teste ou de build inteiro entrando no contexto | trocar a linha da lista do verificador pelo modo resumido do comando (`flutter test --reporter compact`, `npm test -- --silent`, `pytest -q`); o verificador já devolve só o resumo |
+| Leitura de arquivos acima de 25% do custo | arquivos inteiros lidos (mestre ou agentes) em vez do trecho | conferir as travas de leitura (`orcamento`, `leitura`) e o mapa; nota de área dizendo onde está cada coisa |
+| Começo de cada conversa acima de 35% do custo | regras e agentes longos relidos em muitas sessões e chamadas curtas | enxugar a regra global e os agentes (o texto fixo é relido a cada passo); juntar tarefas pequenas parecidas num só implementador |
+| O que os agentes escrevem acima de 40% do custo | respostas e relatórios longos, ou raciocínio extenso | encurtar o formato dos relatórios; conferir o esforço (effort) de cada agente |
 | Correções de bug com teste vermelho antes da correção abaixo de 80% | o implementador corrige antes de reproduzir o bug, e o teste "que passa" pode não provar nada | frase no prompt do implementador; se continuar baixo, trava que exige o teste vermelho antes da primeira edição de código numa correção |
 | A mesma falha voltou (convergência barrou ou avisou várias vezes) | tentativas iguais: falta algo que o agente não vê, ou a tarefa está mal formulada | briefing de correção com "Já tentado" e o esperado e o que apareceu; replanejar mais cedo; nota de área com a armadilha |
 

@@ -107,8 +107,79 @@ function* linhas(arquivo) {
 
 function interpretar(l) {
   if (!l) return null;
-  if (!INTERESSA.some((k) => l.includes(k))) return l.includes('"type":"user"') ? pedidoLeve(l) : null;
+  if (!INTERESSA.some((k) => l.includes(k))) {
+    if (l.includes('"type":"user"')) return { ...pedidoLeve(l), tam: l.length };
+    // Anexo (aviso de hook, arquivo anexado): só o tamanho, para a conta do custo.
+    if (l.includes('"type":"attachment"')) {
+      const m = l.match(/"attachment":\{"type":"([A-Za-z_-]+)"/);
+      return { type: 'attachment', tipoAnexo: m ? m[1] : '', tam: l.length, uuid: campo(l, 'uuid'), timestamp: campo(l, 'timestamp') };
+    }
+    return null;
+  }
   try { return JSON.parse(l); } catch { return null; }
+}
+
+// ---------- para onde vai o custo ----------
+// Cada passo de um agente relê tudo o que está no contexto: o começo da conversa (prompt,
+// regras, ferramentas), os pedidos, cada resultado de ferramenta e o que o próprio agente já
+// escreveu. O custo de entrada de cada passo (o real, das mensagens) é dividido entre essas
+// partes pelo tamanho de cada uma e por quantas vezes foi relida até a próxima compactação
+// (a primeira vez grava no cache, as seguintes leem do cache, bem mais barato). O custo de
+// saída é "o que os agentes escrevem". É uma estimativa: o tamanho vem do texto, convertido em
+// tokens pela proporção que a própria sessão mostra.
+export const CATEGORIAS_GASTO = {
+  fixo: 'Começo de cada conversa (prompt, regras, ferramentas, resumo da compactação)',
+  pedidos: 'Seus pedidos e arquivos anexados',
+  avisos: 'Avisos do Claude Code e dos hooks (skills, memória, contexto)',
+  leitura: 'Leitura de arquivos (Read)',
+  busca: 'Buscas (Grep, Glob)',
+  terminal: 'Saída de terminal (testes, git, build)',
+  agentes: 'Relatórios dos subagentes',
+  mapa: 'Mapa do código',
+  mcp: 'Outras ferramentas MCP',
+  web: 'Páginas e buscas na web',
+  outras: 'Outras ferramentas',
+  escrita: 'O que os agentes escrevem (resposta e chamadas de ferramenta)',
+};
+export function categoriaDaFerramenta(nome) {
+  const n = String(nome || '');
+  if (n === 'Read' || n === 'NotebookRead') return 'leitura';
+  if (n === 'Grep' || n === 'Glob') return 'busca';
+  if (n === 'Bash' || n === 'PowerShell' || n === 'BashOutput') return 'terminal';
+  if (n === 'Agent' || n === 'Task') return 'agentes';
+  if (n.startsWith('mcp__codebase-memory__')) return 'mapa';
+  if (n.startsWith('mcp__')) return 'mcp';
+  if (n === 'WebFetch' || n === 'WebSearch') return 'web';
+  return 'outras';
+}
+const novoSegmento = () => ({ turnos: 0, fixo: null, ultimaEntrada: 0, custoEntrada: 0, blocos: [] });
+const somarEm = (o, k, v) => { if (v) o[k] = (o[k] || 0) + v; };
+function blocoNoContexto(g, cat, chars) {
+  if (chars > 0) g.blocos.push({ cat, chars, t: g.turnos });
+}
+function passoDoAgente(g, modelo, u, total) {
+  g.turnos++;
+  const e = entradaTotal(u);
+  if (g.fixo === null) g.fixo = e;
+  g.ultimaEntrada = e;
+  const soEntrada = custo(modelo, { ...u, output_tokens: 0 });
+  g.custoEntrada += soEntrada;
+  somarEm(total, 'escrita', Math.max(0, custo(modelo, u) - soEntrada));
+}
+// Fim de um trecho (compactação ou fim do arquivo): reparte o custo de entrada dele.
+function fecharSegmento(g, total) {
+  const n = g.turnos;
+  if (!n || !g.custoEntrada) return;
+  const relidos = g.blocos.filter((b) => b.t < n);
+  const chars = relidos.reduce((x, b) => x + b.chars, 0);
+  const fixo = g.fixo || 0;
+  // Tokens por caractere, pela própria sessão: o que cresceu na entrada sobre o texto que entrou.
+  const f = Math.min(0.6, Math.max(0.15, chars ? (g.ultimaEntrada - fixo) / chars : 0.3));
+  const pesos = { fixo: fixo * (1.25 + 0.1 * (n - 1)) };
+  for (const b of relidos) somarEm(pesos, b.cat, b.chars * f * (1.25 + 0.1 * (n - b.t - 1)));
+  const soma = Object.values(pesos).reduce((x, v) => x + v, 0);
+  if (!soma) { somarEm(total, 'fixo', g.custoEntrada); return; }
+  for (const [k, v] of Object.entries(pesos)) somarEm(total, k, (g.custoEntrada * v) / soma);
 }
 
 // Mensagem que a pessoa digitou (um pedido). A linha não é convertida: só os campos de
@@ -213,7 +284,7 @@ function novaAnalise() {
     msgs: new Map(), ferramentas: {}, usos: new Map(), resultados: new Set(), vistos: new Set(),
     esperas: [], perguntas: [], bloqueios: [], recusas: 0, compactacoes: 0, errosApi: 0,
     aprovacoes: [], barrados: [], recusasUsuario: 0, recusasTexto: 0, barradosTexto: [], temDecisoes: false,
-    primeiro: null, ultimo: null, ultimoTs: null, cwd: null, custos: new Map(), ultimoTexto: '',
+    primeiro: null, ultimo: null, ultimoTs: null, cwd: null, custos: new Map(), ultimoTexto: '', gasto: {},
     entrega: '', entregaTs: null,
     agentes: [], tipoPorAgente: new Map(), relatorios: new Map(),
     // Ordem das ferramentas (primeira consulta ao mapa, primeira leitura de código) e linha do
@@ -239,6 +310,8 @@ function textoDaEntrega(entrada) {
 // um arquivo (quando a pasta do projeto muda no meio), então tudo é deduplicado pelos
 // identificadores: mensagem, chamada de ferramenta e linha.
 function analisar(arquivo, desdeMs, r = novaAnalise()) {
+  // O contexto é de cada arquivo (o do mestre e o de cada subagente), até a compactação.
+  let g = novoSegmento();
   for (const d of linhas(arquivo)) {
     if (d.cwd && !r.cwd) r.cwd = d.cwd;
     if (d.type === 'cost-state') {
@@ -258,7 +331,18 @@ function analisar(arquivo, desdeMs, r = novaAnalise()) {
       if (r.primeiro === null || ts < r.primeiro) r.primeiro = ts;
       if (r.ultimo === null || ts > r.ultimo) r.ultimo = ts;
     }
-    if (d.type === 'system' && d.subtype === 'compact_boundary') r.compactacoes++;
+    if (d.type === 'system' && d.subtype === 'compact_boundary') {
+      r.compactacoes++;
+      fecharSegmento(g, r.gasto);
+      g = novoSegmento();
+    }
+    // Anexos: o arquivo que você anexou, o relatório de um agente de segundo plano, ou um aviso.
+    // Registro e foto do prompt (snapshot, record) não entram no contexto do modelo.
+    if (d.type === 'attachment' && typeof d.tam === 'number' && !/snapshot|record/i.test(d.tipoAnexo || '')) {
+      blocoNoContexto(g, d.tipoAnexo === 'file' ? 'pedidos' : d.tipoAnexo === 'queued_command' ? 'agentes' : 'avisos', Math.max(0, d.tam - 300));
+    }
+    // Pedido ou briefing (linha lida sem converter): o tamanho, sem os campos de controle.
+    if (d.type === 'user' && typeof d.tam === 'number' && !d.message) blocoNoContexto(g, d.pedido || d.isSidechain ? 'pedidos' : 'avisos', Math.max(0, d.tam - 400));
     const fila = d.type === 'attachment' && d.attachment && d.attachment.type === 'queued_command' ? d.attachment.prompt
       : d.type === 'queue-operation' && d.operation === 'enqueue' ? d.content : null;
     if (typeof fila === 'string') guardarRelatorios(fila, r.relatorios);
@@ -275,10 +359,15 @@ function analisar(arquivo, desdeMs, r = novaAnalise()) {
     if (d.type === 'assistant' && d.message) {
       const m = d.message;
       const chave = m.id || d.requestId || d.uuid;
-      if (m.usage && chave && !r.msgs.has(chave)) r.msgs.set(chave, { modelo: m.model || '', usage: m.usage, lado: Boolean(d.isSidechain) });
+      if (m.usage && chave && !r.msgs.has(chave)) {
+        r.msgs.set(chave, { modelo: m.model || '', usage: m.usage, lado: Boolean(d.isSidechain) });
+        passoDoAgente(g, m.model || '', m.usage, r.gasto);
+      }
       for (const c of Array.isArray(m.content) ? m.content : []) {
+        if (c.type === 'text' && typeof c.text === 'string') blocoNoContexto(g, 'escrita', c.text.length);
         if (c.type === 'tool_use') {
           if (r.usos.has(c.id)) continue;
+          blocoNoContexto(g, 'escrita', String(c.name || '').length + JSON.stringify(c.input || {}).length);
           r.ferramentas[c.name] = (r.ferramentas[c.name] || 0) + 1;
           r.usos.set(c.id, { nome: c.name, ts, tipo: c.input && c.input.subagent_type });
           r.seq++;
@@ -321,6 +410,7 @@ function analisar(arquivo, desdeMs, r = novaAnalise()) {
         const uso = r.usos.get(c.tool_use_id);
         const nome = uso ? uso.nome : '?';
         const texto = textoDe(c.content);
+        blocoNoContexto(g, categoriaDaFerramenta(nome), texto.length);
         if (c.is_error && r.testesPorUso.has(c.tool_use_id)) {
           const q = r.testesPorUso.get(c.tool_use_id);
           if (r.primeiroVermelho === null || q < r.primeiroVermelho) r.primeiroVermelho = q;
@@ -353,8 +443,12 @@ function analisar(arquivo, desdeMs, r = novaAnalise()) {
           r.tipoPorAgente.set(String(d.toolUseResult.agentId), uso.tipo || 'general-purpose');
         }
       }
+    } else if (d.type === 'user' && d.message) {
+      // Pedido convertido (o formato com o texto inteiro): o tamanho dele.
+      blocoNoContexto(g, ehPedido(d) || d.isSidechain ? 'pedidos' : 'avisos', textoDe(d.message.content).length);
     }
   }
+  fecharSegmento(g, r.gasto);
   return r;
 }
 
@@ -458,11 +552,13 @@ export function medir({ dias = 7, projeto = '', raiz = '', diario = '' } = {}) {
         }
       }
       const agentes = [];
+      const gastoAgentes = {};
       for (const [id, dirSub] of arquivosSub) {
         const meta = lerJson(path.join(dirSub, `agent-${id}.meta.json`)) || {};
         const a = analisar(path.join(dirSub, `agent-${id}.jsonl`), desdeMs);
         if (a.primeiro === null) continue;
         const tipo = meta.agentType || principal.tipoPorAgente.get(id) || 'subagente';
+        for (const [k, v] of Object.entries(a.gasto)) somarEm(gastoAgentes, k, v);
         const uso = somarUso(a.msgs);
         const f = a.ferramentas;
         const nomesF = Object.keys(f);
@@ -516,6 +612,7 @@ export function medir({ dias = 7, projeto = '', raiz = '', diario = '' } = {}) {
         // O custo que o próprio Claude Code registra é acumulado por execução, então só
         // entram as execuções que começaram dentro do período.
         custoRegistrado: custoRegistrado(principal.custos, desdeMs),
+        gasto: { mestre: principal.gasto, agentes: gastoAgentes },
       });
     }
   }
@@ -614,6 +711,7 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos, travas }) {
   let sessoesComRegistro = 0;
   let leiturasMestre = 0;
   const porPedido = [];
+  const gasto = { mestre: {}, agentes: {} };
 
   const somarDecisoes = (x) => {
     for (const e of x.aprovacoes) {
@@ -633,6 +731,7 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos, travas }) {
   };
 
   for (const s of sessoes) {
+    for (const lado of ['mestre', 'agentes']) for (const [k, v] of Object.entries((s.gasto && s.gasto[lado]) || {})) somarEm(gasto[lado], k, v);
     custoMestre += s.mestre.custo;
     leiturasMestre += s.mestre.leituras;
     porPedido.push(...s.mestre.leiturasPorPedido);
@@ -704,6 +803,8 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos, travas }) {
   // leitura de código (os pedidos sem leitura puxariam a mediana para zero).
   const comLeituraMestre = porPedido.filter((v) => v > 0);
   const pedidos = { total: porPedido.length, comLeitura: comLeituraMestre.length, mediana: mediana(comLeituraMestre), maximo: comLeituraMestre.length ? Math.max(...comLeituraMestre) : 0 };
+  const gastoTotal = Object.values(gasto.mestre).concat(Object.values(gasto.agentes)).reduce((x, v) => x + v, 0);
+  const parte = (...cats) => (gastoTotal ? (100 * cats.reduce((x, k) => x + (gasto.mestre[k] || 0) + (gasto.agentes[k] || 0), 0)) / gastoTotal : null);
   const tv = travas || lerTravas('', 0);
   const barrouOuPediu = Object.values(tv.porTrava).reduce((x, d) => x + (d.barrou || 0) + (d.pediu || 0), 0);
   const p95s = Object.values(tv.tempos).map((t) => t.p95);
@@ -733,6 +834,11 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos, travas }) {
     conclusoes_sem_revisao: tv.linhas ? tv.conclusoesSemRevisao : null,
     correcao_com_teste_vermelho_pct: imp && imp.correcoes ? (100 * imp.vermelhoAntes) / imp.correcoes : null,
     hooks_p95_ms: p95s.length ? Math.max(...p95s) : null,
+    // Para onde vai o custo (estimativa): a parte de cada fonte no custo total.
+    gasto_fixo_pct: parte('fixo'),
+    gasto_leitura_pct: parte('leitura', 'busca'),
+    gasto_terminal_pct: parte('terminal'),
+    gasto_escrita_pct: parte('escrita'),
   };
 
   return {
@@ -744,6 +850,7 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos, travas }) {
     porTipo, projetos, bloqueios, aprovacoes, barrados, estimado, subidas,
     compactacoes, errosApi, recusas, perguntas, segundosPerguntas,
     travas: tv,
+    gasto,
     indicadores,
   };
 }
@@ -790,6 +897,7 @@ export function texto(r) {
     out.push(`Custo registrado pelo próprio Claude Code nas ${r.custo.sessoesComRegistro} sessões que começaram no período: ${dinheiro(r.custo.registradoPeloClaudeCode)}.`);
   }
   out.push('');
+  out.push(...textoGasto(r.gasto));
   out.push('## Sinais');
   out.push('');
   const i = r.indicadores;
@@ -836,6 +944,29 @@ export function texto(r) {
     out.push(`| ${nome} | ${p.sessoes} | ${p.agentes} | ${p.compactacoes} | ${dinheiro(p.custo)} |`);
   }
   return out.join('\n');
+}
+
+// Para onde vai o custo: cada fonte, no mestre e nos agentes, em parte do custo total.
+function textoGasto(gasto) {
+  const out = ['## Para onde vai o custo', ''];
+  const g = gasto || { mestre: {}, agentes: {} };
+  const total = Object.values(g.mestre).concat(Object.values(g.agentes)).reduce((x, v) => x + v, 0);
+  if (!total) {
+    out.push('Sem dados de uso nas transcrições deste período.', '');
+    return out;
+  }
+  const parte = (v) => pct((100 * (v || 0)) / total);
+  out.push('| De onde | Mestre | Agentes | Total | Custo |');
+  out.push('|---|---|---|---|---|');
+  const linhasG = Object.keys(CATEGORIAS_GASTO)
+    .map((k) => [k, (g.mestre[k] || 0) + (g.agentes[k] || 0)])
+    .filter(([, v]) => v > 0)
+    .sort((a, b) => b[1] - a[1]);
+  for (const [k, v] of linhasG) out.push(`| ${CATEGORIAS_GASTO[k]} | ${parte(g.mestre[k])} | ${parte(g.agentes[k])} | ${parte(v)} | ${dinheiro(v)} |`);
+  out.push('');
+  out.push('Estimativa: o custo de entrada de cada passo é dividido pelo tamanho de cada parte do contexto e por quantas vezes ela foi relida; o de saída é o que os agentes escrevem. Serve para comparar fontes, não como conta exata.');
+  out.push('');
+  return out;
 }
 
 // Seção das travas: vem só do registro (decisões e tempos), sem conteúdo.
@@ -885,7 +1016,13 @@ const ROTULOS = {
   conclusoes_sem_revisao: ['Mudanças concluídas sem revisão', (v) => nf(0).format(v)],
   correcao_com_teste_vermelho_pct: ['Correções de bug com teste vermelho antes da correção', pct],
   hooks_p95_ms: ['Tempo dos hooks (p95 do mais lento)', ms],
+  gasto_fixo_pct: ['Parte do custo: começo de cada conversa (regras, prompt)', pct],
+  gasto_leitura_pct: ['Parte do custo: leitura e busca de arquivos', pct],
+  gasto_terminal_pct: ['Parte do custo: saída de terminal', pct],
+  gasto_escrita_pct: ['Parte do custo: o que os agentes escrevem', pct],
 };
+// Partes do custo: subir ou descer não é bom nem ruim por si (uma cai quando outra sobe).
+const SO_MUDOU = new Set(['gasto_fixo_pct', 'gasto_leitura_pct', 'gasto_terminal_pct', 'gasto_escrita_pct']);
 
 export function comparacao(antes, agora) {
   const out = ['| Indicador | Antes | Agora | |', '|---|---|---|---|'];
@@ -897,7 +1034,7 @@ export function comparacao(antes, agora) {
     let sinal = '=';
     if (Math.abs(b - a) > Math.max(Math.abs(a) * 0.05, 1e-9)) {
       const melhorou = MAIOR_MELHOR.has(k) ? b > a : b < a;
-      sinal = melhorou ? 'melhorou' : 'piorou';
+      sinal = SO_MUDOU.has(k) ? (b > a ? 'subiu' : 'desceu') : melhorou ? 'melhorou' : 'piorou';
     }
     out.push(`| ${rotulo} | ${fmt(a)} | ${fmt(b)} | ${sinal} |`);
   }
