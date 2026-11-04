@@ -39,6 +39,7 @@ export const TRAVAS = [
   { nome: 'banco', quando: /^(Bash|PowerShell)$/, rodar: banco ? (e) => deHook(banco.decidir(e)) : nada },
   { nome: 'push', quando: /^(Bash|PowerShell)$/, rodar: push ? push.decidirPush : nada },
   { nome: 'briefing', quando: /^(Agent|Task)$/, rodar: briefing ? briefing.decidirBriefing : nada },
+  { nome: 'modelo', quando: /^(Agent|Task)$/, rodar: briefing ? briefing.modeloDoGenerico : nada },
   { nome: 'revisor', quando: /^(Agent|Task)$/, rodar: revisao ? revisao.decidirRevisor : nada },
   { nome: 'convergencia', quando: /^(Agent|Task)$/, rodar: convergencia ? convergencia.decidirConvergencia : nada },
   { nome: 'paralelo', quando: /^(Agent|Task)$/, rodar: paralelo ? paralelo.decidirParalelo : nada },
@@ -55,6 +56,8 @@ export function decidir(entrada) {
   let final = null;
   const motivos = [];
   const ctx = { registros: [] };
+  // Campos que uma trava troca na entrada da ferramenta (o modelo do agente genérico).
+  let atualizar = null;
   for (const t of TRAVAS) {
     if (!t.quando.test(ferramenta)) continue;
     const inicio = Date.now();
@@ -67,11 +70,21 @@ export function decidir(entrada) {
       registrarTrava(t.nome, registro, ms, entrada);
       ctx.registros.push({ nome: t.nome, registro });
     }
+    if (r && r.atualizar && typeof r.atualizar === 'object') atualizar = { ...(atualizar || {}), ...r.atualizar };
     if (!decisao || !PESO[decisao] || decisao === 'allow') continue;
     if (!final || PESO[decisao] > PESO[final]) final = decisao;
     if (r.motivo) motivos.push({ decisao, motivo: r.motivo });
     // Barrou: as travas seguintes não rodam (nada de anotar leitura que não aconteceu).
     if (decisao === 'deny') break;
+  }
+  // Entrada trocada: vai junto da decisão (ask mostra a entrada nova). Sem decisão, vai só a
+  // troca, sem "allow": as regras de permissão do usuário (deny, ask) continuam valendo, e a
+  // versão antiga do Claude Code não pula a conferência delas. Barrar não leva a troca.
+  if (atualizar && final !== 'deny') {
+    const updatedInput = { ...(entrada.tool_input || {}), ...atualizar };
+    if (!final) return { hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput } };
+    const motivo = motivos.filter((m) => m.decisao === final).map((m) => m.motivo).join('\n\n');
+    return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: final, permissionDecisionReason: motivo, updatedInput } };
   }
   if (!final) return null;
   const texto = motivos.filter((m) => m.decisao === final).map((m) => m.motivo).join('\n\n');

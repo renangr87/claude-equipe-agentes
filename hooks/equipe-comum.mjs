@@ -382,7 +382,7 @@ export function registrarTrava(trava, decisao, ms, entrada) {
 // Interruptor de emergência das travas de economia e de retrabalho: EQUIPE_DESLIGAR com
 // os nomes separados por vírgula (ou "tudo"), no bloco env do settings.json. As travas
 // de segurança (banco, segredos, SQL) não desligam por aqui.
-export const TRAVAS_DESLIGAVEIS = ['leitura', 'mapa', 'orcamento', 'briefing', 'convergencia', 'analisar', 'verificar', 'escopo', 'revisao', 'prova', 'paralelo'];
+export const TRAVAS_DESLIGAVEIS = ['leitura', 'mapa', 'orcamento', 'briefing', 'convergencia', 'analisar', 'verificar', 'escopo', 'revisao', 'prova', 'paralelo', 'modelo', 'conversa'];
 // Também por projeto: {"desligar": ["orcamento", "mapa"]} em .claude/equipe.json da pasta
 // do projeto da sessão (um projeto com agentes próprios, por exemplo), sem mexer nos outros.
 let desligadasDoProjeto = null;
@@ -435,6 +435,29 @@ export function relatorioDaChamada(entrada) {
   if (entrega) return entrega;
   if (entrada && typeof entrada.last_assistant_message === 'string' && entrada.last_assistant_message.trim()) return entrada.last_assistant_message;
   return ultimo;
+}
+
+// Última mensagem do mestre na transcrição da sessão (as últimas 64 KB).
+export function ultimaFalaDoMestre(arquivo) {
+  if (!arquivo) return '';
+  let fd;
+  try {
+    fd = fs.openSync(arquivo, 'r');
+    const tam = fs.fstatSync(fd).size;
+    const ler = Math.min(tam, 64 * 1024);
+    const buf = Buffer.alloc(ler);
+    fs.readSync(fd, buf, 0, ler, tam - ler);
+    const linhas = buf.toString('utf8').split('\n').reverse();
+    for (const l of linhas) {
+      if (!l.includes('"assistant"')) continue;
+      let j;
+      try { j = JSON.parse(l); } catch { continue; }
+      const c = j && j.type === 'assistant' && j.message && Array.isArray(j.message.content) ? j.message.content : [];
+      const t = c.filter((b) => b && b.type === 'text').map((b) => b.text).join('\n');
+      if (t.trim()) return t;
+    }
+  } catch { /* sem transcrição */ } finally { if (fd !== undefined) try { fs.closeSync(fd); } catch { /* fechado */ } }
+  return '';
 }
 
 // Briefing que o subagente recebeu: a primeira mensagem da transcrição dele.

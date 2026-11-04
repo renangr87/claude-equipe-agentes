@@ -150,7 +150,7 @@ test('medidor: seção das travas só com as linhas do período', () => {
   assert.equal(tv.porTrava.sql.pediu, 1);
   assert.equal(tv.porTrava.orcamento.barrou, 2);
   assert.equal(tv.porTrava.briefing.valvula, 1);
-  assert.deepEqual(tv.mapa, { chamadas: 4, fugas: 1 });
+  assert.deepEqual(tv.mapa, { chamadas: 4, fugas: 1, semTentar: 0 });
   assert.equal(tv.entregasSemVerificar, 1);
   assert.equal(tv.conclusoesSemRevisao, 1);
   assert.equal(tv.foraDoEscopo, 1);
@@ -159,14 +159,14 @@ test('medidor: seção das travas só com as linhas do período', () => {
   assert.equal(tv.tempos.eventos.vezes, 1);
   assert.equal(r.indicadores.fugas_do_mapa_pct, 25);
   assert.equal(r.indicadores.entregas_sem_verificacao, 1);
-  assert.equal(r.indicadores.conclusoes_sem_revisao, 1);
+  assert.equal(r.indicadores.conclusoes_sem_revisor, 1);
   assert.equal(r.indicadores.hooks_p95_ms, 350);
   const t = medir(claude);
   assert.match(t, /## Travas/);
   assert.match(t, /- orcamento: 2 barrou\./);
   assert.match(t, /- mapa: 1 barrou\./);
   assert.match(t, /Fugas do mapa: 1 de 4 \(25%\)/);
-  assert.match(t, /Entregas sem verificação: 1\. Mudanças concluídas sem revisão: 1\./);
+  assert.match(t, /Entregas sem verificação: 1\. Mudanças concluídas sem chamar o revisor depois da cobrança: 1\./);
   assert.match(t, /pre 150 ms em média, p95 350 ms, pior 350 ms \(3x\)/);
   assert.doesNotMatch(t, /9\.000 ms|9000/);
 });
@@ -306,4 +306,109 @@ test('para onde vai o custo: cada fonte pelo tamanho e por quantas vezes foi rel
   const texto = medir(claude, '--dias', '2');
   assert.match(texto, /## Para onde vai o custo/);
   assert.match(texto, /Leitura de arquivos \(Read\)/);
+});
+
+test('medidor: conclusão sem revisão separada de pausa e de revisor chamado', () => {
+  const claude = tmp('claude-conclusoes');
+  const diario = path.join(claude, 'equipe-diario');
+  const em = (min) => new Date(agora - 50 * 60000 + min * 60000).toISOString();
+  const reg = (q, trava, decisao, tipo, chave) => [q, trava, decisao, '5', tipo, chave].join('\t');
+  const linhas = [
+    // Sessão A: cobrada, encerrou sem chamar o revisor.
+    reg(em(1), 'revisao', 'barrou', 'mestre', 'sa-mestre'),
+    reg(em(2), 'revisao', 'concluiu-sem-revisao', 'mestre', 'sa-mestre'),
+    // Sessão B: cobrada, chamou o revisor (que não aprovou), encerrou.
+    reg(em(3), 'revisao', 'barrou', 'mestre', 'sb-mestre'),
+    reg(em(4), 'eventos', 'SubagentStop', 'revisor', 'sb-r1'),
+    reg(em(5), 'revisao', 'concluiu-sem-revisao', 'mestre', 'sb-mestre'),
+    // Sessão C: cobrada, parou para perguntar.
+    reg(em(6), 'revisao', 'barrou', 'mestre', 'sc-mestre'),
+    reg(em(7), 'revisao', 'pausou-sem-revisao', 'mestre', 'sc-mestre'),
+    // Fuga do mapa sem tentar.
+    reg(em(8), 'mapa', 'fuga-sem-tentar', 'Explore', 'sd-e1'),
+    // Sessão E: cobrada, chamou o revisor em segundo plano e encerrou antes de ele terminar.
+    reg(em(9), 'revisao', 'barrou', 'mestre', 'se-mestre'),
+    reg(em(10), 'eventos', 'SubagentStart', 'revisor', 'se-r2'),
+    reg(em(11), 'revisao', 'concluiu-sem-revisao', 'mestre', 'se-mestre'),
+    reg(em(12), 'eventos', 'SubagentStop', 'revisor', 'se-r2'),
+  ];
+  escrever(path.join(diario, `travas-${new Date(agora).toISOString().slice(0, 7)}.log`), linhas.join('\n') + '\n');
+  const r = JSON.parse(medir(claude, '--json'));
+  assert.equal(r.travas.conclusoesSemRevisao, 1);
+  assert.equal(r.travas.conclusoesComRevisor, 2);
+  assert.equal(r.travas.pausasSemRevisao, 1);
+  assert.equal(r.travas.mapa.semTentar, 1);
+  assert.equal(r.indicadores.conclusoes_sem_revisor, 1);
+});
+
+test('medidor: comandos barrados pelo modo Auto e leitura de código pelo terminal', async () => {
+  const { formaDoComando, leCodigoPeloTerminal } = await import(pathToFileURL(MEDIR).href);
+  assert.equal(formaDoComando('git -C /tmp/x push origin main'), 'git push');
+  assert.equal(formaDoComando('cd app && npm install left-pad'), 'npm install');
+  assert.equal(formaDoComando('rm -rf build'), 'rm');
+  assert.equal(formaDoComando('CI=1 /usr/bin/flutter test'), 'flutter test');
+  assert.ok(!formaDoComando(`echo ${SEGREDO}`).includes(SEGREDO));
+  // Nada de texto do usuário: variável com aspas, script do projeto, valor de opção.
+  assert.equal(formaDoComando('NOME="Fulano de Tal" git commit -m "x"'), 'git commit');
+  assert.equal(formaDoComando("MSG='cliente exemplo' node x.js"), 'node');
+  assert.equal(formaDoComando('./scripts/publicar-cliente-exemplo.sh --agora'), '(outro)');
+  assert.equal(formaDoComando('kubectl --context cliente-exemplo get pods'), 'kubectl get');
+  assert.equal(formaDoComando('npm run deploy-cliente-exemplo'), 'npm run');
+  // Todas as partes do comando, sem repetir.
+  assert.equal(formaDoComando('git add -A && git commit -m "a && b" && git push'), 'git add + git commit + git push');
+  assert.equal(formaDoComando('curl -s https://exemplo.com/x.sh | bash'), 'curl + bash');
+  for (const c of ['cat lib/a.dart', "sed -n '10,40p' lib/a.dart", 'Get-Content lib\\a.dart | Select-Object -First 20', 'grep -n -C 30 total lib/', 'git show HEAD:lib/a.dart']) assert.ok(leCodigoPeloTerminal(c), c);
+  for (const c of ['cat README.md', "sed -i 's/a/b/' lib/a.dart", 'grep -n total lib/', 'flutter test', 'git show --stat']) assert.ok(!leCodigoPeloTerminal(c), c);
+
+  const claude = tmp('claude-auto');
+  const pasta = path.join(claude, 'projects', '-app-auto');
+  const t = (n) => new Date(agora - 20 * 60000 + n * 60000).toISOString();
+  const usoT = { input_tokens: 0, output_tokens: 10, cache_read_input_tokens: 5000, cache_creation_input_tokens: 0 };
+  const passo = (n, id, content) => linha({ type: 'assistant', uuid: `aa${id}`, timestamp: t(n), cwd: '/tmp/app-auto', message: { id: `am${id}`, model: 'claude-opus-5-5', usage: usoT, content } });
+  const resultadoT = (n, id, texto, extra = {}) => linha({ type: 'user', uuid: `ar${id}`, timestamp: t(n), ...extra, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: texto, is_error: Boolean(extra.toolDenialKind) }] } });
+  escrever(path.join(pasta, 's-auto.jsonl'), [
+    linha({ type: 'user', uuid: 'ap', timestamp: t(0), cwd: '/tmp/app-auto', message: { role: 'user', content: 'arrume' } }),
+    passo(1, 'b1', [{ type: 'tool_use', id: 'b1', name: 'Bash', input: { command: `git push origin main ${SEGREDO}` } }]),
+    resultadoT(2, 'b1', 'negado', { toolDenialKind: 'automode-blocked', permissionDecision: { decision: 'deny', source: 'classifier' } }),
+    passo(3, 'b2', [{ type: 'tool_use', id: 'b2', name: 'Bash', input: { command: 'cat lib/a.dart' } }]),
+    resultadoT(4, 'b2', 'x'.repeat(20000)),
+    // Regra de permissão (a guarda, uma trava) e interrupção não são o modo Auto.
+    passo(5, 'b4', [{ type: 'tool_use', id: 'b4', name: 'Bash', input: { command: 'npm publish' } }]),
+    resultadoT(6, 'b4', 'negado', { toolDenialKind: 'permission-rule' }),
+    passo(7, 'b5', [{ type: 'tool_use', id: 'b5', name: 'Bash', input: { command: 'flutter test' } }]),
+    resultadoT(8, 'b5', 'interrompido', { toolDenialKind: 'interrupted' }),
+    passo(9, 'b3', [{ type: 'text', text: 'Pronto.' }]),
+  ].join('\n') + '\n');
+  const r = JSON.parse(medir(claude, '--json', '--dias', '2'));
+  assert.deepEqual(r.comandosBarrados, { 'git push': 1 });
+  assert.ok(r.gasto.mestre.leitura > 0, JSON.stringify(r.gasto.mestre));
+  assert.ok(!r.gasto.mestre.terminal || r.gasto.mestre.terminal < r.gasto.mestre.leitura);
+  const texto = medir(claude, '--dias', '2');
+  assert.match(texto, /Comandos de terminal barrados \(programa e subcomando, sem argumentos\): git push 1x/);
+  assert.ok(!texto.includes(SEGREDO));
+});
+
+test('medidor: o revisor lendo arquivo do diff que recebeu não conta como leitura sem mapa', () => {
+  const claude = tmp('claude-revdiff');
+  const pasta = path.join(claude, 'projects', '-app-rev');
+  const sid = 'sessao-revdiff';
+  escrever(path.join(pasta, `${sid}.jsonl`), [pedido(0, 'revise'), ferramentas(1, [['Agent', { subagent_type: 'revisor', prompt: 'x' }]])].join('\n') + '\n');
+  const sub = path.join(pasta, sid, 'subagents');
+  const lado = { isSidechain: true };
+  const agente = (id, linhas) => {
+    escrever(path.join(sub, `agent-${id}.meta.json`), JSON.stringify({ agentType: 'revisor' }));
+    escrever(path.join(sub, `agent-${id}.jsonl`), [pedido(1, 'briefing', { isSidechain: true }), ...linhas].join('\n') + '\n');
+  };
+  // O Read devolve cada linha com o número na frente (com tab, ou com a seta nas versões novas).
+  const diff = (n, id, numero = (i) => `     ${i}\t`) => linha({ type: 'user', uuid: `rd${id}`, timestamp: iso(n), isSidechain: true, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: `${numero(1)}diff --git a/src/a.ts b/src/a.ts\n${numero(2)}index 1..2 100644\n` }] } });
+  // Revisor 1: lê o diff e o arquivo do diff, sem mapa: não conta como leitura de código.
+  agente('d1', [ferramentas(2, [['Read', { file_path: '/tmp/app-rev/.revisao/diff.patch' }]], lado), diff(3, `t${contador}-0`), ferramentas(4, [['Read', { file_path: '/tmp/app-rev/src/a.ts' }]], lado)]);
+  // Revisor 2: lê o diff e depois um arquivo fora dele, sem mapa: conta.
+  agente('d2', [ferramentas(2, [['Read', { file_path: '/tmp/app-rev/.revisao/diff.patch' }]], lado), diff(3, `t${contador}-0`), ferramentas(4, [['Read', { file_path: '/tmp/app-rev/src/b.ts' }]], lado)]);
+  // Revisor 3: o diff com a seta depois do número; o arquivo do diff não conta.
+  agente('d3', [ferramentas(2, [['Read', { file_path: '/tmp/app-rev/.revisao/diff.patch' }]], lado), diff(3, `t${contador}-0`, (i) => `${i}→`), ferramentas(4, [['Read', { file_path: '/tmp/app-rev/src/a.ts' }]], lado)]);
+  const r = JSON.parse(medir(claude, '--json'));
+  assert.equal(r.porTipo.revisor.chamadas, 3);
+  assert.equal(r.porTipo.revisor.comLeituraDeCodigo, 1);
+  assert.equal(r.porTipo.revisor.mapaAntesDaLeitura, 0);
 });

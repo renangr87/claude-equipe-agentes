@@ -123,6 +123,19 @@ export function faltas(tipo, texto, { comandos = null, cwd = process.cwd(), raiz
   return f;
 }
 
+// Modelo do agente genérico: sem "model" na chamada, ele herda o do mestre (opus), e foi
+// assim que ele chegou a 11% do custo de uma semana. Passa a rodar em sonnet; opus só quando
+// o mestre pede de propósito (model: opus na chamada). Devolve { atualizar, registro } ou null.
+export function modeloDoGenerico(entrada) {
+  if (!/^(Agent|Task)$/.test(String(entrada.tool_name || ''))) return null;
+  if (tipoDoAgente(entrada) !== 'mestre' || desligada('modelo')) return null;
+  const ti = entrada.tool_input || {};
+  const tipo = String(ti.subagent_type || '');
+  if (tipo !== 'general-purpose' && tipo !== '') return null;
+  if (ti.model) return null;
+  return { atualizar: { model: 'sonnet' }, registro: 'sonnet' };
+}
+
 // O pedido manda mudar código? (verbo de mudança e algo de código, sem "só leitura")
 const MUDAR = /\b(implemente|implementar|implementa|corrija|corrigir|conserte|consertar|edite|editar|altere|alterar|modifique|modificar|refatore|refatorar|reescreva|reescrever|escreva|escrever|crie|criar|adicione|adicionar|implement|fix|edit|modify|refactor|rewrite|write|create|add)\b/;
 const CODIGO = /\b(codigo|code|funcao|function|classe|class|metodo|method|componente|component|endpoint|migracao|migration|bug)\b/;

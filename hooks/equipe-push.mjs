@@ -9,9 +9,8 @@
 // tiram; depois do push, a próxima mensagem do usuário precisa pedir de novo.
 // Trava de segurança: não desliga pelo interruptor. O push forçado continua proibido pelo
 // settings.json; no implementador, a guarda barra qualquer push.
-import fs from 'node:fs';
 import path from 'node:path';
-import { apagarEstado, gravarEstado, lerEstado, normalizar, tipoDoAgente } from './equipe-comum.mjs';
+import { apagarEstado, gravarEstado, lerEstado, normalizar, tipoDoAgente, ultimaFalaDoMestre } from './equipe-comum.mjs';
 
 const OPCAO_COM_VALOR = /^(-C|-c|--git-dir|--work-tree|--namespace|--exec-path|--config-env)$/;
 const CASCA = /^(bash|sh|zsh|dash|cmd|cmd\.exe|powershell|powershell\.exe|pwsh|pwsh\.exe)$/i;
@@ -53,29 +52,6 @@ const chaveMestre = (entrada) => {
   return s ? `${s}-mestre` : null;
 };
 const VALIDADE = 12 * 3600000;
-
-// Última mensagem do mestre na transcrição da sessão (as últimas 64 KB).
-function ultimaFalaDoMestre(arquivo) {
-  if (!arquivo) return '';
-  let fd;
-  try {
-    fd = fs.openSync(arquivo, 'r');
-    const tam = fs.fstatSync(fd).size;
-    const ler = Math.min(tam, 64 * 1024);
-    const buf = Buffer.alloc(ler);
-    fs.readSync(fd, buf, 0, ler, tam - ler);
-    const linhas = buf.toString('utf8').split('\n').reverse();
-    for (const l of linhas) {
-      if (!l.includes('"assistant"')) continue;
-      let j;
-      try { j = JSON.parse(l); } catch { continue; }
-      const c = j && j.type === 'assistant' && j.message && Array.isArray(j.message.content) ? j.message.content : [];
-      const t = c.filter((b) => b && b.type === 'text').map((b) => b.text).join('\n');
-      if (t.trim()) return t;
-    }
-  } catch { /* sem transcrição */ } finally { if (fd !== undefined) try { fs.closeSync(fd); } catch { /* fechado */ } }
-  return '';
-}
 
 // O pedido do usuário autoriza push? (envio do pedido)
 export function pedidoAutorizaPush(prompt, transcricao) {

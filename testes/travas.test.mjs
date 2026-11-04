@@ -127,13 +127,24 @@ test('mapa primeiro: barra, consulta, libera; fuga na segunda tentativa; zera no
   assert.equal(ler('ag3', 'Grep', { pattern: 'x', glob: '*.md' }), null);
   assert.equal(ler('ag3', 'Glob', { pattern: '**/*.yaml' }), null);
   assert.equal(decisao(ler('ag3', 'Glob', { pattern: 'lib/**/*.dart' })), 'deny');
-  // Segunda tentativa passa: fuga do mapa, registrada.
+  // Sem ter tentado o mapa, a segunda tentativa é barrada de novo; a terceira passa, registrada.
+  assert.match(motivo(ler('ag3', 'Glob', { pattern: 'lib/**/*.dart' })), /o mapa ainda não foi consultado/);
   assert.equal(ler('ag3', 'Glob', { pattern: 'lib/**/*.dart' }), null);
+  assert.ok(registro(claude).some((l) => l[1] === 'mapa' && l[2] === 'fuga-sem-tentar' && l[4] === 'Explore'));
+  // O mapa foi tentado e deu erro: a segunda tentativa passa, como fuga.
+  assert.equal(decisao(ler('ag4', 'Read', { file_path: arq })), 'deny');
+  rodar(POS, { hook_event_name: 'PostToolUseFailure', session_id: 'sm', agent_id: 'ag4', agent_type: 'Explore', cwd: raiz, tool_name: 'mcp__codebase-memory__search_graph', tool_input: {} }, env);
+  assert.equal(ler('ag4', 'Read', { file_path: arq }), null);
   assert.ok(registro(claude).some((l) => l[1] === 'mapa' && l[2] === 'fuga' && l[4] === 'Explore'));
-  // O revisor lendo o diff passa; o código, não.
+  // O revisor lendo o diff passa; o código fora da mudança, não; o arquivo que a sessão mudou, sim.
   escrever(path.join(raiz, '.revisao', 'diff.patch'), 'diff\n');
   assert.equal(ler('rv1', 'Read', { file_path: path.join(raiz, '.revisao', 'diff.patch') }, 'revisor'), null);
   assert.equal(decisao(ler('rv1', 'Read', { file_path: arq }, 'revisor')), 'deny');
+  const mudado = path.join(raiz, 'lib', 'a2.dart');
+  fs.appendFileSync(mudado, '// mudou\n');
+  rodar(POS, { session_id: 'sm', cwd: raiz, tool_name: 'Edit', tool_input: { file_path: mudado } }, env);
+  assert.equal(ler('rv2', 'Read', { file_path: mudado }, 'revisor'), null);
+  assert.equal(decisao(ler('rv2', 'Read', { file_path: arq }, 'revisor')), 'deny');
   // Fim da chamada: a marca zera (o agente retomado começa de novo).
   rodar(EVENTOS, { hook_event_name: 'SubagentStop', session_id: 'sm', agent_id: 'ag1', agent_type: 'Explore', cwd: raiz }, env);
   assert.equal(decisao(ler('ag1')), 'deny');
@@ -171,8 +182,9 @@ test('Explore: leitura por trecho e teto continuam pelo despachante', () => {
 
 // ---------- orçamento do mestre ----------
 
-test('orçamento do mestre: 3 arquivos de código por pedido; reler passa; pedido novo zera', () => {
-  const { claude, env } = ambiente();
+test('orçamento do mestre: limite de linhas por pedido; reler passa; pedido novo zera', () => {
+  // Arquivos de 2 linhas e um limite de 6: três arquivos passam, o quarto não.
+  const { claude, env } = ambiente({ EQUIPE_MESTRE_LINHAS: '6' });
   const raiz = projeto();
   const ler = (i) => rodar(PRE, { session_id: 'so', cwd: raiz, tool_name: 'Read', tool_input: { file_path: path.join(raiz, 'lib', `a${i}.dart`) } }, env);
   const pedido = (prompt) => rodar(EVENTOS, { hook_event_name: 'UserPromptSubmit', session_id: 'so', cwd: raiz, prompt }, env);
@@ -247,7 +259,13 @@ test('briefing: verificador, revisor e Explore; outros agentes e subagentes fica
   assert.equal(agente('revisor', 'Diff: .revisao/diff.patch. Objetivo: login.'), null);
   assert.equal(decisao(agente('Explore', 'procure o login')), 'deny');
   assert.equal(agente('Explore', 'Onde o app valida a senha no login? Comece por lib/ e use o mapa do código. Devolva caminho:linha.'), null);
-  assert.equal(agente('general-purpose', 'x'), null);
+  // O agente genérico sem modelo passa a rodar em sonnet; com modelo pedido, fica como está.
+  // Só a troca, sem "allow": as regras de permissão do usuário continuam valendo.
+  const g = agente('general-purpose', 'x');
+  assert.ok(!('permissionDecision' in g.hookSpecificOutput));
+  assert.equal(g.hookSpecificOutput.updatedInput.model, 'sonnet');
+  assert.equal(g.hookSpecificOutput.updatedInput.prompt, 'x');
+  assert.equal(rodar(PRE, { session_id: 'sv', cwd: raiz, tool_name: 'Agent', tool_input: { subagent_type: 'general-purpose', prompt: 'x', model: 'opus' } }, env), null);
   assert.equal(agente('implementador', 'x', { agent_id: 'sub', agent_type: 'Plan' }), null);
 });
 
@@ -453,7 +471,7 @@ test('implementador: teste que falhou (PostToolUseFailure) conta como verificaç
 });
 
 test('fim de subagente sem o tipo do agente não mexe no estado do mestre', () => {
-  const { env } = ambiente();
+  const { env } = ambiente({ EQUIPE_MESTRE_LINHAS: '6' });
   const raiz = projeto();
   const ler = (i) => rodar(PRE, { session_id: 'sg', cwd: raiz, tool_name: 'Read', tool_input: { file_path: path.join(raiz, 'lib', `a${i}.dart`) } }, env);
   rodar(EVENTOS, { hook_event_name: 'UserPromptSubmit', session_id: 'sg', cwd: raiz, prompt: 'arrume' }, env);
@@ -766,7 +784,7 @@ test('revisão: o revisor próprio do projeto (plugin) também conta', () => {
 });
 
 test('interruptor por projeto: .claude/equipe.json desliga só naquele projeto', () => {
-  const { env } = ambiente();
+  const { env } = ambiente({ EQUIPE_MESTRE_LINHAS: '6' });
   const raiz = projeto();
   const ler = (cwdProj, i) => rodar(PRE, { session_id: `ip${cwdProj ? 1 : 2}`, cwd: raiz, tool_name: 'Read', tool_input: { file_path: path.join(raiz, 'lib', `a${i}.dart`) } }, { ...env, CLAUDE_PROJECT_DIR: cwdProj });
   escrever(path.join(raiz, '.claude', 'equipe.json'), JSON.stringify({ desligar: ['orcamento'] }));
@@ -1001,10 +1019,10 @@ test('briefing: agente genérico mandado mudar código é barrado uma vez; só l
   const agente = (subagent_type, prompt) => rodar(PRE, { session_id: 'gp', cwd: raiz, tool_name: 'Agent', tool_input: { subagent_type, prompt } }, env);
   const p = 'Corrija o bug do total em lib/a1.dart e escreva o teste.';
   assert.match(motivo(agente('general-purpose', p)), /chame o implementador com o briefing/);
-  assert.equal(agente('general-purpose', p), null, 'válvula');
-  assert.equal(agente('general-purpose', 'Pesquise como corrigir o fuso do lib/a1.dart. Só leitura: não edite nada.'), null);
-  assert.equal(agente('general-purpose', 'Resuma as notícias da semana sobre Flutter.'), null);
-  assert.equal(agente('general-purpose', 'Pesquise bibliotecas para Node.js e escreva um resumo com links de docs.example.com.'), null);
+  const v = agente('general-purpose', p);
+  assert.ok(!decisao(v), 'válvula');
+  assert.equal(v.hookSpecificOutput.updatedInput.model, 'sonnet');
+  for (const q of ['Pesquise como corrigir o fuso do lib/a1.dart. Só leitura: não edite nada.', 'Resuma as notícias da semana sobre Flutter.', 'Pesquise bibliotecas para Node.js e escreva um resumo com links de docs.example.com.']) assert.ok(!decisao(agente('general-purpose', q)), q);
 });
 
 test('push: pede confirmação quando o pedido não falou em push', () => {
@@ -1104,16 +1122,95 @@ test('escopo: a lista do implementador de segundo plano chega ao mestre na próx
   assert.equal(outra(), null);
 });
 
-test('orçamento do mestre: cat pelo terminal e busca com muito contexto contam como leitura', () => {
+test('orçamento do mestre: conta as linhas que cada leitura mostra, pelo terminal também', () => {
   const { env } = ambiente();
   const raiz = projeto();
-  rodar(EVENTOS, { hook_event_name: 'UserPromptSubmit', session_id: 'oc', cwd: raiz, prompt: 'entenda o fluxo' }, env);
+  const grande = path.join(raiz, 'lib', 'grande.dart');
+  escrever(grande, 'void g() {}\n'.repeat(1000));
+  const pedido = (prompt) => rodar(EVENTOS, { hook_event_name: 'UserPromptSubmit', session_id: 'oc', cwd: raiz, prompt }, env);
   const pre = (tool_name, tool_input) => rodar(PRE, { session_id: 'oc', cwd: raiz, tool_name, tool_input }, env);
-  assert.equal(pre('Bash', { command: `cat ${path.join(raiz, 'lib', 'a1.dart')}` }), null);
-  assert.equal(pre('Grep', { pattern: 'f', path: path.join(raiz, 'lib'), output_mode: 'content', '-C': 40 }), null);
-  assert.equal(pre('Grep', { pattern: 'f', path: path.join(raiz, 'lib'), output_mode: 'content', '-C': 2 }), null, 'pouco contexto: não conta');
+  pedido('entenda o fluxo');
+  // Trechos pequenos gastam pouco: 40 + 41 linhas, e o trecho que se sobrepõe só conta o que é novo.
+  assert.equal(pre('Read', { file_path: grande, offset: 1, limit: 40 }), null);
+  assert.equal(pre('Bash', { command: "sed -n '100,140p' lib/grande.dart" }), null);
+  assert.equal(pre('PowerShell', { command: '(Get-Content lib/grande.dart)[100..140]' }), null);
+  // Busca com muito contexto conta uma estimativa; com pouco contexto, não conta.
+  assert.equal(pre('Grep', { pattern: 'g', path: path.join(raiz, 'lib'), output_mode: 'content', '-C': 40 }), null);
+  assert.equal(pre('Grep', { pattern: 'g', path: path.join(raiz, 'lib'), output_mode: 'content', '-C': 2 }), null);
+  // O arquivo inteiro passa do limite (500): barrado, com o caminho.
+  const s = pre('Bash', { command: 'cat lib/grande.dart' });
+  assert.equal(decisao(s), 'deny');
+  assert.match(motivo(s), /linhas de código lidas neste pedido.*offset e limit.*delegue ao Explore/s);
+  // Reler um trecho já lido não conta; um arquivo pequeno ainda cabe.
+  assert.equal(pre('Read', { file_path: grande, offset: 1, limit: 40 }), null);
   assert.equal(pre('Read', { file_path: path.join(raiz, 'lib', 'a2.dart') }), null);
-  assert.equal(decisao(pre('Bash', { command: 'cat lib/a3.dart' })), 'deny');
+  // Pedido novo: a primeira leitura passa sempre, mesmo grande; a seguinte grande, não.
+  pedido('agora outra coisa');
+  assert.equal(pre('Read', { file_path: grande }), null);
+  // A versão antiga do arquivo (git show) é outro texto: conta de novo.
+  assert.equal(decisao(pre('Bash', { command: 'git show HEAD:lib/grande.dart' })), 'deny');
+  assert.equal(decisao(pre('Read', { file_path: path.join(raiz, 'lib', 'a3.dart') })), 'deny');
+});
+
+test('orçamento do mestre: as contas dos comandos comuns e o que não chega ao contexto', async () => {
+  const { leiturasDoMestre } = await import(new URL('../hooks/equipe-mapa.mjs', import.meta.url).href);
+  const raiz = projeto({ mapa: false });
+  const grande = path.join(raiz, 'lib', 'grande.dart');
+  escrever(grande, 'void g() {}\n'.repeat(3000));
+  const linhas = (tool_name, tool_input) => leiturasDoMestre({ tool_name, tool_input, cwd: raiz })
+    .reduce((s, x) => s + (typeof x.n === 'number' ? x.n : x.fim - x.ini + 1), 0);
+  const bash = (command) => linhas('Bash', { command });
+  // Opção sem valor não esconde o arquivo; head, tail e os estágios do pipe contam o que mostram.
+  assert.equal(bash('cat -n lib/grande.dart'), 3000);
+  assert.equal(bash('head -n50 lib/grande.dart'), 50);
+  assert.equal(bash('tail -n +2901 lib/grande.dart'), 100);
+  assert.equal(bash('tail +2991 lib/grande.dart'), 10);
+  assert.equal(bash('head -n -2990 lib/grande.dart'), 10);
+  assert.equal(bash("nl lib/grande.dart | sed -n '100,140p'"), 41);
+  assert.equal(bash("cat lib/grande.dart | awk 'NR>=10 && NR<=19'"), 10);
+  // Curinga no nome: a1.dart e a10 a a19, 2 linhas cada.
+  assert.equal(bash('cat lib/a1*.dart'), 22);
+  // Vários arquivos num pipe: o corte vale para a saída inteira, não para cada arquivo.
+  assert.equal(bash('cat lib/a1.dart lib/grande.dart | head -40'), 40);
+  assert.equal(bash("sed -n '1,5p' lib/a1.dart lib/grande.dart"), 5);
+  // Busca com curinga: uma estimativa para a busca, não uma por arquivo.
+  assert.equal(bash('grep -n -C 10 velho lib/*.dart'), 63);
+  // O que não chega ao contexto: saída gravada num arquivo e sed -i.
+  assert.equal(bash('cat lib/grande.dart > copia.dart'), 0);
+  assert.equal(bash('cat lib/grande.dart &> /dev/null'), 0);
+  assert.equal(linhas('PowerShell', { command: 'Get-Content lib/grande.dart | Set-Content x.txt' }), 0);
+  assert.equal(bash("sed -i 's/g/h/' lib/grande.dart"), 0);
+  assert.equal(bash("sed -i.bak -n '1,9p' lib/grande.dart"), 0);
+  // O erro (2>) não muda o que aparece; a saída copiada para o erro (>&2) também aparece.
+  assert.equal(bash('cat lib/grande.dart 2>/dev/null'), 3000);
+  assert.equal(bash('head -n 5 lib/grande.dart >&2'), 5);
+  // Read sem limit mostra até 2000 linhas; o Grep, até 250 (head_limit 0: sem teto).
+  assert.equal(linhas('Read', { file_path: grande }), 2000);
+  assert.equal(linhas('Read', { file_path: grande, offset: 2901 }), 100);
+  assert.equal(linhas('Read', { file_path: grande, allow_large: true }), 3000);
+  assert.equal(linhas('Grep', { pattern: 'g', path: grande, output_mode: 'content', '-C': 100 }), 250);
+  assert.equal(linhas('Grep', { pattern: 'g', path: grande, output_mode: 'content', '-C': 100, head_limit: 0 }), 603);
+});
+
+test('orçamento do mestre: Read que falhou devolve a conta; separador certo com pasta que começa com t', () => {
+  const { claude, env } = ambiente();
+  const raiz = projeto();
+  // Caminho com "\t" (barra invertida e t, como C:\...\testes no Windows): com o separador
+  // errado, a chave se partia. Fora do Windows, a barra invertida entra no nome da pasta.
+  const grande = path.join(raiz, process.platform === 'win32' ? 'testes' : 'x\\testes', 'tela.dart');
+  escrever(grande, 'void g() {}\n'.repeat(4000));
+  const base = { session_id: 'rf', cwd: raiz };
+  rodar(EVENTOS, { ...base, hook_event_name: 'UserPromptSubmit', prompt: 'entenda o fluxo' }, env);
+  const ler = (id, tool_input) => rodar(PRE, { ...base, hook_event_name: 'PreToolUse', tool_name: 'Read', tool_use_id: id, tool_input }, env);
+  // O Read do arquivo inteiro passa (primeira leitura) e falha no Claude Code (grande demais).
+  assert.equal(ler('r1', { file_path: grande }), null);
+  rodar(POS, { ...base, hook_event_name: 'PostToolUseFailure', tool_name: 'Read', tool_use_id: 'r1', tool_input: { file_path: grande }, error: 'File content exceeds maximum allowed size' }, env);
+  assert.ok(registro(claude).some((l) => l[1] === 'orcamento' && l[2] === 'devolveu'));
+  // A conta voltou: o trecho seguinte é a primeira leitura de verdade.
+  assert.equal(ler('r2', { file_path: grande, offset: 1, limit: 300 }), null);
+  // Reler o mesmo trecho não conta; 300 + 250 passa do limite (500).
+  assert.equal(ler('r3', { file_path: grande, offset: 1, limit: 300 }), null);
+  assert.equal(decisao(ler('r4', { file_path: grande, offset: 301, limit: 250 })), 'deny');
 });
 
 test('despachante de eventos: módulo quebrado vai para o registro e não derruba os outros', () => {
@@ -1269,3 +1366,110 @@ test('base da sessão: só anda quando o HEAD anda por merge, pull ou checkout d
   assert.equal(baseEfetiva(raiz, base), git(raiz, 'rev-parse', 'HEAD'));
 });
 
+
+test('revisão: parar para perguntar ao usuário não conta como concluída nem libera as linhas', () => {
+  const { claude, env } = ambiente({ EQUIPE_DESLIGAR: 'prova' });
+  const raiz = projeto({ mapa: false });
+  const transcricao = path.join(claude, 'projects', '-p', 'rp2.jsonl');
+  const fala = (texto) => escrever(transcricao, `${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: texto }] } })}\n`);
+  const fim = (extra = {}) => rodar(EVENTOS, { hook_event_name: 'Stop', session_id: 'rp2', cwd: raiz, transcript_path: transcricao, ...extra }, env);
+  const pedido = (prompt) => rodar(EVENTOS, { hook_event_name: 'UserPromptSubmit', session_id: 'rp2', cwd: raiz, prompt, transcript_path: transcricao }, env);
+  pedido('faça a tela nova');
+  const arq = path.join(raiz, 'lib', 'a1.dart');
+  fs.appendFileSync(arq, '// linha\n'.repeat(60));
+  rodar(POS, { session_id: 'rp2', cwd: raiz, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+  fala('Fiz a tela. Qual cor você prefere para o botão?');
+  assert.equal(fim().decision, 'block');
+  // Na continuação, ainda é uma pergunta: pausa, e as linhas não são liberadas.
+  assert.equal(fim({ stop_hook_active: true }), null);
+  assert.ok(registro(claude).some((l) => l[1] === 'revisao' && l[2] === 'pausou-sem-revisao'));
+  // Outra resposta só com pergunta, sem mudar o código: não cobra de novo.
+  pedido('azul ou verde, tanto faz');
+  fala('Entendi. Prefere o tom mais claro?');
+  assert.equal(fim(), null);
+  assert.ok(!registro(claude).some((l) => l[1] === 'revisao' && l[2] === 'concluiu-sem-revisao'));
+  // Concluir com o mesmo código: a cobrança já veio antes da pausa; dispensa sem barrar de novo.
+  pedido('o claro');
+  fala('Pronto: botão no tom claro. Quer que eu envie?');
+  assert.equal(fim(), null);
+  assert.ok(registro(claude).some((l) => l[1] === 'revisao' && l[2] === 'concluiu-sem-revisao'));
+  // Mudança nova depois disso: a cobrança volta.
+  fs.appendFileSync(arq, '// mais\n'.repeat(60));
+  rodar(POS, { session_id: 'rp2', cwd: raiz, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+  fala('Ajustei o botão.');
+  assert.equal(fim().decision, 'block');
+});
+
+test('revisão: a entrega que termina oferecendo o envio é conclusão; revisor em segundo plano não é cobrado', async () => {
+  const { ehPausa } = await import(new URL('../hooks/equipe-entrega.mjs', import.meta.url).href);
+  const fala = (last_assistant_message) => ({ last_assistant_message });
+  // Pausas de verdade.
+  assert.equal(ehPausa(fala('Ainda não terminei: preciso que você escolha a cor.')), true);
+  assert.equal(ehPausa(fala('Tenho duas opções. Qual você prefere?')), true);
+  assert.equal(ehPausa(fala('O plano está em .revisao/plano.md. Posso seguir?')), true);
+  assert.equal(ehPausa(fala('Antes do commit: qual mensagem você prefere?')), true);
+  assert.equal(ehPausa(fala('Pronto o backend. Sigo com o front?')), true);
+  assert.equal(ehPausa(fala('Implementei metade; quer que eu continue?')), true);
+  assert.equal(ehPausa(fala('Corrigido e verificado. Posso seguir?')), false);
+  // Fim de entrega com o pedido de aprovação no fim (o que a regra pede): conclusão.
+  assert.equal(ehPausa(fala('Pronto: corrigi o login. Quer que eu envie?')), false);
+  assert.equal(ehPausa(fala('Feito. Posso fazer o push?')), false);
+  assert.equal(ehPausa(fala('Implementei a busca e os testes passaram. Me avise se quer ajustes.')), false);
+  // O Stop: revisor rodando em segundo plano não é cobrado nem conta como conclusão.
+  const { claude, env } = ambiente({ EQUIPE_DESLIGAR: 'prova' });
+  const raiz = projeto({ mapa: false });
+  const arq = path.join(raiz, 'lib', 'a1.dart');
+  fs.appendFileSync(arq, '// linha\n'.repeat(60));
+  rodar(POS, { session_id: 'rs', cwd: raiz, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+  const fim = (extra = {}) => rodar(EVENTOS, { hook_event_name: 'Stop', session_id: 'rs', cwd: raiz, last_assistant_message: 'O revisor está rodando; aviso quando ele terminar.', ...extra }, env);
+  const rodando = [{ id: 't1', type: 'local_agent', status: 'running', agent_type: 'revisor', description: 'Revisar a mudança' }];
+  assert.equal(fim({ background_tasks: rodando }), null);
+  assert.ok(registro(claude).some((l) => l[1] === 'revisao' && l[2] === 'revisor-rodando'));
+  // Sem o revisor rodando (outra tarefa qualquer), a cobrança vale.
+  assert.equal(fim({ background_tasks: [{ id: 't2', type: 'local_bash', status: 'running', command: 'npm run dev' }] }).decision, 'block');
+});
+
+test('contexto do verificador: pasta que sumiu aponta o projeto da sessão e o cd', () => {
+  const { env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const arq = path.join(raiz, 'lib', 'a1.dart');
+  fs.appendFileSync(arq, '// x\n');
+  rodar(POS, { session_id: 'cv', cwd: raiz, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+  const sumiu = path.join(tmp('sumiu'), 'pasta-que-sumiu');
+  const saida = execFileSync(process.execPath, [path.join(HOOKS, 'equipe-contexto.mjs')], { input: JSON.stringify({ hook_event_name: 'SubagentStart', session_id: 'cv', agent_type: 'verificador', cwd: sumiu }), encoding: 'utf8', env: { ...process.env, ...env } });
+  const t = JSON.parse(saida).hookSpecificOutput.additionalContext;
+  assert.match(t, /não existe mais/);
+  // Entre aspas e com barra normal (o Git Bash come a barra invertida); ";" no PowerShell.
+  // O caminho é comparado pelo real (no Windows, a pasta temporária pode vir com nome curto).
+  const m = t.match(/No Bash: cd "([^"]+)" && <linha da lista>/);
+  assert.ok(m, t);
+  assert.ok(!m[1].includes('\\'), m[1]);
+  assert.equal(fs.realpathSync.native(m[1]).toLowerCase(), fs.realpathSync.native(raiz).toLowerCase());
+  assert.ok(t.includes(`No PowerShell: cd "${m[1]}"; <linha da lista>`), t);
+  assert.match(t, /flutter test/);
+  // Numa pasta que é outro repositório, sem a lista: não manda testar o projeto da sessão.
+  const outro = tmp('outro-repo');
+  git(outro, 'init', '-q');
+  for (let i = 0; i < 3; i++) escrever(path.join(outro, 'src', `b${i}.ts`), `export const b${i} = ${i};\n`);
+  const t2 = execFileSync(process.execPath, [path.join(HOOKS, 'equipe-contexto.mjs')], { input: JSON.stringify({ hook_event_name: 'SubagentStart', session_id: 'cv', agent_type: 'verificador', cwd: outro }), encoding: 'utf8', env: { ...process.env, ...env } });
+  const c2 = t2.trim() ? JSON.parse(t2).hookSpecificOutput.additionalContext : '';
+  assert.ok(!/No Bash: cd /.test(c2), c2);
+});
+
+test('conversa longa: a partir do 5º resumo, um aviso por resumo', () => {
+  const { claude, env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const resumo = () => execFileSync(process.execPath, [path.join(HOOKS, 'equipe-boletim.mjs')], { input: JSON.stringify({ session_id: 'cl', cwd: raiz, source: 'compact' }), encoding: 'utf8', env: { ...process.env, ...env } });
+  const pedido = () => rodar(EVENTOS, { hook_event_name: 'UserPromptSubmit', session_id: 'cl', cwd: raiz, prompt: 'continue' }, env);
+  for (let i = 0; i < 4; i++) resumo();
+  assert.equal(pedido(), null, '4 resumos: nada');
+  resumo();
+  assert.match(contexto(pedido()), /resumida 5 vezes.*conversa nova/s);
+  assert.equal(pedido(), null, 'uma vez por resumo');
+  resumo();
+  assert.match(contexto(pedido()), /resumida 6 vezes/);
+  assert.ok(registro(claude).some((l) => l[1] === 'conversa' && l[2] === 'avisou'));
+  // Desligado no projeto (uma sessão longa de propósito).
+  resumo();
+  assert.equal(rodar(EVENTOS, { hook_event_name: 'UserPromptSubmit', session_id: 'cl', cwd: raiz, prompt: 'x' }, { ...env, EQUIPE_DESLIGAR: 'conversa' }), null);
+});

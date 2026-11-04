@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { ehCodigo } from '../../hooks/equipe-comum.mjs';
+import { leiturasDoMestre } from '../../hooks/equipe-mapa.mjs';
 
 // ---------- projeto de exemplo ----------
 // Node pequeno com cara de projeto real: 60 arquivos de código, um módulo de pedidos, um
@@ -135,6 +136,30 @@ export function leiturasDeCodigoDoMestre(s) {
   return { feitas: lidas.filter((u) => !u.erro).length, tentadas: lidas.length };
 }
 
+// Linhas de código que o mestre leu nas leituras que deram certo, contadas como a trava do
+// orçamento conta: Read, terminal e busca com contexto; trecho relido conta uma vez.
+export function linhasDeCodigoDoMestre(s, pasta) {
+  const porArquivo = new Map();
+  // A mesma busca repetida conta uma vez, como na trava.
+  const estimativas = new Map();
+  let feitas = 0;
+  for (const u of s.mestre.usos) {
+    if (u.erro) continue;
+    const entrada = { ...(u.entrada || {}) };
+    if (u.nome === 'Read' && entrada.file_path && pasta && !path.isAbsolute(String(entrada.file_path))) entrada.file_path = path.join(pasta, String(entrada.file_path));
+    const alvos = leiturasDoMestre({ tool_name: u.nome, tool_input: entrada, cwd: pasta || process.cwd() });
+    if (alvos.length) feitas++;
+    for (const a of alvos) {
+      if (typeof a.n === 'number') { if (!estimativas.has(a.chave)) estimativas.set(a.chave, a.n); continue; }
+      const vistas = porArquivo.get(a.chave) || new Set();
+      for (let i = a.ini; i <= a.fim; i++) vistas.add(i);
+      porArquivo.set(a.chave, vistas);
+    }
+  }
+  const estimadas = [...estimativas.values()].reduce((x, v) => x + v, 0);
+  return { linhas: estimadas + [...porArquivo.values()].reduce((x, v) => x + v.size, 0), feitas };
+}
+
 // Antes da primeira mudança, o mestre perguntou (AskUserQuestion, ou terminou numa
 // pergunta sem mudar nada) ou mostrou um plano (texto com plano ou passos, TodoWrite, ExitPlanMode).
 export function esclareceuAntes(s) {
@@ -215,6 +240,7 @@ export function criarContexto(pasta, { chave, base }) {
   return {
     chave,
     base,
+    pasta,
     gitSaida,
     arquivosMudados,
     mudou: (rel) => arquivosMudados().includes(rel),
@@ -413,7 +439,8 @@ export const AVALIACOES = [
     // Projeto médio (60 arquivos de código): o orçamento de leitura do mestre vale.
     pedido: 'Como este projeto chega ao valor a pagar de um pedido, do preço dos itens até o desconto aplicado? Explique citando os arquivos. Não altere nada.',
     checagens: [
-      ['o mestre leu no máximo 3 arquivos de código', (s) => { const l = leiturasDeCodigoDoMestre(s); return ok(l.feitas <= 3, `${l.feitas} leituras de código (${l.tentadas} tentadas)`); }],
+      // O orçamento é por volume (500 linhas): trechos pequenos de vários arquivos cabem.
+      ['o mestre leu no máximo 500 linhas de código', (s, ctx) => { const l = linhasDeCodigoDoMestre(s, ctx.pasta); return ok(l.linhas <= 500, `${l.linhas} linhas de código em ${l.feitas} leituras`); }],
       ['o mestre chamou o Explore', (s) => ok(chamouAgente(s, 'Explore'), 'Explore chamado: ' + chamouAgente(s, 'Explore'))],
       ['nada mudou no projeto', (s, ctx) => { const n = ctx.arquivosMudados().length; return ok(n === 0, `${n} arquivo(s) mudado(s)`); }],
       ['a resposta cita fechar.js e desconto.js', (s) => ok(/fechar\.js/.test(s.mestre.textoFinal) && /desconto\.js/.test(s.mestre.textoFinal), 'arquivos citados na resposta')],

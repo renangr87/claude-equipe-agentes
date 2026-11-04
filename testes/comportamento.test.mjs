@@ -327,21 +327,26 @@ test('comportamento: segredo-no-commit acusa a chave em qualquer commit', () => 
   assert.equal(checagem('segredo-no-commit', nome, sessao([]), ctx).ok, false, 'vale também em outro branch');
 });
 
-test('comportamento: pergunta-de-codigo conta só as leituras de código do mestre', () => {
+test('comportamento: pergunta-de-codigo conta as linhas de código que o mestre leu', () => {
   const { pasta, ctx } = projeto('pergunta-de-codigo');
-  const nome = 'o mestre leu no máximo 3 arquivos de código';
+  const nome = 'o mestre leu no máximo 500 linhas de código';
   const ler = (f, extra) => u('Read', { file_path: f }, extra);
-  const tres = [ler('src/a.js'), ler('src/b.js'), ler('src/c.js'), ler('README.md'), ler('CLAUDE.md'), agente('Explore')];
-  assert.equal(checagem('pergunta-de-codigo', nome, sessao(tres)).ok, true);
-  const quatro = [...tres, ler('src/d.js')];
-  const r = checagem('pergunta-de-codigo', nome, sessao(quatro));
-  assert.equal(r.ok, false);
-  assert.equal(r.detalhe, '4 leituras de código (4 tentadas)');
-  // Leitura negada pela trava não conta como feita.
-  assert.equal(checagem('pergunta-de-codigo', nome, sessao([...tres, ler('src/d.js', { erro: true })])).ok, true);
-  assert.equal(checagem('pergunta-de-codigo', 'o mestre chamou o Explore', sessao(tres)).ok, true);
+  // Antes de criar o arquivo extra: nada mudou.
   assert.equal(checagem('pergunta-de-codigo', 'nada mudou no projeto', sessao([]), ctx).ok, true);
-  escrever(path.join(pasta, 'src/novo.js'), 'export const x = 1;\n');
+  escrever(path.join(pasta, 'src/extra.js'), 'export const x = 1;\n'.repeat(200));
+  // Vários arquivos pequenos (e o que não é código) cabem: o orçamento é por volume.
+  const pequenos = [ler('src/pedidos/desconto.js'), ler('src/pedidos/fechar.js'), ler('src/modulos/m1.js'), ler('src/modulos/m2.js'), ler('README.md'), ler('CLAUDE.md'), agente('Explore')];
+  assert.equal(checagem('pergunta-de-codigo', nome, sessao(pequenos), ctx).ok, true);
+  // O arquivo grande inteiro e mais 200 linhas pelo terminal: passa de 500.
+  const muito = [...pequenos, ler('src/relatorio-grande.js'), u('Bash', { command: 'cat src/extra.js' })];
+  const r = checagem('pergunta-de-codigo', nome, sessao(muito), ctx);
+  assert.equal(r.ok, false);
+  assert.match(r.detalhe, /^\d+ linhas de código em 6 leituras$/);
+  // Leitura negada pela trava não conta como feita; reler o mesmo arquivo não conta de novo.
+  assert.equal(checagem('pergunta-de-codigo', nome, sessao([...pequenos, ler('src/relatorio-grande.js', { erro: true }), u('Bash', { command: 'cat src/extra.js' })]), ctx).ok, true);
+  assert.equal(checagem('pergunta-de-codigo', nome, sessao([...pequenos, ler('src/pedidos/desconto.js'), ler('src/pedidos/desconto.js')]), ctx).ok, true);
+  assert.equal(checagem('pergunta-de-codigo', 'o mestre chamou o Explore', sessao(pequenos)).ok, true);
+  // Com o arquivo extra criado, o projeto mudou.
   assert.equal(checagem('pergunta-de-codigo', 'nada mudou no projeto', sessao([]), ctx).ok, false);
 });
 

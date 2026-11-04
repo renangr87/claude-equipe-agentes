@@ -18,9 +18,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { secoes, caminhos } from './equipe-briefing.mjs';
 import {
-  anotacoes, anotar, apagarEstado, briefingDaTranscricao, caminhoReal, chaveDaChamada, desligada, ehCodigo, git,
+  anotacoes, anotar, apagarEstado, briefingDaTranscricao, caminhoReal, chaveDaChamada, desligada, ehAgenteDeRevisao, ehCodigo, git,
   gravarEstado, lerEstado, lerTexto, limparChamada, marcaDoTexto, normalizar, relatorioDaChamada, statusDoRelatorio,
-  tipoDoAgente,
+  tipoDoAgente, ultimaFalaDoMestre,
 } from './equipe-comum.mjs';
 
 const LIMITE_LINHAS = 50;
@@ -538,6 +538,33 @@ export function fimDaRevisao(entrada) {
   return 'sem-veredito';
 }
 
+// A última fala do mestre é uma pausa (pergunta ao usuário, espera de resposta)? Pausa de
+// verdade: diz que não terminou, espera uma decisão, pergunta qual caminho. A fala de
+// conclusão ("pronto", "feito", "corrigi") ou a oferta de envio no fim ("quer que eu envie?",
+// "faço o commit?") não é pausa, mesmo terminando em pergunta: a regra manda deixar o pedido
+// de aprovação para o fim da entrega.
+const PAUSA_FORTE = /\b(ainda nao terminei|nao terminei|ainda falta|vou aguardar|aguardo (a )?sua|aguardando (a )?sua|esperando (a )?sua|preciso (da sua|que voce)|(qual|como|o que) (\S+ ){0,3}prefere|pode me dizer|sigo com|continuo com|metade|primeira parte)\b/;
+const CONCLUSAO = /\b(pronto|feito|conclui|concluid[oa]s?|terminei|terminad[oa]s?|implementei|implementad[oa]s?|corrigi|corrigid[oa]s?|entreguei|entregues?|verificad[oa]s?|finalizei|finalizad[oa]s?|push|commit|envie|envio|enviar|mande|mandar|suba|subir|publique|publicar)\b/;
+const PAUSA_FRACA = /\b(me (diga|confirme|avise)|posso (seguir|continuar|prosseguir)|quer que eu)\b/;
+export function ehPausa(entrada) {
+  const fala = typeof entrada.last_assistant_message === 'string' && entrada.last_assistant_message.trim()
+    ? entrada.last_assistant_message
+    : ultimaFalaDoMestre(entrada.transcript_path);
+  const t = String(fala || '').trim();
+  if (!t) return false;
+  const fim = normalizar(t.slice(-600));
+  if (PAUSA_FORTE.test(fim)) return true;
+  if (CONCLUSAO.test(fim)) return false;
+  return /\?\s*[*_`)\]]*\s*$/.test(t) || PAUSA_FRACA.test(fim);
+}
+
+// Um revisor ainda rodando em segundo plano (o Stop das versões novas traz a lista)? O
+// veredito vem depois, e a parada não é conclusão sem revisão.
+export function revisorEmSegundoPlano(entrada) {
+  const tarefas = Array.isArray(entrada.background_tasks) ? entrada.background_tasks : [];
+  return tarefas.some((t) => t && typeof t === 'object' && ehAgenteDeRevisao(t.agent_type) && !/^(completed|failed|killed|stopped|cancelled)$/i.test(String(t.status || '')));
+}
+
 // Stop do mestre: { bloquear, motivo, registro } ou null. arquivos: o Map de
 // arquivosDaSessao, quando quem chama já o tem.
 export function revisaoNoFim(entrada, arquivos = null) {
@@ -584,6 +611,10 @@ export function revisaoNoFim(entrada, arquivos = null) {
   };
   const pedido = lerEstado(chaveDaChamada(entrada), 'pedido');
   if (pedido && pedido.semRevisao) return linhas ? dispensar('dispensada') : null;
+  // O revisor ainda roda em segundo plano: nem cobra, nem dispensa; o veredito decide depois.
+  if ((linhas > LIMITE_LINHAS || sensiveis.length || lerEstado(e.sessao, 'reprovada')) && revisorEmSegundoPlano(entrada)) {
+    return { bloquear: false, registro: 'revisor-rodando' };
+  }
   // O revisor reprovou e ninguém resolveu: cobra uma vez, com os achados.
   const reprovada = lerEstado(e.sessao, 'reprovada');
   if (reprovada && !reprovada.cobrada) {
@@ -596,13 +627,33 @@ export function revisaoNoFim(entrada, arquivos = null) {
     };
   }
   if (linhas <= LIMITE_LINHAS && !sensiveis.length) return null;
-  if (entrada.stop_hook_active) return dispensar('concluiu-sem-revisao');
+  // Assinatura do código de agora, para saber se nada mudou desde a última pausa.
+  const assinatura = Object.entries(e.conteudo).sort((x, y) => x[0].localeCompare(y[0])).map(([k, v]) => `${k}=${v}`).join('|');
+  if (entrada.stop_hook_active) {
+    // Parou para perguntar ou esperar o usuário: não é conclusão. As linhas continuam
+    // pedindo revisão até ele concluir.
+    if (ehPausa(entrada)) {
+      gravarEstado(e.sessao, 'revisao-pausa', { em: Date.now(), assinatura });
+      return { bloquear: false, registro: 'pausou-sem-revisao' };
+    }
+    apagarEstado(e.sessao, 'revisao-pausa');
+    return dispensar('concluiu-sem-revisao');
+  }
+  // Depois de uma pausa, com o mesmo código: a cobrança já veio. Outra pergunta passa (uma
+  // conversa de perguntas e respostas não vira uma cobrança por resposta), e a conclusão
+  // dispensa sem barrar de novo.
+  const pausa = lerEstado(e.sessao, 'revisao-pausa');
+  if (pausa && pausa.assinatura === assinatura) {
+    if (ehPausa(entrada)) return { bloquear: false, registro: 'pausou-sem-revisao' };
+    apagarEstado(e.sessao, 'revisao-pausa');
+    return dispensar('concluiu-sem-revisao');
+  }
   const motivos = [];
   if (linhas > LIMITE_LINHAS) motivos.push(`${linhas} linhas mudadas sem revisão`);
   if (sensiveis.length) motivos.push(`área sensível: ${[...new Set(sensiveis)].slice(0, 5).join(', ')}`);
   return {
     bloquear: true,
-    motivo: `Trava da equipe: chame o revisor (o da equipe ou o do projeto) antes de concluir (${motivos.join('; ')}). Grave o diff com git diff HEAD --output=.revisao/diff.patch e passe o caminho e os arquivos novos no briefing${sensiveis.length ? ', com model opus' : ''}. Só a aprovação do revisor conta. Se você ainda não terminou (vai perguntar algo ao usuário ou esperar uma resposta), diga isso e encerre de novo: a trava não volta por estas linhas. Se o usuário disse "sem revisão", ela também não vale.`,
+    motivo: `Trava da equipe: chame o revisor (o da equipe ou o do projeto) antes de concluir (${motivos.join('; ')}). Grave o diff com git diff HEAD --output=.revisao/diff.patch e passe o caminho e os arquivos novos no briefing${sensiveis.length ? ', com model opus' : ''}. Só a aprovação do revisor conta. Se você ainda não terminou (vai perguntar algo ao usuário ou esperar uma resposta), diga isso e encerre de novo: enquanto o código não mudar, a trava não volta. Se o usuário disse "sem revisão", ela também não vale.`,
     registro: 'barrou',
   };
 }

@@ -96,7 +96,7 @@
     ],
     "PostToolUseFailure": [
       {
-        "matcher": "Bash|PowerShell|Agent|Task",
+        "matcher": "Bash|PowerShell|Agent|Task|Read|mcp__codebase-memory__.*",
         "hooks": [
           {
             "type": "command",

@@ -1,7 +1,7 @@
 # Casos da guarda: perfil<TAB>saida esperada<TAB>ferramenta<TAB>comando
 # Saida 0 = passa; 2 = bloqueado. \n no comando vira quebra de linha.
 # O teste roda numa pasta temporaria com git, lib/a.dart, lib/b.dart, lib/src/ e app/,
-# e com .claude/verificador-comandos.txt em commit.
+# e com .claude/verificador-comandos.txt em commit. A pasta acima dela (../) nao e repositorio.
 
 # --- explore: passa
 explore	0	Bash	git log -5 --oneline
@@ -74,7 +74,14 @@ implementador	2	Bash	eslint --fix src
 implementador	2	Bash	gofmt -w .
 implementador	2	Bash	go fmt ./...
 implementador	2	Bash	cargo fmt
+implementador	2	Bash	cargo fmt --manifest-path Cargo.toml
+implementador	2	Bash	cargo fmt -- src/a.rs
 implementador	2	Bash	dotnet format
+implementador	2	Bash	dotnet format app.sln
+implementador	0	Bash	dotnet format --include src/a.cs src/b.cs
+implementador	0	Bash	dotnet format app.sln --include src/a.cs
+implementador	0	Bash	rustfmt src/a.rs src/b.rs
+implementador	0	Bash	cargo fmt --check
 implementador	2	Bash	flutter test && dart format .
 implementador	2	Bash	flutter test\ndart format .
 implementador	2	Bash	xargs -n 1 dart format < lista.txt
@@ -146,6 +153,106 @@ implementador	2	Bash	git cat-file -p HEAD:lib/a.dart > lib/a.dart
 implementador	2	PowerShell	git show HEAD:lib/a.dart | Out-File lib/a.dart
 implementador	2	PowerShell	git show HEAD:lib/a.dart | Set-Content lib/a.dart
 implementador	2	PowerShell	& git checkout lib/a.dart
+# --- implementador: git show/cat-file com a saida no nulo passa (no Git Bash, > NUL cria um arquivo)
+implementador	0	Bash	git show HEAD:lib/a.dart > /dev/null 2>&1
+implementador	0	Bash	git show HEAD:lib/a.dart 2>/dev/null
+implementador	0	PowerShell	git show HEAD:lib/a.dart > $null
+implementador	0	PowerShell	git cat-file -p HEAD:lib/a.dart > NUL
+implementador	2	Bash	git cat-file -p HEAD:lib/a.dart > NUL
+# --- implementador: git show/cat-file gravado em qualquer arquivo barra, dentro ou fora do projeto
+implementador	2	Bash	git show HEAD:lib/a.dart > ../fora-do-projeto.dart
+implementador	2	Bash	git show HEAD:lib/a.dart >> ../fora-do-projeto.dart
+implementador	2	Bash	git show HEAD:lib/a.dart > /tmp/a.dart
+implementador	2	Bash	git show HEAD:lib/a.dart > .revisao/a.dart
+implementador	2	Bash	git show HEAD:lib/a.dart | tee ../fora-do-projeto.dart
+implementador	2	Bash	git show HEAD:lib/a.dart | tee -a .revisao/a.dart
+implementador	2	PowerShell	git show HEAD:lib/a.dart | Out-File ../fora-do-projeto.dart
+implementador	2	PowerShell	git show HEAD:lib/a.dart | Out-File -FilePath .revisao/a.dart -Encoding utf8
+implementador	2	PowerShell	git show HEAD:lib/a.dart | Tee-Object -FilePath ../fora-do-projeto.dart
+implementador	2	PowerShell	git show HEAD:lib/a.dart | Set-Content -Path ../fora-do-projeto.dart
+implementador	2	Bash	git show --output=.revisao/a.dart HEAD:lib/a.dart
+implementador	2	Bash	git show HEAD:lib/a.dart > /tmp/a.dart && cp /tmp/a.dart lib/a.dart
+implementador	2	Bash	git show HEAD:lib/a.dart | tee "/tmp/a&b.dart" lib/a.dart
+implementador	2	Bash	git show HEAD:lib/a.dart | tee "/tmp/a;b.dart" lib/a.dart
+implementador	2	PowerShell	git show HEAD:lib/a.dart | Set-Content -Path ../x.dart,lib/a.dart
+implementador	2	Bash	bash -c "cd lib && git show HEAD:lib/a.dart > a.dart"
+implementador	2	Bash	git show HEAD:lib/a.dart | tee /tmp/x \\nlib/a.dart
+implementador	2	Bash	git -C .. show --output=lib/a.dart HEAD:lib/a.dart
+implementador	2	Bash	cat <(git show HEAD:lib/a.dart) > lib/a.dart
+implementador	2	Bash	git show HEAD:lib/a.dart | dd of=lib/a.dart
+implementador	2	Bash	git show HEAD:lib/a.dart | sponge lib/a.dart
+# --- implementador: git show/cat-file gravado no projeto, ou sem saber onde, barra
+implementador	2	Bash	git show HEAD:lib/a.dart > lib/novo.dart
+implementador	2	Bash	git cat-file -p HEAD:lib/a.dart >> lib/a.dart
+implementador	2	Bash	git show HEAD:lib/a.dart > ../fora-do-projeto.dart 2> lib/erro.txt
+implementador	2	Bash	git show HEAD:lib/a.dart > .revisao/../lib/a.dart
+implementador	2	Bash	git show HEAD:lib/a.dart > .revisao
+implementador	2	Bash	git show HEAD:lib/a.dart | tee ../fora-do-projeto.dart lib/a.dart
+implementador	2	Bash	git show HEAD:lib/a.dart | tee -a lib/a.dart
+implementador	2	PowerShell	git show HEAD:lib/a.dart | Out-File -FilePath lib/a.dart
+implementador	2	PowerShell	git show HEAD:lib/a.dart | Out-File -Encoding utf8 lib/a.dart
+implementador	2	PowerShell	git show HEAD:lib/a.dart | Tee-Object lib/a.dart
+implementador	2	PowerShell	git show HEAD:lib/a.dart | Add-Content -Path:lib/a.dart
+implementador	2	PowerShell	git show HEAD:lib/a.dart | sc lib/a.dart
+implementador	2	PowerShell	git show HEAD:lib/a.dart | Out-File $env:TEMP/a.dart
+implementador	2	Bash	git show HEAD:lib/a.dart > $TMPDIR/a.dart
+implementador	2	Bash	git show HEAD:lib/a.dart > "$(mktemp)"
+implementador	2	Bash	git show HEAD:lib/a.dart > /tmp/*.dart
+implementador	2	Bash	git show HEAD:lib/a.dart > ~/a.dart
+implementador	2	Bash	git show HEAD:lib/a.dart >
+implementador	2	Bash	cd lib && git show HEAD:lib/a.dart > a.dart
+implementador	2	Bash	git show --output=lib/a.dart HEAD:lib/a.dart
+implementador	2	Bash	git show --output lib/a.dart HEAD:lib/a.dart
+implementador	2	Bash	echo "$(git show HEAD:lib/a.dart)" > lib/a.dart
+implementador	2	Bash	bash -c "git show HEAD:lib/a.dart" > lib/a.dart
+# --- implementador: passa (worktree para rodar o teste no HEAD, no lugar do stash)
+implementador	0	Bash	git worktree add ../antes-da-mudanca HEAD
+implementador	0	PowerShell	git worktree add ../antes-da-mudanca HEAD
+implementador	0	Bash	cd ../antes-da-mudanca && flutter test test/a_test.dart
+implementador	0	Bash	git worktree remove ../antes-da-mudanca
+# --- implementador: worktree remove --force apaga a pasta com o trabalho de quem esta nela
+implementador	2	PowerShell	git worktree remove --force ../antes-da-mudanca
+implementador	2	Bash	git worktree remove -f ../antes-da-mudanca
+# --- implementador: git que refaz arquivos por outro caminho, e o subcomando escondido
+implementador	2	Bash	git -c "a.b=x;y" checkout -- lib/a.dart
+implementador	2	Bash	git \\ncheckout -- lib/a.dart
+implementador	2	PowerShell	git `\ncheckout -- lib/a.dart
+implementador	2	Bash	git read-tree -u --reset HEAD
+implementador	2	Bash	git diff | git apply -R
+implementador	2	Bash	git apply --reverse mudanca.patch
+implementador	2	Bash	git archive HEAD lib/a.dart | tar -x
+implementador	2	Bash	git checkout \\servidor\pasta
+implementador	0	Bash	git apply mudanca.patch
+implementador	2	Bash	echo "nao rode; git push"
+# --- implementador: aspa escapada, apostrofo em comentario e grupo entre parenteses nao escondem o comando
+implementador	2	Bash	echo \" ; git checkout -- lib/a.dart ; echo \"
+implementador	2	Bash	echo "x\"" ; git push ; echo "y"
+implementador	2	Bash	echo \' ; rm -rf src ; echo \'
+implementador	2	Bash	echo \" && npm install left-pad && echo \"
+implementador	2	Bash	echo \" ; supabase db push ; echo \"
+implementador	2	Bash	echo \" ; dart format . ; echo \"
+implementador	2	Bash	echo \" ; git show HEAD:lib/a.dart > lib/a.dart ; echo \"
+implementador	2	Bash	ls lib # don't forget\ngit checkout -- lib/a.dart\n# that's it
+implementador	2	PowerShell	Write-Host x # don't\ngit stash
+implementador	2	Bash	echo a\\\ngit checkout -- lib/a.dart
+implementador	2	Bash	echo x # comentario \\ngit checkout -- lib/a.dart
+implementador	2	PowerShell	echo a``\ngit checkout -- lib/a.dart
+implementador	2	PowerShell	Write-Output (git push)
+implementador	2	PowerShell	echo @(git checkout -- lib/a.dart)
+# --- implementador: gravador dentro de bash -c, copia depois do git show, abreviacoes do git
+implementador	2	Bash	bash -c "git show HEAD:lib/a.dart | tee lib/a.dart"
+implementador	2	Bash	sh -c 'git show HEAD:lib/a.dart | sponge lib/a.dart'
+implementador	2	PowerShell	pwsh -Command "git show HEAD:lib/a.dart | Set-Content lib/a.dart"
+implementador	2	Bash	cp <(git show HEAD:lib/a.dart) lib/a.dart
+implementador	2	Bash	git show HEAD:lib/a.dart | cp /dev/stdin lib/a.dart
+implementador	2	Bash	git diff | git apply --rev
+implementador	2	Bash	git apply -Rp1 mudanca.patch
+implementador	2	Bash	git worktree remove --fo ../antes-da-mudanca
+# --- implementador: passa
+implementador	0	Bash	git archive --format=zip -o ../versao.zip HEAD
+implementador	0	Bash	diff <(git show HEAD:lib/a.dart) lib/a.dart
+implementador	0	Bash	git show HEAD:lib/a.dart | head -20
+implementador	0	Bash	dotnet format --include=src/a.cs
 # --- implementador: passa (git que so le)
 implementador	0	Bash	git status
 implementador	0	Bash	git diff -- lib/a.dart

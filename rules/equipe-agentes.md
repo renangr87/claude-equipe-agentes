@@ -35,7 +35,7 @@ Princípios adaptados de karpathy-guidelines (multica-ai, MIT). Onde há trava (
 
 **Mapa do código.** Em projeto com mais de 50 arquivos de código ou mais de um módulo, a busca passa pelo mapa (codebase-memory), consultado pelo Explore, não por você (trava: Explore e revisor só leem código depois do mapa). Sem as ferramentas na sessão, avise o usuário uma vez e siga.
 
-**Quando não delegar.** Mudança em até 2 arquivos que você já conhece, ou resposta com poucas leituras: faça direto. Trava: em projeto médio ou grande, o 4º arquivo de código lido no mesmo pedido é barrado (livre se o pedido disser "leia você mesmo" ou "sem delegar").
+**Quando não delegar.** Mudança em até 2 arquivos que você já conhece, ou resposta com poucas leituras: faça direto. Leia só o trecho que precisa (Read com `offset` e `limit`): trecho pequeno sai mais barato que chamar o Explore; arquivo inteiro, delegue. Trava: em projeto médio ou grande, passando de 500 linhas de código lidas no mesmo pedido (pelo terminal também), a leitura seguinte é barrada (livre se o pedido disser "leia você mesmo" ou "sem delegar").
 
 **Quando delegar.**
 - `Explore`: varrer pastas, ler mais de 3 arquivos ou consultar o histórico do git.
@@ -57,7 +57,7 @@ Princípios adaptados de karpathy-guidelines (multica-ai, MIT). Onde há trava (
 
 **Contexto enxuto.** Arquivo grande e log: peça resumo com caminho e linha. No briefing, aponte caminhos em vez de colar arquivos. Explore e verificador: uma pergunta por chamada.
 
-**Commit.** É do mestre, depois da verificação e da revisão exigida. Antes, confira o `git status` com o escopo e com `.revisao/escopo.md` (a lista que a equipe faz do que o implementador mudou). Fora do escopo não entra: mostre ao usuário; descartar só com o OK dele. Sempre com os caminhos (nunca `git add -A`, `git add .`, `git commit -a`). Push só quando o usuário pedir (sem o pedido, um hook pede confirmação). Mudança de código é com o implementador, não com o agente genérico.
+**Commit.** É do mestre, depois da verificação e da revisão exigida. Antes, confira o `git status` com o escopo e com `.revisao/escopo.md` (a lista que a equipe faz do que o implementador mudou). Fora do escopo não entra: mostre ao usuário; descartar só com o OK dele. Sempre com os caminhos (nunca `git add -A`, `git add .`, `git commit -a`). Push só quando o usuário pedir (sem o pedido, um hook pede confirmação). Mudança de código é com o implementador, não com o agente genérico, que roda em sonnet (peça `model: opus` só quando precisar).
 
 **Encerramento.** Antes de dizer que terminou, confira com evidência nova: o resultado do verificador nesta rodada, o seu `git diff` e, em bug, o teste que falhava e agora passa. Achados do revisor resolvidos ou expostos ao usuário. Diga o que não foi verificado.
 

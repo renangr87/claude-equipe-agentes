@@ -152,6 +152,146 @@ export function categoriaDaFerramenta(nome) {
   if (n === 'WebFetch' || n === 'WebSearch') return 'web';
   return 'outras';
 }
+// Comando de terminal que mostra código de um arquivo (cat, sed, Get-Content, busca com muito
+// contexto, git show de um arquivo): no custo, conta como leitura de arquivos, não como saída
+// de terminal. sed -i edita, não mostra.
+const MOSTRA_CODIGO = /^(cat|type|get-content|gc|head|tail|less|more|bat|nl|sed|awk)$/i;
+export function leCodigoPeloTerminal(comando) {
+  return String(comando || '').split(/&&|\|\||;|\n|\|/).some((seg) => {
+    const t = seg.trim().replace(/^\(\s*/, '').split(/\s+/);
+    const prog = String(t[0] || '').split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, '');
+    if (MOSTRA_CODIGO.test(prog)) return !/\s-i\b/.test(seg) && t.slice(1).some((x) => ehCodigo(x.replace(/^["'(]+/, '').replace(/["')\]].*$/, '')));
+    if (/^(grep|egrep|rg|select-string|sls|findstr)$/.test(prog)) return /(^|\s)(-[CAB]\s*\d{2,}|--context=\d{2,}|-context\s+\d{2,})/i.test(seg);
+    if (prog === 'git') return /\bshow\s+\S+:\S+/.test(seg);
+    return false;
+  });
+}
+
+// Forma de um comando de terminal: o programa e o subcomando de cada parte (git push, npm
+// install, rm), sem caminho nem argumento. É o que a medição mostra dos comandos barrados, e
+// pode ir parar num relatório colado em outro lugar: só sai nome de listas fechadas. Programa
+// fora da lista (um script do projeto, por exemplo) vira "(outro)"; subcomando fora da lista
+// fica de fora.
+const PROGRAMAS = new Set(`
+  git npm pnpm yarn bun npx node deno python python3 py pip pip3 uv poetry flutter dart supabase gh docker
+  docker-compose kubectl helm terraform cargo rustc go dotnet java javac mvn gradle gradlew firebase vercel netlify
+  prisma az aws gcloud winget choco scoop brew apt apt-get make cmake ls dir cat type head tail less more grep egrep
+  rg find fd sed awk cut sort uniq wc xargs echo printf cp mv rm mkdir rmdir touch chmod chown ln tar zip unzip curl
+  wget ssh scp rsync ps kill pkill taskkill which where env export powershell pwsh cmd bash sh zsh code start open
+  explorer tee diff patch jq yq sqlite3 psql mysql tsc eslint prettier vitest jest pytest playwright tsx vite expo
+  eas adb xcodebuild pod ruby gem bundle php composer perl sudo timeout
+  get-content set-content add-content get-childitem gci remove-item ri del copy-item copy move-item move new-item
+  ni test-path select-string sls select-object where-object foreach-object invoke-webrequest iwr invoke-restmethod
+  irm start-process stop-process get-process out-file write-output write-host invoke-pester get-location
+  resolve-path join-path split-path get-item rename-item compress-archive expand-archive get-command
+  import-module install-module start-sleep measure-object sort-object convertto-json convertfrom-json
+`.split(/\s+/).filter(Boolean));
+const SUBCOMANDOS = {
+  git: 'add am apply archive bisect blame branch checkout cherry-pick clean clone commit config describe diff fetch format-patch gc grep init log ls-files ls-remote merge mv notes pull push rebase reflog remote reset restore revert rev-parse rm shortlog show sparse-checkout stash status submodule switch tag worktree fsck prune cat-file merge-base rev-list lfs',
+  npm: 'install i ci add remove rm uninstall update up upgrade run run-script test t start build exec x dlx init create publish pack link unlink list ls outdated audit fund version view info cache config prune dedupe rebuild why explain doctor login logout whoami dev lint format typecheck preview serve workspace global patch',
+  npx: 'vitest jest playwright tsc eslint prettier prisma vite next expo eas supabase firebase vercel wrangler tsx ts-node nx turbo knip serve rimraf',
+  flutter: 'analyze build clean create devices doctor drive emulators format gen-l10n install logs pub run test upgrade config attach screenshot precache channel downgrade',
+  dart: 'analyze compile create doc fix format info pub run test devtools',
+  supabase: 'start stop status db migration functions gen link login init projects secrets storage branches orgs inspect seed test services',
+  gh: 'pr issue repo run workflow release api auth gist browse secret variable label search codespace cache ruleset project extension status',
+  docker: 'build run exec ps images pull push compose logs stop start rm rmi network volume system inspect tag login logout cp kill restart buildx context info version container image save load',
+  kubectl: 'get describe apply delete logs exec port-forward rollout scale create edit config top cp set label annotate patch explain version cluster-info auth wait diff',
+  cargo: 'build run test check clippy fmt add remove update install publish doc bench clean new init tree fix',
+  go: 'build run test mod get install fmt vet generate clean env list work version tool',
+  dotnet: 'build run test restore publish new add remove clean pack tool format watch ef sln list nuget',
+  pip: 'install uninstall freeze list show download wheel check config cache',
+  uv: 'pip run sync add remove lock venv tool python init build publish tree export',
+  poetry: 'install add remove update run shell build publish lock show init new check config env export version',
+  firebase: 'deploy emulators:start emulators:exec init login logout use serve projects:list functions:log functions:shell hosting:channel:deploy',
+  vercel: 'deploy dev build env pull link login logout logs ls list inspect domains alias promote rollback redeploy remove project',
+  prisma: 'generate migrate db studio format validate init version',
+  gradle: 'build assemble test clean check run tasks dependencies bundleRelease assembleDebug assembleRelease installDebug lint signingReport wrapper',
+  mvn: 'clean compile test package install deploy verify validate',
+  az: 'login logout account group vm webapp functionapp storage keyvault aks acr ad deployment resource network sql monitor extension',
+  aws: 's3 ec2 lambda iam sts cloudformation ecr ecs eks logs dynamodb rds sqs sns route53 cloudfront ssm secretsmanager configure sso',
+  gcloud: 'auth config compute run functions projects app builds container sql storage iam logging pubsub secrets services components init info',
+  winget: 'install uninstall upgrade search list show source settings export import pin',
+  choco: 'install uninstall upgrade search list info outdated pin source config feature',
+  brew: 'install uninstall upgrade update list search info doctor cleanup services tap outdated link unlink',
+  apt: 'install remove purge update upgrade full-upgrade autoremove search show list policy',
+};
+for (const [a, b] of [['pnpm', 'npm'], ['yarn', 'npm'], ['bun', 'npm'], ['pip3', 'pip'], ['gradlew', 'gradle'], ['apt-get', 'apt']]) SUBCOMANDOS[a] = SUBCOMANDOS[b];
+const LISTA_SUB = Object.fromEntries(Object.entries(SUBCOMANDOS).map(([k, v]) => [k, new Set(v.split(' '))]));
+
+// Palavras de um comando como o terminal vê: aspas juntam ("Fulano de Tal" é uma palavra só).
+function palavrasDoComando(seg) {
+  const r = [];
+  let atual = '';
+  let tem = false;
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg[i];
+    if (c === '"' || c === "'") {
+      const j = seg.indexOf(c, i + 1);
+      const fim = j < 0 ? seg.length : j;
+      atual += seg.slice(i + 1, fim);
+      tem = true;
+      i = fim;
+    } else if (/\s/.test(c)) {
+      if (tem) r.push(atual);
+      atual = '';
+      tem = false;
+    } else {
+      atual += c;
+      tem = true;
+    }
+  }
+  if (tem) r.push(atual);
+  return r;
+}
+
+// Partes do comando (&&, ||, ;, | e quebra de linha), fora de aspas.
+function partesDoComando(texto) {
+  const partes = [];
+  let atual = '';
+  let aspas = null;
+  for (let i = 0; i < texto.length; i++) {
+    const c = texto[i];
+    if (aspas) { if (c === aspas) aspas = null; atual += c; continue; }
+    if (c === '"' || c === "'") { aspas = c; atual += c; continue; }
+    if (c === '&' && texto[i + 1] === '&') { partes.push(atual); atual = ''; i++; continue; }
+    if (c === ';' || c === '|' || c === '\n' || c === '\r') { partes.push(atual); atual = ''; if (texto[i + 1] === '|') i++; continue; }
+    atual += c;
+  }
+  partes.push(atual);
+  return partes;
+}
+
+function formaDaParte(seg) {
+  const t = palavrasDoComando(seg.trim());
+  // Variáveis antes do programa (NOME="x" git commit) e o "&" do PowerShell não contam.
+  while (t.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t[0]) || t[0] === '&')) t.shift();
+  if (!t.length) return null;
+  const prog = String(t[0]).replace(/^[(]+|[)]+$/g, '').split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|cmd|ps1|bat)$/, '');
+  if (/^(cd|set-location|sl|pushd|popd|chdir)$/.test(prog)) return null;
+  if (!PROGRAMAS.has(prog)) return '(outro)';
+  const subs = LISTA_SUB[prog];
+  if (!subs) return prog;
+  // O subcomando: a primeira palavra da lista. Uma palavra fora dela logo depois de uma
+  // opção é o valor da opção (git -C pasta push, kubectl --context x get); senão, para.
+  for (let i = 1; i < t.length; i++) {
+    const w = t[i];
+    if (w.startsWith('-')) continue;
+    if (subs.has(w)) return `${prog} ${w}`;
+    if (!(t[i - 1].startsWith('-') && !t[i - 1].includes('='))) break;
+  }
+  return prog;
+}
+
+export function formaDoComando(comando) {
+  const formas = [];
+  for (const seg of partesDoComando(String(comando || ''))) {
+    const f = formaDaParte(seg);
+    if (f && !formas.includes(f)) formas.push(f);
+  }
+  if (!formas.length) return '(vazio)';
+  return formas.slice(0, 4).join(' + ') + (formas.length > 4 ? ' + …' : '');
+}
+
 const novoSegmento = () => ({ turnos: 0, fixo: null, ultimaEntrada: 0, custoEntrada: 0, blocos: [] });
 const somarEm = (o, k, v) => { if (v) o[k] = (o[k] || 0) + v; };
 function blocoNoContexto(g, cat, chars) {
@@ -284,6 +424,7 @@ function novaAnalise() {
     msgs: new Map(), ferramentas: {}, usos: new Map(), resultados: new Set(), vistos: new Set(),
     esperas: [], perguntas: [], bloqueios: [], recusas: 0, compactacoes: 0, errosApi: 0,
     aprovacoes: [], barrados: [], recusasUsuario: 0, recusasTexto: 0, barradosTexto: [], temDecisoes: false,
+    comandosBarrados: [], comandosBarradosTexto: [], doDiff: new Set(),
     primeiro: null, ultimo: null, ultimoTs: null, cwd: null, custos: new Map(), ultimoTexto: '', gasto: {},
     entrega: '', entregaTs: null,
     agentes: [], tipoPorAgente: new Map(), relatorios: new Map(),
@@ -369,10 +510,18 @@ function analisar(arquivo, desdeMs, r = novaAnalise()) {
           if (r.usos.has(c.id)) continue;
           blocoNoContexto(g, 'escrita', String(c.name || '').length + JSON.stringify(c.input || {}).length);
           r.ferramentas[c.name] = (r.ferramentas[c.name] || 0) + 1;
-          r.usos.set(c.id, { nome: c.name, ts, tipo: c.input && c.input.subagent_type });
+          const terminal = /^(Bash|PowerShell)$/.test(c.name) && c.input;
+          r.usos.set(c.id, {
+            nome: c.name, ts, tipo: c.input && c.input.subagent_type,
+            forma: terminal ? formaDoComando(c.input.command) : null,
+            le: terminal ? leCodigoPeloTerminal(c.input.command) : false,
+            diff: c.name === 'Read' && c.input && /(^|[\\/])\.revisao[\\/].*\.(patch|diff)$/i.test(String(c.input.file_path || '')),
+          });
           r.seq++;
           if (r.primeiroMapa === null && CONSULTA_MAPA.test(c.name)) r.primeiroMapa = r.seq;
-          if (/^(Read|Grep|Glob)$/.test(c.name) && leituraDeCodigo(c.name, c.input)) {
+          // O revisor lendo um arquivo que está no diff que ele recebeu não precisa do mapa.
+          const doDiff = c.name === 'Read' && c.input && naMudanca(r.doDiff, c.input.file_path);
+          if (/^(Read|Grep|Glob)$/.test(c.name) && leituraDeCodigo(c.name, c.input) && !doDiff) {
             if (r.primeiraLeitura === null) r.primeiraLeitura = r.seq;
             if (c.name === 'Read' && !d.isSidechain) r.linhaDoTempo.push({ ts, seq: r.seq, k: 'leitura' });
           }
@@ -410,7 +559,13 @@ function analisar(arquivo, desdeMs, r = novaAnalise()) {
         const uso = r.usos.get(c.tool_use_id);
         const nome = uso ? uso.nome : '?';
         const texto = textoDe(c.content);
-        blocoNoContexto(g, categoriaDaFerramenta(nome), texto.length);
+        blocoNoContexto(g, uso && uso.le ? 'leitura' : categoriaDaFerramenta(nome), texto.length);
+        // O diff que o revisor leu: os arquivos dele. O Read devolve cada linha com o número
+        // na frente ("     1\tdiff --git ..." ou "1→diff --git ...").
+        if (uso && uso.diff) {
+          const semNumeros = texto.replace(/^[ \t]*\d+(?:\t|→)/gm, '');
+          for (const m of semNumeros.matchAll(/^diff --git a\/(.+?) b\/(.+)$/gm)) r.doDiff.add(m[2].trim());
+        }
         if (c.is_error && r.testesPorUso.has(c.tool_use_id)) {
           const q = r.testesPorUso.get(c.tool_use_id);
           if (r.primeiroVermelho === null || q < r.primeiroVermelho) r.primeiroVermelho = q;
@@ -423,8 +578,14 @@ function analisar(arquivo, desdeMs, r = novaAnalise()) {
         // A decisão vale para a ferramenta desta linha (uma por linha).
         if (primeiro) {
           primeiro = false;
+          // Barrado pelo modo Auto: só os tipos dele (automode-blocked, -unavailable,
+          // -parsing-error). Regra de permissão, hook (a guarda, as travas), interrupção e
+          // cancelamento não são o modo Auto.
           if (d.toolDenialKind === 'user-rejected') r.recusasUsuario++;
-          else if (d.toolDenialKind) r.barrados.push(nome);
+          else if (/^(automode|auto-mode|auto_mode|classifier)/i.test(String(d.toolDenialKind || ''))) {
+            r.barrados.push(nome);
+            if (uso && uso.forma) r.comandosBarrados.push(uso.forma);
+          }
           if (decisao && decisao.decision === 'accept' && /^user/.test(String(decisao.source || ''))) {
             r.aprovacoes.push({ nome, s: s === null ? 0 : s });
           }
@@ -437,7 +598,10 @@ function analisar(arquivo, desdeMs, r = novaAnalise()) {
         }
         if (c.is_error && texto.length < 3000) {
           if (RECUSA.test(texto)) r.recusasTexto++;
-          else if (BARRADO.test(texto)) r.barradosTexto.push(nome);
+          else if (BARRADO.test(texto)) {
+            r.barradosTexto.push(nome);
+            if (uso && uso.forma) r.comandosBarradosTexto.push(uso.forma);
+          }
         }
         if (uso && (uso.nome === 'Agent' || uso.nome === 'Task') && d.toolUseResult && d.toolUseResult.agentId) {
           r.tipoPorAgente.set(String(d.toolUseResult.agentId), uso.tipo || 'general-purpose');
@@ -478,8 +642,19 @@ export function limparMotivo(m) {
 // Pedidos de aprovação, bloqueios do modo Auto e recusas: pelos campos que a sessão grava
 // ou, em sessão de versão antiga, pela estimativa.
 function decisoes(a) {
-  if (a.temDecisoes) return { aprovacoes: a.aprovacoes, barrados: a.barrados, recusas: a.recusasUsuario, estimado: false };
-  return { aprovacoes: a.esperas, barrados: a.barradosTexto, recusas: a.recusasTexto, estimado: a.esperas.length > 0 };
+  if (a.temDecisoes) return { aprovacoes: a.aprovacoes, barrados: a.barrados, comandosBarrados: a.comandosBarrados, recusas: a.recusasUsuario, estimado: false };
+  return { aprovacoes: a.esperas, barrados: a.barradosTexto, comandosBarrados: a.comandosBarradosTexto, recusas: a.recusasTexto, estimado: a.esperas.length > 0 };
+}
+
+// O arquivo está entre os do diff (caminhos relativos à raiz do projeto)?
+function naMudanca(doDiff, arquivo) {
+  if (!doDiff.size || !arquivo) return false;
+  const a = String(arquivo).replace(/\\/g, '/').toLowerCase();
+  for (const rel of doDiff) {
+    const r = rel.replace(/\\/g, '/').toLowerCase();
+    if (a === r || a.endsWith(`/${r}`)) return true;
+  }
+  return false;
 }
 
 function somarUso(msgs, filtro = () => true) {
@@ -641,7 +816,16 @@ export function mediana(lista) {
 }
 
 export function lerTravas(pasta, desdeMs, sessoes = null) {
-  const r = { linhas: 0, porTrava: {}, tempos: {}, mapa: { chamadas: 0, fugas: 0 }, entregasSemVerificar: 0, conclusoesSemRevisao: 0, foraDoEscopo: 0 };
+  const r = {
+    linhas: 0, porTrava: {}, tempos: {}, mapa: { chamadas: 0, fugas: 0, semTentar: 0 }, entregasSemVerificar: 0,
+    // Concluídas sem revisão depois da cobrança: sem chamar o revisor, ou com ele chamado mas sem
+    // aprovação reconhecida (reprovou, ou o relatório veio sem veredito). A pausa para
+    // perguntar ao usuário não conta como conclusão.
+    conclusoesSemRevisao: 0, conclusoesComRevisor: 0, pausasSemRevisao: 0, foraDoEscopo: 0,
+  };
+  // Sessões com a cobrança da revisão em aberto: se um revisor terminou depois dela.
+  const cobradas = new Map();
+  const sessaoDe = (chave) => { const c = String(chave || ''); const i = c.lastIndexOf('-'); return i > 0 ? c.slice(0, i) : c; };
   let nomes = [];
   try { nomes = fs.readdirSync(pasta).filter((n) => /^travas-\d{4}-\d{2}\.log$/.test(n)).sort(); } catch { return r; }
   const porDespachante = {};
@@ -655,6 +839,9 @@ export function lerTravas(pasta, desdeMs, sessoes = null) {
       if (!ts || ts < desdeMs || !NOME_VALIDO.test(trava || '') || !NOME_VALIDO.test(decisao || '')) continue;
       if (sessoes && ![...sessoes].some((id) => String(chave || '').startsWith(`${id}-`))) continue;
       r.linhas++;
+      // Revisor chamado depois da cobrança: conta o começo dele (o de segundo plano termina
+      // depois da conclusão).
+      if (trava === 'eventos' && /^Subagent(Start|Stop)$/.test(decisao) && /revis|review/i.test(tipo || '') && cobradas.has(sessaoDe(chave))) cobradas.set(sessaoDe(chave), true);
       if (DESPACHANTES.includes(trava)) {
         const v = Number(tempo);
         if (Number.isFinite(v)) (porDespachante[trava] = porDespachante[trava] || []).push(v);
@@ -663,13 +850,20 @@ export function lerTravas(pasta, desdeMs, sessoes = null) {
       const t = r.porTrava[trava] = r.porTrava[trava] || {};
       t[decisao] = (t[decisao] || 0) + 1;
       if (decisao === 'entregou-sem-verificar') r.entregasSemVerificar++;
-      if (decisao === 'concluiu-sem-revisao') r.conclusoesSemRevisao++;
+      if (trava === 'revisao' && decisao === 'barrou') cobradas.set(sessaoDe(chave), cobradas.get(sessaoDe(chave)) || false);
+      if (decisao === 'concluiu-sem-revisao') {
+        if (cobradas.get(sessaoDe(chave))) r.conclusoesComRevisor++;
+        else r.conclusoesSemRevisao++;
+        cobradas.delete(sessaoDe(chave));
+      }
+      if (decisao === 'pausou-sem-revisao') r.pausasSemRevisao++;
       if (decisao === 'fora-do-escopo') r.foraDoEscopo++;
       // Fugas do mapa: entre as chamadas do Explore e do revisor que tiveram decisão do mapa
       // (consultou ou fugiu), quantas fugiram. Chamada sem chave conta sozinha.
-      if (trava === 'mapa' && (decisao === 'consultou' || decisao === 'fuga') && (tipo === 'Explore' || tipo === 'revisor')) {
+      if (trava === 'mapa' && /^(consultou|fuga|fuga-sem-tentar)$/.test(decisao) && (tipo === 'Explore' || tipo === 'revisor')) {
         const k = chave || `linha-${r.linhas}`;
-        chamadasMapa.set(k, chamadasMapa.get(k) || decisao === 'fuga');
+        chamadasMapa.set(k, chamadasMapa.get(k) || decisao !== 'consultou');
+        if (decisao === 'fuga-sem-tentar') r.mapa.semTentar++;
       }
     }
   }
@@ -699,6 +893,7 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos, travas }) {
   const bloqueios = {};
   const aprovacoes = {};
   const barrados = {};
+  const comandosBarrados = {};
   const subidas = {};
   let estimado = false;
   let custoMestre = 0;
@@ -720,6 +915,7 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos, travas }) {
       aprovacoes[e.nome].segundos += e.s;
     }
     for (const nome of x.barrados) barrados[nome] = (barrados[nome] || 0) + 1;
+    for (const forma of x.comandosBarrados || []) comandosBarrados[forma] = (comandosBarrados[forma] || 0) + 1;
     recusas += x.recusas;
     if (x.estimado) estimado = true;
   };
@@ -831,7 +1027,7 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos, travas }) {
     fugas_do_mapa_pct: tv.mapa.chamadas ? (100 * tv.mapa.fugas) / tv.mapa.chamadas : null,
     travas_barrou_por_sessao: tv.linhas ? barrouOuPediu / n : null,
     entregas_sem_verificacao: tv.linhas ? tv.entregasSemVerificar : null,
-    conclusoes_sem_revisao: tv.linhas ? tv.conclusoesSemRevisao : null,
+    conclusoes_sem_revisor: tv.linhas ? tv.conclusoesSemRevisao : null,
     correcao_com_teste_vermelho_pct: imp && imp.correcoes ? (100 * imp.vermelhoAntes) / imp.correcoes : null,
     hooks_p95_ms: p95s.length ? Math.max(...p95s) : null,
     // Para onde vai o custo (estimativa): a parte de cada fonte no custo total.
@@ -847,7 +1043,7 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos, travas }) {
     sessoes: sessoes.length,
     custo: { total: custoTotal, mestre: custoMestre, agentes: custoAgentes, registradoPeloClaudeCode: sessoesComRegistro ? custoRegistrado : null, sessoesComRegistro },
     mestre: { leituras: leiturasMestre, modelos: contar(sessoes.map((s) => s.mestre.modelo)), pedidos },
-    porTipo, projetos, bloqueios, aprovacoes, barrados, estimado, subidas,
+    porTipo, projetos, bloqueios, aprovacoes, barrados, comandosBarrados, estimado, subidas,
     compactacoes, errosApi, recusas, perguntas, segundosPerguntas,
     travas: tv,
     gasto,
@@ -929,6 +1125,8 @@ export function texto(r) {
   out.push(`- Pedidos de aprovação que você respondeu${comoMedido}: ${totalAprov}${aprov.length ? `, com a sessão parada ${minutos(aprov.reduce((x, [, e]) => x + e.segundos, 0))} no total: ` + aprov.slice(0, 6).map(([k, e]) => `${k} ${e.vezes}x (${minutos(e.segundos)})`).join(', ') : ''}.`);
   const barr = Object.entries(r.barrados).sort((a, b) => b[1] - a[1]);
   out.push(`- Barrados pelo modo Auto: ${barr.reduce((x, [, v]) => x + v, 0)}${barr.length ? ` (${barr.slice(0, 6).map(([k, v]) => `${k} ${v}x`).join(', ')})` : ''}. Recusados por você: ${r.recusas}.`);
+  const cmds = Object.entries(r.comandosBarrados || {}).sort((a, b) => b[1] - a[1]);
+  if (cmds.length) out.push(`  - Comandos de terminal barrados (programa e subcomando, sem argumentos): ${cmds.slice(0, 10).map(([k, v]) => `${k} ${v}x`).join(', ')}.`);
   out.push(`- Perguntas ao usuário: ${r.perguntas}${r.perguntas ? `, esperando ${minutos(r.segundosPerguntas)} no total` : ''}.`);
   const bloqueios = Object.entries(r.bloqueios).sort((a, b) => b[1] - a[1]);
   const totalBloqueios = bloqueios.reduce((x, [, v]) => x + v, 0);
@@ -970,7 +1168,7 @@ function textoGasto(gasto) {
 }
 
 // Seção das travas: vem só do registro (decisões e tempos), sem conteúdo.
-const ESPECIAIS = new Set(['passou', 'consultou', 'fuga', 'entregou-sem-verificar', 'concluiu-sem-revisao']);
+const ESPECIAIS = new Set(['passou', 'consultou', 'fuga', 'fuga-sem-tentar', 'entregou-sem-verificar', 'concluiu-sem-revisao', 'pausou-sem-revisao']);
 function textoTravas(tv) {
   const out = ['## Travas', ''];
   if (!tv || !tv.linhas) {
@@ -983,8 +1181,8 @@ function textoTravas(tv) {
     if (partes.length) out.push(`- ${nome}: ${partes.join(', ')}.`);
   }
   const m = tv.mapa;
-  out.push(`- Fugas do mapa: ${m.fugas}${m.chamadas ? ` de ${m.chamadas} (${pct((100 * m.fugas) / m.chamadas)})` : ''}. Base: chamadas do Explore e do revisor que consultaram o mapa ou fugiram dele.`);
-  out.push(`- Entregas sem verificação: ${tv.entregasSemVerificar}. Mudanças concluídas sem revisão: ${tv.conclusoesSemRevisao}.`);
+  out.push(`- Fugas do mapa: ${m.fugas}${m.chamadas ? ` de ${m.chamadas} (${pct((100 * m.fugas) / m.chamadas)})` : ''}${m.semTentar ? `, ${m.semTentar} delas sem nem tentar o mapa` : ''}. Base: chamadas do Explore e do revisor que consultaram o mapa ou fugiram dele.`);
+  out.push(`- Entregas sem verificação: ${tv.entregasSemVerificar}. Mudanças concluídas sem chamar o revisor depois da cobrança: ${tv.conclusoesSemRevisao}${tv.conclusoesComRevisor ? `; com o revisor chamado, mas sem aprovação reconhecida (reprovou, ou veio sem veredito): ${tv.conclusoesComRevisor}` : ''}${tv.pausasSemRevisao ? `. Pausas para perguntar ao usuário (não contam como conclusão): ${tv.pausasSemRevisao}` : ''}.`);
   const tempos = DESPACHANTES.filter((d) => tv.tempos[d]).map((d) => { const t = tv.tempos[d]; return `${d} ${ms(t.media)} em média, p95 ${ms(t.p95)}, pior ${ms(t.pior)} (${t.vezes}x)`; });
   if (tempos.length) out.push(`- Tempo dos hooks: ${tempos.join('; ')}.`);
   out.push('');
@@ -1013,7 +1211,7 @@ const ROTULOS = {
   fugas_do_mapa_pct: ['Fugas do mapa', pct],
   travas_barrou_por_sessao: ['Travas que barraram ou pediram, por sessão', (v) => nf(1).format(v)],
   entregas_sem_verificacao: ['Entregas sem verificação', (v) => nf(0).format(v)],
-  conclusoes_sem_revisao: ['Mudanças concluídas sem revisão', (v) => nf(0).format(v)],
+  conclusoes_sem_revisor: ['Mudanças concluídas sem chamar o revisor', (v) => nf(0).format(v)],
   correcao_com_teste_vermelho_pct: ['Correções de bug com teste vermelho antes da correção', pct],
   hooks_p95_ms: ['Tempo dos hooks (p95 do mais lento)', ms],
   gasto_fixo_pct: ['Parte do custo: começo de cada conversa (regras, prompt)', pct],

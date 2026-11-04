@@ -15,8 +15,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  apagarEstado, carregarModulo, chaveDaChamada, ehAgenteDeRevisao, gravarEstado, lerEntrada, limparChamada, normalizar,
-  registrarTrava, tipoDoAgente,
+  anotacoes, anotar, apagarEstado, carregarModulo, chaveDaChamada, desligada, ehAgenteDeRevisao, gravarEstado, lerEntrada,
+  limparChamada, normalizar, registrarTrava, tipoDoAgente,
 } from './equipe-comum.mjs';
 
 // Cada módulo à parte: um quebrado não leva os outros junto, e a falha vai para o registro.
@@ -31,6 +31,23 @@ const tentar = (f) => { try { return f(); } catch { return null; } };
 const LIVRE = /\b(leia (voce|vc|tu) mesmo|le (voce|vc) mesmo|sem delegar|nao delegue|nao precisa delegar)\b/;
 const SEM_REVISAO = /\b(sem revisao|nao precisa (de )?revis(ao|ar)|dispensa (a )?revisao)\b/;
 const SEM_VERIFICAR = /\b(sem (rodar )?(os )?testes?|sem verifica(r|cao)|nao (precisa )?(rodar|de) (os )?testes?|nao precisa (testar|verificar)|pul[ea] (os )?testes?|dispensa (os )?testes?)\b/;
+
+// Conversa longa: a partir do 5º resumo automático, uma vez por resumo, o mestre sugere ao
+// usuário abrir uma conversa nova para a próxima tarefa (cada passo relê o contexto inteiro,
+// e uma sessão com muitos resumos custa várias vezes mais por resposta).
+const MIN_RESUMOS = 5;
+export function avisoDeConversaLonga(entrada) {
+  if (desligada('conversa')) return null;
+  const s = String(entrada.session_id || '').replace(/[^A-Za-z0-9_-]/g, '');
+  if (!s) return null;
+  const sessao = `${s}-sessao`;
+  const n = anotacoes(sessao, 'resumos').length;
+  if (n < MIN_RESUMOS) return null;
+  const avisado = Math.max(0, ...anotacoes(sessao, 'resumos-avisados').map(Number).filter(Number.isFinite));
+  if (n <= avisado) return null;
+  anotar(sessao, 'resumos-avisados', n);
+  return `Aviso da equipe: esta conversa já foi resumida ${n} vezes. Cada passo relê um contexto grande, e o custo de cada resposta cresce. No fim desta resposta, sugira ao usuário, em uma linha, abrir uma conversa nova para a próxima tarefa: o plano (.revisao/plano.md), as notas de área e a memória levam o que precisa continuar.`;
+}
 
 export function flagsDoPedido(texto) {
   const t = normalizar(texto);
@@ -51,9 +68,13 @@ export function tratar(entrada) {
     if (push) tentar(() => push.novoPedidoPush(entrada));
     if (entrega) tentar(() => entrega.inicioDaSessao(entrada));
     if (convergencia) tentar(() => convergencia.novoPedidoConvergencia(entrada));
-    // Listas de escopo de implementadores de segundo plano que o mestre ainda não viu.
+    // Listas de escopo de implementadores de segundo plano que o mestre ainda não viu, e o
+    // aviso de conversa longa.
     const escopo = entrega ? tentar(() => entrega.escopoParaMestre(entrada)) : null;
-    if (escopo) return { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: escopo } };
+    const longa = tentar(() => avisoDeConversaLonga(entrada));
+    if (longa) registrarTrava('conversa', 'avisou', 0, entrada);
+    const contexto = [escopo, longa].filter(Boolean).join('\n\n');
+    if (contexto) return { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: contexto } };
     return null;
   }
 

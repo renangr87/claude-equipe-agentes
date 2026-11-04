@@ -5,7 +5,19 @@
 // Entrega o que o mestre às vezes esquecia de pôr no briefing: a raiz do projeto, se o
 // mapa é obrigatório e como conferir e indexar, as notas de área, os comandos liberados
 // do verificador e as regras do projeto. Só lê; nunca bloqueia; erro vira silêncio.
-import { fatosDoProjeto, lerEntrada, saidaContexto } from './equipe-comum.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fatosDoProjeto, lerEntrada, lerEstado, saidaContexto } from './equipe-comum.mjs';
+
+// O projeto da sessão quando a pasta da chamada não é ele (uma pasta temporária, que pode
+// até ter sumido): o primeiro repositório que a sessão editou com a lista do verificador, ou
+// a pasta do projeto da sessão.
+function projetoDaSessao(entrada) {
+  const sessao = String(entrada.session_id || '').replace(/[^A-Za-z0-9_-]/g, '');
+  const editados = sessao ? Object.keys(lerEstado(`${sessao}-sessao`, 'base') || {}) : [];
+  const candidatos = [...editados, process.env.CLAUDE_PROJECT_DIR].filter(Boolean);
+  return candidatos.find((p) => { try { return fs.statSync(path.join(p, '.claude', 'verificador-comandos.txt')).isFile(); } catch { return false; } }) || null;
+}
 
 function linhaProjeto(f) {
   const modulos = f.modulos.length > 1 ? `, ${f.modulos.length} módulos (${f.modulos.slice(0, 5).join(', ')})` : '';
@@ -26,7 +38,17 @@ function mapa(f, depois) {
 export function contexto(entrada) {
   const tipo = entrada.agent_type || '';
   if (!['Explore', 'verificador', 'revisor'].includes(tipo)) return '';
-  const f = fatosDoProjeto(entrada.cwd || process.cwd());
+  const cwd = entrada.cwd || process.cwd();
+  let f = fs.existsSync(cwd) ? fatosDoProjeto(cwd) : null;
+  // Verificador numa pasta que sumiu ou que fica fora de qualquer repositório (uma pasta
+  // temporária): o contexto vem do projeto da sessão, e ele roda os comandos de lá. Numa pasta
+  // que é um repositório sem a lista, não: verificar outro projeto daria verde no lugar errado.
+  let outraPasta = null;
+  if (tipo === 'verificador' && !f) {
+    const p = projetoDaSessao(entrada);
+    const g = p ? fatosDoProjeto(p) : null;
+    if (g && g.comandos) { f = g; outraPasta = g.raiz; }
+  }
   if (!f || f.codigo === 0) return '';
   const l = ['Contexto automático do projeto (hook da equipe; vale junto com o briefing):', linhaProjeto(f)];
 
@@ -52,6 +74,12 @@ export function contexto(entrada) {
   }
 
   if (tipo === 'verificador') {
+    if (outraPasta) {
+      // Entre aspas e com barra normal: no Git Bash, a barra invertida some ("cd C:\x\app"
+      // vira "cd C:xapp"); o PowerShell aceita as duas. O Windows PowerShell 5.1 não tem &&.
+      const alvo = `"${outraPasta.replace(/\\/g, '/')}"`;
+      l.push(`- A pasta desta chamada (${cwd}) ${fs.existsSync(cwd) ? 'fica fora de um repositório' : 'não existe mais'}: rode cada comando a partir do projeto. No Bash: cd ${alvo} && <linha da lista>. No PowerShell: cd ${alvo}; <linha da lista>. A guarda aceita esses formatos.`);
+    }
     if (f.comandos === null) {
       l.push('- Não existe .claude/verificador-comandos.txt: a guarda vai bloquear todo comando. Devolva isso ao mestre como bloqueio, sem tentar outros comandos.');
     } else {

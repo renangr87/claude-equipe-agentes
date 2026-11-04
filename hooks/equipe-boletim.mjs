@@ -9,7 +9,7 @@
 // qualquer erro vira silêncio.
 import fs from 'node:fs';
 import path from 'node:path';
-import { fatosDoProjeto, lerEntrada, lerJson, lerTexto, pastaDiario, saidaContexto, sessoesDesde, versaoDaEquipe } from './equipe-comum.mjs';
+import { anotar, fatosDoProjeto, lerEntrada, lerJson, lerTexto, pastaDiario, saidaContexto, sessoesDesde, versaoDaEquipe } from './equipe-comum.mjs';
 import { acharMapa, projetoIndexado, projetosDoMapa, resumoRapido, rodarMapa } from './equipe-diagnostico.mjs';
 import { CONEXAO_LEITURA, leituraDeclarada } from './equipe-sql.mjs';
 
@@ -119,6 +119,11 @@ function avisos(l) {
 }
 
 const entrada = lerEntrada();
+try {
+  // Conta os resumos automáticos da sessão (o aviso de conversa longa vem deles).
+  const sessao = String(entrada.session_id || '').replace(/[^A-Za-z0-9_-]/g, '');
+  if (entrada.source === 'compact' && sessao) anotar(`${sessao}-sessao`, 'resumos', Date.now());
+} catch { /* segue */ }
 try {
   saidaContexto('SessionStart', boletim(entrada));
 } catch {
