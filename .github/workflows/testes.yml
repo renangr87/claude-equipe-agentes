@@ -38,6 +38,28 @@ jobs:
         shell: pwsh
         run: node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./testes/anotacoes-ci.mjs --test-reporter-destination=stdout testes/equipe-node.test.mjs testes/travas.test.mjs testes/medidor-travas.test.mjs testes/diagnostico.test.mjs testes/comportamento.test.mjs
 
+  linux:
+    name: Linux (Ubuntu), PowerShell 7
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Script de instalacao no Linux (sintaxe)
+        run: bash -n instalar-linux.sh
+      - name: Guarda (PowerShell 7)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: ./testes/testar-guarda.ps1
+      - name: Instalador (PowerShell 7)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: ./testes/testar-instalador.ps1
+      - name: Hooks e medidor da equipe (Node)
+        if: ${{ !cancelled() }}
+        run: node --test testes/equipe-node.test.mjs testes/travas.test.mjs testes/medidor-travas.test.mjs testes/diagnostico.test.mjs testes/comportamento.test.mjs
+
   dart:
     name: Dart ${{ matrix.sdk }}
     runs-on: windows-latest

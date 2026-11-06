@@ -41,6 +41,7 @@ flowchart TD
 | `hooks/guarda-comandos.ps1` | guarda de terminal do Explore, do verificador e do implementador | `~/.claude/hooks/` |
 | `hooks/equipe-*.mjs` | boletim de início de sessão, contexto automático dos subagentes, travas de banco, de segredos e de leitura do Explore, aviso no celular, memória entre computadores e medidor das sessões (Node) | `~/.claude/hooks/` |
 | `skills/retro-equipe/` | skill `/retro-equipe`: retrospectiva com números e propostas testadas | `~/.claude/skills/` |
+| `instalar-linux.sh` | instala ou atualiza a equipe no Linux (Ubuntu, Debian): o que faltar, o download e o `instalar.ps1` no PowerShell 7 | não é copiado |
 | `skills/objetivo/` | skill `/objetivo`: o pedido vira um objetivo com condição de parada, e a equipe segue até o fim sem parar para perguntar | `~/.claude/skills/` |
 | `CLAUDE.md`, `.claude/verificador-comandos.txt` | regras e comandos de teste para trabalhar nesta pasta (é aqui que a retrospectiva aplica as mudanças) | ficam no repositório |
 | `settings/hooks.json` | registro dos hooks da equipe | mesclar em `~/.claude/settings.json` |
@@ -78,9 +79,9 @@ Regra prática: instrução que precisa chegar aos subagentes vai nos arquivos d
 
 ## Requisitos
 
-- Claude Code em versão recente: aba Code do app para Windows ou macOS, terminal ou extensão.
+- Claude Code em versão recente: aba Code do app (Windows, macOS ou Linux, onde o app está em beta para Ubuntu e Debian), terminal ou extensão.
 - Acesso aos modelos Opus, Sonnet e Haiku.
-- Para o instalador: Windows com PowerShell.
+- Para o instalador: Windows com PowerShell, ou Linux (Ubuntu 24.04, Debian 12 ou mais novos) com o `instalar-linux.sh`.
 
 ## Instalação
 
@@ -137,6 +138,27 @@ Para passar opções pela linha de uma vez, use esta forma (troque `-ApoioCasa` 
 ```powershell
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/renangr87/claude-equipe-agentes/main/baixar-e-instalar.ps1))) -ApoioCasa
 ```
+
+### Opção 1b: tudo automático (Linux)
+
+Num terminal do Ubuntu 24.04 ou do Debian 12 (ou mais novos):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/renangr87/claude-equipe-agentes/main/instalar-linux.sh | bash
+```
+
+O script instala o que faltar (git, curl, Node.js 22 e PowerShell 7 pelo snap, Python 3 com venv pelo apt; pede a senha do sudo só nesse caso), baixa a equipe em `~/claude-equipe-agentes` e roda o mesmo `instalar.ps1`, agora no PowerShell 7. As opções do Windows valem igual, depois de `bash -s --`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/renangr87/claude-equipe-agentes/main/instalar-linux.sh | bash -s -- -Memoria https://github.com/<você>/claude-memoria
+```
+
+Para atualizar depois, rode a mesma linha (é o `atualizar-equipe.bat` do Linux). Diferenças do Windows:
+
+- A guarda de terminal dos agentes roda no `pwsh`: o instalador grava o caminho dele nos agentes. Sem o `pwsh`, a guarda não roda, e o instalador avisa.
+- O mapa do código é instalado pelo `install.sh` oficial do projeto, só o binário (em `~/.local/bin`).
+- Programa que falta durante o `instalar.ps1` (o Ollama do Apoio Local, por exemplo) não é instalado sozinho: o instalador mostra o comando (`curl -fsSL https://ollama.com/install.sh | sh`).
+- O Apoio Local de casa e do trabalho (`-ApoioCasa`, `-ApoioEmpresa`) ainda é só do Windows: no Linux, esses passos são pulados com aviso.
 
 ### Opção 2: manual (qualquer sistema)
 
@@ -253,7 +275,7 @@ Limites:
 - **A guarda do implementador pega formatadores conhecidos, não toda forma de reformatar.** Um script próprio que reescreve arquivos passa. Quem cobre isso é a comparação de `git status` antes do commit.
 - **O Explore ainda vê um arquivo inteiro pelo histórico do git** (`git show HEAD:arquivo`). Isso fica liberado porque serve às perguntas de histórico; a trava de leitura vale para a ferramenta Read.
 - **A lista do verificador depende do git.** Se a pasta `.claude/` estiver no `.gitignore` do projeto, a checagem de commit não enxerga mudanças.
-- **Testes.** `testes/casos-guarda.txt` tem 456 casos e `testes/testar-guarda.ps1` roda todos do mesmo jeito que o hook, mais 77 cenários (78 no Windows: entrada vazia, JSON inválido, script ausente, lista fora de commit, lista ausente, worktree, pasta que sumiu, `cd` para a pasta da lista e outros). `testes/testar-instalador.ps1` faz 202 verificações em pastas temporárias, sem instalar nem baixar nada, com um `dart` falso para o servidor do Dart e um `python` falso (com `.venv` e `pip` simulados) para o Apoio Local. Os 177 testes em Node (`testes/*.test.mjs`) cobrem os hooks, as travas e o medidor, com repositórios git e sessões falsas montados no formato real (inclusive um segredo plantado num pedido, para garantir que ele não aparece na medição). Dois deles rodam a guarda de verdade e conferem que ela e o hook concordam sobre a lista do verificador (projeto numa subpasta e `.claude/` no `.gitignore`). `testes/conferir-dart.ps1` confere os nomes das ferramentas do servidor do Dart. A cada mudança no GitHub, todos rodam no Windows com o PowerShell 5.1 e com o PowerShell 7, e o do Dart roda também com o servidor de verdade, nas versões 3.11.3, 3.12.0, 3.13.0 e na estável. Para rodar na sua máquina: `powershell -ExecutionPolicy Bypass -File .\testes\testar-guarda.ps1`. O app do Windows em si não é testado: os testes 4, 5 e 6 da instalação cobrem essa parte.
+- **Testes.** `testes/casos-guarda.txt` tem 456 casos e `testes/testar-guarda.ps1` roda todos do mesmo jeito que o hook, mais 77 cenários (78 no Windows: entrada vazia, JSON inválido, script ausente, lista fora de commit, lista ausente, worktree, pasta que sumiu, `cd` para a pasta da lista e outros). `testes/testar-instalador.ps1` faz 203 verificações (205 no Linux) em pastas temporárias, sem instalar nem baixar nada, com um `dart` falso para o servidor do Dart e um `python` falso (com `.venv` e `pip` simulados) para o Apoio Local. Os 177 testes em Node (`testes/*.test.mjs`) cobrem os hooks, as travas e o medidor, com repositórios git e sessões falsas montados no formato real (inclusive um segredo plantado num pedido, para garantir que ele não aparece na medição). Dois deles rodam a guarda de verdade e conferem que ela e o hook concordam sobre a lista do verificador (projeto numa subpasta e `.claude/` no `.gitignore`). `testes/conferir-dart.ps1` confere os nomes das ferramentas do servidor do Dart. A cada mudança no GitHub, todos rodam no Windows com o PowerShell 5.1 e com o PowerShell 7 e no Linux (Ubuntu 24.04) com o PowerShell 7, e o do Dart roda também com o servidor de verdade, nas versões 3.11.3, 3.12.0, 3.13.0 e na estável. Para rodar na sua máquina: `powershell -ExecutionPolicy Bypass -File .\testes\testar-guarda.ps1`. O app do Windows em si não é testado: os testes 4, 5 e 6 da instalação cobrem essa parte.
 
 ## Ferramentas de conectores
 

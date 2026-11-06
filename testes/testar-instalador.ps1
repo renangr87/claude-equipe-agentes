@@ -61,6 +61,15 @@ $explore = [System.IO.File]::ReadAllText((Join-Path $d1 'agents\Explore.md'), $u
 $destinoBruto = (Resolve-Path -LiteralPath $d1).ProviderPath -replace '\\', '/'
 Conferir 'limpa: Explore com a guarda no caminho real' ($explore.Contains("& '" + $destinoBruto + "/hooks/guarda-comandos.ps1'"))
 Conferir 'limpa: Explore sem a trava de leitura no agente (agora no equipe-pre)' (-not $explore.Contains('equipe-leitura.mjs'))
+# A guarda roda no powershell.exe no Windows; fora dele, no pwsh (sem isso, ela nao rodaria).
+if ($env:OS -eq 'Windows_NT') {
+    Conferir 'limpa: guarda no powershell.exe (Windows)' ($explore.Contains('command: "powershell.exe"'))
+} else {
+    foreach ($a in @('Explore', 'verificador', 'implementador')) {
+        $t = [System.IO.File]::ReadAllText((Join-Path $d1 "agents\$a.md"), $utf8)
+        Conferir "limpa: $a com a guarda no pwsh (fora do Windows)" ((-not $t.Contains('powershell.exe')) -and ($t -match 'command: "[^"]*pwsh"'))
+    }
+}
 Conferir 'limpa: guarda copiada' (Test-Path (Join-Path $d1 'hooks\guarda-comandos.ps1'))
 Conferir 'limpa: regra copiada' (Test-Path (Join-Path $d1 'rules\equipe-agentes.md'))
 $s = Ler-Json (Join-Path $d1 'settings.json')

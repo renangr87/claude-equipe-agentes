@@ -311,9 +311,23 @@ function Atualizar-Path {
     $env:Path = (@($partes | Where-Object { $_ }) -join ';')
 }
 
+# Fora do Windows (Linux, macOS), o instalador nao usa sudo: diz o comando que instala o
+# programa. O instalar-linux.sh ja instala o basico (git, Node, PowerShell, Python) antes.
+$comandoLinux = @{
+    'OpenJS.NodeJS.LTS'  = 'sudo snap install node --classic --channel=22/stable'
+    'Git.Git'            = 'sudo apt install -y git'
+    'Python.Python.3.12' = 'sudo apt install -y python3 python3-venv'
+    'Ollama.Ollama'      = 'curl -fsSL https://ollama.com/install.sh | sh'
+}
+
 # Instala um programa pelo winget. Devolve $true se tentou (o chamador procura de novo).
 function Instalar-ComWinget([string]$nome, [string]$id) {
     if ($SemInstalar) { return $false }
+    if ($env:OS -ne 'Windows_NT') {
+        $c = $comandoLinux[$id]
+        Write-Host "  falta $nome. Instale com: $(if ($c) { $c } else { "o gerenciador de pacotes do sistema" }) e rode de novo."
+        return $false
+    }
     $winget = Get-Command 'winget' -ErrorAction SilentlyContinue
     if (-not $winget) {
         Write-Host "  o winget nao existe neste Windows: instale $nome manualmente e rode de novo."
@@ -342,7 +356,16 @@ function Find-Programa([string]$comando, [string[]]$caminhos) {
 function Find-Node { return Find-Programa 'node' @($(if ($env:ProgramFiles) { Join-Path $env:ProgramFiles 'nodejs\node.exe' })) }
 function Find-Git { return Find-Programa 'git' @($(if ($env:ProgramFiles) { Join-Path $env:ProgramFiles 'Git\cmd\git.exe' })) }
 function Find-Ollama { return Find-Programa 'ollama' @($(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama.exe' })) }
-function Find-Mapa { return Find-Programa 'codebase-memory-mcp' @($(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Programs\codebase-memory-mcp\codebase-memory-mcp.exe' })) }
+function Find-Mapa { return Find-Programa 'codebase-memory-mcp' @($(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Programs\codebase-memory-mcp\codebase-memory-mcp.exe' }), $(if ($env:OS -ne 'Windows_NT' -and $HOME) { Join-Path $HOME '.local/bin/codebase-memory-mcp' })) }
+
+# A guarda dos agentes roda no PowerShell: no Windows, o powershell.exe; fora dele, o pwsh
+# (PowerShell 7), pelo caminho completo quando achado. Sem ele, a guarda nao roda.
+$powershellDaGuarda = 'powershell.exe'
+if ($env:OS -ne 'Windows_NT') {
+    $pwshAchado = Get-Command 'pwsh' -ErrorAction SilentlyContinue
+    $powershellDaGuarda = if ($pwshAchado) { $pwshAchado.Source } else { 'pwsh' }
+    if (-not $pwshAchado) { Write-Host "ATENCAO: o PowerShell 7 (pwsh) nao foi encontrado: sem ele a guarda de terminal dos agentes nao roda. Instale com: sudo snap install powershell --classic" }
+}
 
 Write-Host "Guarda de terminal e scripts da equipe:"
 Copy-ComBackup (Join-Path (Join-Path $origem 'hooks') 'guarda-comandos.ps1') (Join-Path $pastaHooks 'guarda-comandos.ps1')
@@ -368,7 +391,7 @@ Write-Host "Subagentes:"
 $origemAgentes = Join-Path $origem 'agents'
 foreach ($arquivo in (Get-ChildItem -LiteralPath $origemAgentes -Filter '*.md' | Sort-Object Name)) {
     $texto = (Read-Texto $arquivo.FullName).Replace('"__PASTA_CLAUDE__/hooks/equipe-', '"' + $pastaClaudeBruta + '/hooks/equipe-')
-    $texto = $texto.Replace('__PASTA_CLAUDE__', $pastaClaude).Replace('__NODE__', $nodeTexto)
+    $texto = $texto.Replace('__PASTA_CLAUDE__', $pastaClaude).Replace('__NODE__', $nodeTexto).Replace('"powershell.exe"', '"' + $powershellDaGuarda + '"')
     Write-ComBackup $texto (Join-Path $pastaAgentes $arquivo.Name)
 }
 
@@ -653,7 +676,25 @@ if ($Memoria) {
 # ---------- Mapa do codigo ----------
 
 function Instalar-Mapa {
-    if ($SemInstalar -or $env:OS -ne 'Windows_NT') { return }
+    if ($SemInstalar) { return }
+    if ($env:OS -ne 'Windows_NT') {
+        # Linux e macOS: o install.sh oficial, so o binario (em ~/.local/bin), conferido pelo checksum.
+        Write-Host "  instalando o programa (instalador oficial do projeto, so o binario: --skip-config)..."
+        $script = Join-Path ([System.IO.Path]::GetTempPath()) ("cbm-install-" + [guid]::NewGuid().ToString('N') + '.sh')
+        $eap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh' -OutFile $script -ErrorAction Stop
+            & bash $script --skip-config | Out-Host
+            if ($LASTEXITCODE -ne 0) { Write-Host "  o instalador do mapa terminou com erro: veja a mensagem acima e rode de novo." }
+        } catch {
+            Write-Host "  nao consegui baixar o instalador do mapa: $($_.Exception.Message)"
+        } finally {
+            Remove-Item -LiteralPath $script -Force -ErrorAction SilentlyContinue
+            $ErrorActionPreference = $eap
+        }
+        return
+    }
     Write-Host "  instalando o programa (instalador oficial do projeto, so o binario: --skip-config)..."
     $script = Join-Path ([System.IO.Path]::GetTempPath()) ("cbm-install-" + [guid]::NewGuid().ToString('N') + '.ps1')
     $eap = $ErrorActionPreference
@@ -798,7 +839,7 @@ if (-not $SemDart) {
 
 # Python 3.12 ou mais novo de verdade: o "python" da Microsoft Store e so um atalho que abre a loja.
 function Find-Python {
-    $tentativas = @(@('python'), @('py', '-3'))
+    $tentativas = @(@('python'), @('py', '-3'), @('python3'))
     # Instalado sem entrar no PATH: pastas padrao do instalador (por usuario e para todos).
     $padroes = @()
     if ($env:LOCALAPPDATA) { $padroes += Join-Path $env:LOCALAPPDATA 'Programs\Python\Python3*\python.exe' }
