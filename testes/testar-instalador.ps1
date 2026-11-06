@@ -77,6 +77,7 @@ foreach ($n in $scriptsEquipe) {
 $caminhoSkill = Join-Path $d1 'skills\retro-equipe\SKILL.md'
 $skill = if (Test-Path $caminhoSkill) { [System.IO.File]::ReadAllText($caminhoSkill, $utf8) } else { '__PASTA_CLAUDE__' }
 Conferir 'limpa: skill /retro-equipe sem marcadores' (-not $skill.Contains('__PASTA_CLAUDE__') -and -not $skill.Contains('__NODE__'))
+Conferir 'limpa: skill /objetivo copiada' (Test-Path (Join-Path $d1 'skills\objetivo\SKILL.md'))
 $versao = $null
 if (Test-Path (Join-Path $d1 'equipe-versao.json')) { $versao = Ler-Json (Join-Path $d1 'equipe-versao.json') }
 Conferir 'limpa: versao instalada gravada' ($null -ne $versao -and [string]$versao.pasta -ne '')

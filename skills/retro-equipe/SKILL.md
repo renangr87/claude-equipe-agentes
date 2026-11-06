@@ -17,7 +17,7 @@ node "__PASTA_CLAUDE__/hooks/equipe-medir.mjs" --dias 7 --retro
 
 Se o `node` não for encontrado, use o caminho completo `"__NODE__"` no lugar de `node` (no PowerShell, com `&` na frente: `& "__NODE__" "__PASTA_CLAUDE__/hooks/equipe-medir.mjs" --dias 7 --retro`). Se o usuário pedir outro período, troque `--dias 7`; para um projeto só, acrescente `--projeto <parte do nome>`.
 
-A saída traz o gasto por agente, para onde vai o custo (por fonte: regras e prompt, pedidos, avisos, leitura de arquivos, terminal, relatórios, o que os agentes escrevem), os sinais, a seção das travas, a divisão por projeto, a pasta da cópia da equipe e, a partir da segunda retrospectiva, a comparação com a anterior e as propostas daquela vez. O custo vem em preço de API: na assinatura ele serve como proporção do limite usado, não como conta.
+A saída traz o gasto por agente, para onde vai o custo (por fonte: regras e prompt, pedidos, avisos, leitura de arquivos, terminal, relatórios, o que os agentes escrevem), os sinais, a seção das travas, o teste de desligar uma trava, a divisão por projeto, a pasta da cópia da equipe e, a partir da segunda retrospectiva, a comparação com a anterior e as propostas daquela vez. O custo vem em preço de API: na assinatura ele serve como proporção do limite usado, não como conta.
 
 Se existir um resultado dos testes de comportamento (`__PASTA_CLAUDE__/equipe-diario/comportamento-*.json`, o mais recente), leia também: cada checagem que falhou é um sinal direto e entra no diagnóstico ao lado dos números. Se o último tiver mais de 7 dias ou não existir, sugira rodar `node testes/comportamento/rodar.mjs` na pasta da equipe antes de aplicar mudanças.
 
@@ -64,6 +64,29 @@ Compare os números com a tabela abaixo. Os limites são pontos de partida, não
 | O que os agentes escrevem acima de 40% do custo | respostas e relatórios longos, ou raciocínio extenso | encurtar o formato dos relatórios; conferir o esforço (effort) de cada agente |
 | Correções de bug com teste vermelho antes da correção abaixo de 80% | o implementador corrige antes de reproduzir o bug, e o teste "que passa" pode não provar nada | frase no prompt do implementador; se continuar baixo, trava que exige o teste vermelho antes da primeira edição de código numa correção |
 | A mesma falha voltou (convergência barrou ou avisou várias vezes) | tentativas iguais: falta algo que o agente não vê, ou a tarefa está mal formulada | briefing de correção com "Já tentado" e o esperado e o que apareceu; replanejar mais cedo; nota de área com a armadilha |
+| Sessões com mudança de código que atualizaram o progresso abaixo de 70% | o mestre fecha sem registrar onde parou, e a sessão seguinte descobre tudo de novo | reforçar a regra "Continuidade"; se continuar baixo, uma trava que lembra o progresso no fim de uma mudança grande |
+| Trava `objetivo` com `sem-progresso` | o objetivo travou: a mesma pendência cobrada 3 vezes sem o código mudar | olhar a pendência: teste que falha por causa externa ou "Pronto quando" mal escolhido; ajustar a skill `objetivo` |
+| Trava `sobras` avisando muito | prints e marcas de depuração entram nas mudanças | frase no prompt do implementador; se for falso positivo, ajustar o padrão em `hooks/equipe-sobras.mjs` com caso de teste |
+
+### Teste de desligar uma trava
+
+Cada trava existe porque o modelo não fazia aquilo sozinho. Com modelos melhores, uma trava pode virar só custo. A medição traz a seção "Teste de desligar uma trava":
+
+- **Terminado:** compare os indicadores ligados àquela trava (tabela abaixo) com a retrospectiva anterior. Nada piorou: proponha tirar a trava de vez (mudança na equipe, com teste). Piorou: proponha mantê-la. Nos dois casos, o teste se encerra com `--fim-teste` depois da decisão.
+- **Em andamento:** não proponha outro teste; espere a data.
+- **Candidata:** inclua entre as propostas um teste de 7 dias com ela desligada, se ela se aplica aos projetos do período (a trava do mapa não diz nada em projeto pequeno). Diga o indicador a observar.
+
+| Trava | Indicador a observar |
+|---|---|
+| `orcamento` | leituras de código do mestre por pedido; custo do mestre |
+| `mapa` | mapa antes da primeira leitura de código; fugas do mapa |
+| `leitura` | tokens de entrada por chamada do Explore |
+| `briefing` | tarefas do implementador não concluídas; revisões reprovadas |
+| `analisar` | entregas sem verificação; revisões reprovadas |
+| `modelo` | custo dos agentes genéricos (gasto por agente) |
+| `conversa` | compactações por sessão; custo por sessão |
+
+Só essas travas entram em teste. Revisão, prova, verificação, escopo, objetivo e as de segurança (guarda, push, segredos, banco) nunca. A convergência e o paralelo também não: guardam casos raros (a mesma falha em laço, dois implementadores no mesmo arquivo), então agir pouco não quer dizer que sobram. Nem o aviso de sobras de depuração, que a medição não tem como avaliar.
 
 Se uma proposta da retrospectiva anterior foi aplicada e o indicador dela não mudou, diga isso e proponha desfazer ou trocar.
 
@@ -97,6 +120,7 @@ Mostre o diagnóstico e as propostas de uma vez e faça uma única pergunta ao u
 ## 5. Aplicar
 
 - **Lição de um projeto:** grave na nota de área do projeto atual (o `CLAUDE.md` da pasta).
+- **Teste de trava aprovado:** rode `node "__PASTA_CLAUDE__/hooks/equipe-medir.mjs" --testar-trava <nome>`. A equipe pede o OK do usuário antes de rodar (o comando desliga a trava em todos os projetos). A trava fica desligada por 7 dias e volta sozinha (para voltar antes: `--fim-teste`). Não precisa da pasta da equipe.
 - **Mudança na equipe:** é feita na cópia da equipe, cuja pasta aparece na saída da medição. Se esta sessão não estiver aberta nessa pasta, não edite de fora: guarde as propostas (passo 6) e diga ao usuário para abrir uma sessão na pasta da equipe e pedir "aplique a última retrospectiva" (o comando `--ultima` mostra as propostas guardadas).
 - **Na pasta da equipe:**
   1. Faça a mudança.

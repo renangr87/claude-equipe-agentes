@@ -25,7 +25,7 @@
      Ollama deste computador como reserva. Os dois usam os scripts remoto\ do Apoio
   10. Hooks da equipe no settings.json (precisam do Node.js): boletim do projeto no
      inicio de cada sessao e contexto automatico para o Explore, o verificador e o
-     revisor. Copia a skill /retro-equipe e o medidor das sessoes, e grava a versao
+     revisor. Copia as skills /retro-equipe e /objetivo e o medidor das sessoes, e grava a versao
      instalada em <Destino>\equipe-versao.json. So ficam de fora com -SemHooks ou
      -SemBloqueios
   11. Com -ModeloMestre: grava o modelo da sessao principal ("model") no settings.json
@@ -96,7 +96,7 @@
 
 .PARAMETER SemHooks
   Nao acrescenta os hooks da equipe ao settings.json (boletim de inicio e contexto dos
-  subagentes). Os scripts e a skill /retro-equipe sao copiados do mesmo jeito.
+  subagentes). Os scripts e as skills /retro-equipe e /objetivo sao copiados do mesmo jeito.
 
 .PARAMETER SemInstalar
   Nao instala programas (Git, Node.js, Python, Ollama, mapa do codigo), nao baixa nem

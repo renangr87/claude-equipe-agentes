@@ -1473,3 +1473,520 @@ test('conversa longa: a partir do 5º resumo, um aviso por resumo', () => {
   resumo();
   assert.equal(rodar(EVENTOS, { hook_event_name: 'UserPromptSubmit', session_id: 'cl', cwd: raiz, prompt: 'x' }, { ...env, EQUIPE_DESLIGAR: 'conversa' }), null);
 });
+
+// ---------- objetivo, sobras de depuração, progresso e teste de trava ----------
+
+test('objetivo: o fim só passa com o "Pronto quando" verde ou com o Status de espera', () => {
+  const { claude, env } = ambiente({ EQUIPE_DESLIGAR: 'revisao' });
+  const raiz = projeto({ mapa: false });
+  const sessao = 'ob';
+  const arq = path.join(raiz, 'lib', 'a1.dart');
+  const alvo = path.join(raiz, '.revisao', 'objetivo.md');
+  const pedido = (prompt) => rodar(EVENTOS, { hook_event_name: 'UserPromptSubmit', session_id: sessao, cwd: raiz, prompt }, env);
+  const editar = () => { fs.appendFileSync(arq, `// ${Math.random()}\n`); rodar(POS, { session_id: sessao, cwd: raiz, tool_name: 'Edit', tool_input: { file_path: arq } }, env); };
+  const rodou = (comando, ok) => rodar(POS, { hook_event_name: ok ? 'PostToolUse' : 'PostToolUseFailure', session_id: sessao, cwd: raiz, tool_name: 'Bash', tool_input: { command: comando }, agent_type: 'verificador', agent_id: 'v' }, env);
+  const gravar = (status, pronto = '- `flutter test`\n- `flutter analyze`\n- a tela abre') => {
+    escrever(alvo, `# Objetivo\nPedido: corrigir o total\nPronto quando:\n${pronto}\nPare só para: aprovar push.\nStatus: ${status}\nDecisões:\n- nenhuma\n`);
+    return rodar(POS, { session_id: sessao, cwd: raiz, tool_name: 'Write', tool_input: { file_path: alvo } }, env);
+  };
+  const fim = (extra = {}) => rodar(EVENTOS, { hook_event_name: 'Stop', session_id: sessao, cwd: raiz, ...extra }, env);
+  pedido('corrija o total; vou sair, deixe rodando');
+  gravar('ativo');
+  assert.ok(registro(claude).some((l) => l[1] === 'objetivo' && l[2] === 'gravou'));
+  editar();
+  // Sem verde: barra, com as linhas que faltam (a cobrança da prova não se repete).
+  let s = fim();
+  assert.equal(s.decision, 'block');
+  assert.match(s.reason, /objetivo ativo.*falta verde.*flutter test, flutter analyze/s);
+  assert.ok(!/nenhuma linha da lista rodou/.test(s.reason));
+  // Uma linha passou, a outra falhou: falta a que falhou. O laço continua no fim seguinte.
+  rodou('flutter test', true);
+  rodou('flutter analyze', false);
+  s = fim({ stop_hook_active: true });
+  assert.match(s.reason, /falta verde com o código de agora em: flutter analyze\./);
+  // As duas verdes com o código de agora: passa, mesmo com o Status ainda ativo.
+  rodou('flutter analyze', true);
+  assert.equal(fim(), null);
+  assert.ok(registro(claude).some((l) => l[1] === 'objetivo' && l[2] === 'atingido'));
+  // Código novo depois do verde: volta a cobrar; "concluído" sem verificação não basta.
+  editar();
+  gravar('concluído');
+  assert.match(fim().reason, /diz concluído, mas a verificação não confirma/);
+  // Aguardando o usuário: o objetivo deixa parar, e a prova (que esperava o objetivo) cobra
+  // uma vez o código que mudou sem verificação; insistir passa.
+  gravar('aguardando usuário: aprovar o push');
+  assert.match(fim().reason, /o código mudou e não há verificação verde/);
+  assert.equal(fim({ stop_hook_active: true }), null);
+  assert.ok(registro(claude).some((l) => l[1] === 'objetivo' && l[2] === 'aguardando'));
+  // A mesma cobrança, sem o código mudar, vale no máximo 3 vezes.
+  gravar('ativo');
+  const barrou = () => { const x = fim(); return Boolean(x && x.decision === 'block'); };
+  assert.deepEqual([barrou(), barrou(), barrou(), barrou()], [true, true, true, false]);
+  assert.ok(registro(claude).some((l) => l[1] === 'objetivo' && l[2] === 'sem-progresso'));
+  // Encerrado: desliga.
+  editar();
+  gravar('encerrado');
+  assert.equal(fim(), null);
+});
+
+test('objetivo: sem linha da lista, espera o Status concluído; vale só na sessão que gravou', async () => {
+  const { lerObjetivo, linhasPedidas } = await import(new URL('../hooks/equipe-objetivo.mjs', import.meta.url).href);
+  const o = lerObjetivo('# Objetivo\n**Pronto quando:** `flutter test` passa\n- o botão aparece\n- `npm test` e `flutter analyze`\nPare só para: aprovar.\n**Status:** Aguardando usuário: escolher a cor\n');
+  assert.equal(o.status, 'aguardando');
+  assert.equal(o.motivo, 'Aguardando usuário: escolher a cor');
+  assert.deepEqual(linhasPedidas(o.pronto, ['flutter test', 'flutter analyze', 'npm run build']), ['flutter test', 'flutter analyze']);
+  assert.equal(lerObjetivo('Status: concluído').status, 'concluido');
+  assert.equal(lerObjetivo('Pronto quando:\n- x\n').status, 'ativo');
+  const { env } = ambiente({ EQUIPE_DESLIGAR: 'revisao,prova' });
+  const raiz = projeto({ mapa: false });
+  const alvo = path.join(raiz, '.revisao', 'objetivo.md');
+  escrever(alvo, '# Objetivo\nPronto quando:\n- o relatório sai em PDF\nStatus: ativo\n');
+  rodar(POS, { session_id: 'oa', cwd: raiz, tool_name: 'Write', tool_input: { file_path: alvo } }, env);
+  const fim = (sessao) => rodar(EVENTOS, { hook_event_name: 'Stop', session_id: sessao, cwd: raiz }, env);
+  assert.match(fim('oa').reason, /Ao terminar, confira cada critério e escreva "Status: concluído"/);
+  // Outra sessão não herda o objetivo.
+  assert.equal(fim('outra'), null);
+  escrever(alvo, '# Objetivo\nPronto quando:\n- o relatório sai em PDF\nStatus: concluído\n');
+  rodar(POS, { session_id: 'oa', cwd: raiz, tool_name: 'Edit', tool_input: { file_path: alvo } }, env);
+  assert.equal(fim('oa'), null);
+  // O interruptor desliga.
+  const { env: env2 } = ambiente({ EQUIPE_DESLIGAR: 'revisao,prova,objetivo' });
+  escrever(alvo, '# Objetivo\nPronto quando:\n- x\nStatus: ativo\n');
+  rodar(POS, { session_id: 'ob2', cwd: raiz, tool_name: 'Write', tool_input: { file_path: alvo } }, env2);
+  assert.equal(rodar(EVENTOS, { hook_event_name: 'Stop', session_id: 'ob2', cwd: raiz }, env2), null);
+});
+
+test('sobras: aviso depois da edição, uma vez por linha, e na lista do escopo do implementador', () => {
+  const { claude, env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  escrever(path.join(raiz, 'src', 'conta.ts'), 'export const a = 1;\n');
+  git(raiz, 'add', '-A');
+  git(raiz, 'commit', '-q', '-m', 'ts');
+  const editar = (rel, texto, extra = {}) => {
+    const arq = path.join(raiz, rel);
+    fs.appendFileSync(arq, texto);
+    return contexto(rodar(POS, { session_id: 'sb', cwd: raiz, tool_name: 'Edit', tool_input: { file_path: arq }, ...extra }, env));
+  };
+  // Linha nova com console.log e marca de debug: aviso com arquivo e linha.
+  let c = editar('src/conta.ts', 'console.log("total", a);\n// DEBUG: tirar depois\n');
+  assert.match(c, /sobras de depuração/);
+  assert.match(c, /src\/conta\.ts:2 `console\.log\("total", a\);`/);
+  assert.match(c, /src\/conta\.ts:3/);
+  assert.ok(registro(claude).some((l) => l[1] === 'sobras' && l[2] === 'avisou'));
+  // A mesma linha não volta; código comum não avisa; print do Dart avisa.
+  assert.ok(!/sobras/.test(editar('src/conta.ts', 'export const b = 2;\n')));
+  assert.match(editar('lib/a1.dart', '  print(total);\n'), /lib\/a1\.dart:\d+ `print\(total\);`/);
+  // Em arquivo de teste, print e console.log não contam; debugger conta.
+  escrever(path.join(raiz, 'test', 'conta_test.dart'), 'void main() {}\n');
+  assert.ok(!/sobras/.test(editar('test/conta_test.dart', 'print(1);\n')));
+  // Arquivo com cara de temporário.
+  escrever(path.join(raiz, 'saida.log'), 'x\n');
+  assert.match(contexto(rodar(POS, { session_id: 'sb', cwd: raiz, tool_name: 'Write', tool_input: { file_path: path.join(raiz, 'saida.log') } }, env)), /saida\.log \(arquivo com cara de temporário\)/);
+  // O verificador não edita; o interruptor desliga.
+  const { env: env2 } = ambiente({ EQUIPE_DESLIGAR: 'sobras' });
+  fs.appendFileSync(path.join(raiz, 'src', 'conta.ts'), 'debugger;\n');
+  assert.ok(!/sobras/.test(contexto(rodar(POS, { session_id: 'sb2', cwd: raiz, tool_name: 'Edit', tool_input: { file_path: path.join(raiz, 'src', 'conta.ts') } }, env2))));
+  // Fim do implementador: a lista do escopo diz as sobras dos arquivos dele.
+  const { env: env3 } = ambiente();
+  const raiz3 = projeto({ mapa: false });
+  const transcricao = path.join(tmp('tr'), 'agente.jsonl');
+  escrever(transcricao, `${JSON.stringify({ type: 'user', message: { role: 'user', content: 'Objetivo: ajustar\nEscopo: lib/\nCritério de aceite: teste\nComo verificar: flutter test' } })}\n`);
+  const base = { session_id: 'sc', cwd: raiz3, agent_type: 'implementador', agent_id: 'i9', agent_transcript_path: transcricao };
+  rodar(EVENTOS, { ...base, hook_event_name: 'SubagentStart' }, env3);
+  const arq3 = path.join(raiz3, 'lib', 'a2.dart');
+  fs.appendFileSync(arq3, 'void g() { print("x"); }\n  print(1);\n');
+  rodar(POS, { ...base, tool_name: 'Edit', tool_input: { file_path: arq3 } }, env3);
+  rodar(POS, { ...base, tool_name: 'Bash', tool_input: { command: 'flutter test' } }, env3);
+  rodar(EVENTOS, { ...base, hook_event_name: 'SubagentStop' }, env3);
+  const lista = fs.readFileSync(path.join(raiz3, '.revisao', 'escopo.md'), 'utf8');
+  assert.match(lista, /Sobras de depuração \(1\): lib\/a2\.dart:4 `print\(1\);`/);
+});
+
+test('boletim: progresso, objetivo e teste de trava', () => {
+  const { claude, env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const BOLETIM = path.join(HOOKS, 'equipe-boletim.mjs');
+  const boletim = (source) => contexto(rodar(BOLETIM, { hook_event_name: 'SessionStart', session_id: 'bo', cwd: raiz, source }, env));
+  assert.ok(!/Progresso em/.test(boletim('startup')));
+  escrever(path.join(raiz, '.revisao', 'progresso.md'), '# Progresso\nPedido: total do carrinho\n- **Feito:** lib/a1.dart\nVerificado: flutter test passou\nFalta: o frete\nRetomar por: escrever o teste do frete em test/frete_test.dart\n');
+  let b = boletim('startup');
+  assert.match(b, /Progresso em \.revisao\/progresso\.md \(atualizado hoje\): retomar por escrever o teste do frete em test\/frete_test\.dart\. Se a tarefa de agora é a mesma/);
+  assert.match(boletim('compact'), /A conversa acabou de ser resumida: releia/);
+  // Objetivo de menos de 1 dia ainda ativo.
+  escrever(path.join(raiz, '.revisao', 'objetivo.md'), '# Objetivo\nPronto quando:\n- `flutter test`\nStatus: aguardando usuário: aprovar o push\n');
+  assert.match(boletim('startup'), /Objetivo de menos de 1 dia em \.revisao\/objetivo\.md \(Status: aguardando usuário: aprovar o push\)/);
+  escrever(path.join(raiz, '.revisao', 'objetivo.md'), '# Objetivo\nStatus: concluído\n');
+  assert.ok(!/Objetivo/.test(boletim('startup')));
+  // Teste de trava em andamento.
+  const ate = new Date(Date.now() + 3 * 86400000).toISOString();
+  escrever(path.join(claude, 'equipe-diario', 'teste-trava.json'), JSON.stringify({ trava: 'orcamento', desde: new Date().toISOString(), ate }));
+  b = boletim('startup');
+  assert.match(b, /Teste da retrospectiva: a trava "orcamento" está desligada até/);
+});
+
+test('teste de trava: desliga só a testável, e só até a data', () => {
+  const { claude, env } = ambiente();
+  const raiz = projeto();
+  const diario = path.join(claude, 'equipe-diario');
+  const comLimite = { ...env, EQUIPE_MESTRE_LINHAS: '1' };
+  rodar(EVENTOS, { hook_event_name: 'UserPromptSubmit', session_id: 'tt', cwd: raiz, prompt: 'entenda' }, comLimite);
+  const lerCom = (offset, e) => rodar(PRE, { hook_event_name: 'PreToolUse', session_id: 'tt', cwd: raiz, tool_name: 'Read', tool_input: { file_path: path.join(raiz, 'lib', `a${offset}.dart`), offset: 1, limit: 1 } }, e);
+  assert.equal(lerCom(1, comLimite), null);
+  assert.equal(decisao(lerCom(2, comLimite)), 'deny', 'orçamento ligado');
+  // Teste em andamento para o orçamento: a leitura passa.
+  escrever(path.join(diario, 'teste-trava.json'), JSON.stringify({ trava: 'orcamento', desde: new Date().toISOString(), ate: new Date(Date.now() + 86400000).toISOString() }));
+  assert.equal(lerCom(3, comLimite), null);
+  // Vencido: volta.
+  escrever(path.join(diario, 'teste-trava.json'), JSON.stringify({ trava: 'orcamento', desde: '2026-01-01T00:00:00Z', ate: '2026-01-08T00:00:00Z' }));
+  assert.equal(decisao(lerCom(4, comLimite)), 'deny');
+  // Trava que não é testável (prova, revisão, guarda) não desliga pelo teste.
+  escrever(path.join(diario, 'teste-trava.json'), JSON.stringify({ trava: 'revisao', desde: new Date().toISOString(), ate: new Date(Date.now() + 86400000).toISOString() }));
+  assert.equal(decisao(lerCom(5, comLimite)), 'deny');
+});
+
+test('.revisao: arquivo gravado ali ganha o .gitignore da pasta e some do git status', () => {
+  const { env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const arq = path.join(raiz, '.revisao', 'progresso.md');
+  escrever(arq, '# Progresso\nRetomar por: o frete\n');
+  assert.match(git(raiz, 'status', '--porcelain'), /\.revisao\//);
+  rodar(POS, { session_id: 'gi', cwd: raiz, tool_name: 'Write', tool_input: { file_path: arq } }, env);
+  assert.equal(fs.readFileSync(path.join(raiz, '.revisao', '.gitignore'), 'utf8'), '*\n');
+  assert.ok(!/\.revisao/.test(git(raiz, 'status', '--porcelain')));
+  // Um .gitignore que já existe não é tocado; arquivo fora de .revisao/ não cria nada.
+  escrever(path.join(raiz, '.revisao', '.gitignore'), '*\n!manter.md\n');
+  rodar(POS, { session_id: 'gi', cwd: raiz, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+  assert.equal(fs.readFileSync(path.join(raiz, '.revisao', '.gitignore'), 'utf8'), '*\n!manter.md\n');
+  escrever(path.join(raiz, 'docs', 'nota.md'), 'x\n');
+  rodar(POS, { session_id: 'gi', cwd: raiz, tool_name: 'Write', tool_input: { file_path: path.join(raiz, 'docs', 'nota.md') } }, env);
+  assert.ok(!fs.existsSync(path.join(raiz, 'docs', '.gitignore')));
+});
+
+// ---------- achados da revisão: objetivo, fim da resposta, sobras e teste de trava ----------
+
+// Sessão do mestre com um objetivo: pedido, gravar o arquivo, editar, rodar uma linha da lista
+// (pelo verificador) e o fim da resposta.
+function sessaoComObjetivo(raiz, env, id) {
+  const alvo = path.join(raiz, '.revisao', 'objetivo.md');
+  return {
+    alvo,
+    pedido: (prompt = 'corrija; vou sair, deixe rodando') => rodar(EVENTOS, { hook_event_name: 'UserPromptSubmit', session_id: id, cwd: raiz, prompt }, env),
+    gravar: (texto) => { escrever(alvo, texto); return rodar(POS, { session_id: id, cwd: raiz, tool_name: 'Write', tool_input: { file_path: alvo } }, env); },
+    editar: (linhas = 1, arq = path.join(raiz, 'lib', 'a1.dart')) => {
+      fs.appendFileSync(arq, Array.from({ length: linhas }, (_, i) => `void g${Math.random().toString(36).slice(2)}${i}() {}\n`).join(''));
+      return rodar(POS, { session_id: id, cwd: raiz, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+    },
+    rodou: (comando, ok = true, agente = 'v1') => rodar(POS, { hook_event_name: ok ? 'PostToolUse' : 'PostToolUseFailure', session_id: id, cwd: raiz, tool_name: 'Bash', tool_input: { command: comando }, agent_type: 'verificador', agent_id: agente }, env),
+    fim: (extra = {}) => rodar(EVENTOS, { hook_event_name: 'Stop', session_id: id, cwd: raiz, last_assistant_message: 'Pronto, terminei a mudança.', ...extra }, env),
+  };
+}
+const barrou = (s) => Boolean(s && s.decision === 'block');
+
+test('fim da resposta: depois de uma cobrança do objetivo, a revisão e a prova ainda cobram a parte delas', () => {
+  // A revisão: o objetivo barra cedo; depois, 120 linhas mudam e o teste passa. O fim seguinte
+  // (stop_hook_active) não é "insistência" da revisão, que nunca barrou: ela cobra.
+  const { claude, env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const s = sessaoComObjetivo(raiz, env, 'fa');
+  s.pedido();
+  s.gravar('# Objetivo\nPronto quando:\n- `flutter test`\nStatus: ativo\n');
+  assert.ok(barrou(s.fim({ last_assistant_message: 'Posso seguir com a implementação?' })));
+  s.editar(120);
+  s.rodou('flutter test', true);
+  let f = s.fim({ stop_hook_active: true });
+  assert.ok(barrou(f), 'a revisão cobra');
+  assert.match(f.reason, /chame o revisor/);
+  assert.ok(!registro(claude).some((l) => l[1] === 'revisao' && l[2] === 'concluiu-sem-revisao'));
+  // Insistir depois da cobrança dela passa, como sempre.
+  assert.equal(barrou(s.fim({ stop_hook_active: true })), false);
+
+  // A prova: "Pronto quando" só com o analyze. O objetivo fica verde, e a prova ainda pede um
+  // teste de verdade (antes, a cobrança dela sumia junto com a do objetivo).
+  const { env: e2 } = ambiente({ EQUIPE_DESLIGAR: 'revisao' });
+  const r2 = projeto({ mapa: false });
+  const s2 = sessaoComObjetivo(r2, e2, 'fb');
+  s2.pedido();
+  s2.gravar('# Objetivo\nPronto quando:\n- `flutter analyze`\nStatus: ativo\n');
+  s2.editar(3);
+  f = s2.fim();
+  assert.match(f.reason, /falta verde com o código de agora em: flutter analyze\./);
+  assert.ok(!/nenhuma linha da lista rodou/.test(f.reason));
+  s2.rodou('flutter analyze', true);
+  f = s2.fim({ stop_hook_active: true });
+  assert.ok(barrou(f), 'a prova cobra o teste');
+  assert.match(f.reason, /o código mudou e não há verificação verde/);
+
+  // "Pronto quando" só com o teste, e o analyze falhou: depois do teste verde, a falha do
+  // analyze aparece.
+  const { env: e3 } = ambiente({ EQUIPE_DESLIGAR: 'revisao' });
+  const r3 = projeto({ mapa: false });
+  const s3 = sessaoComObjetivo(r3, e3, 'fc');
+  s3.pedido();
+  s3.gravar('# Objetivo\nPronto quando:\n- `flutter test`\nStatus: ativo\n');
+  s3.editar(3);
+  s3.rodou('flutter analyze', false);
+  assert.match(s3.fim().reason, /falta verde com o código de agora em: flutter test\./);
+  s3.rodou('flutter test', true);
+  f = s3.fim({ stop_hook_active: true });
+  assert.match(f.reason, /falhou com o código de agora \(flutter analyze\)/);
+});
+
+test('objetivo: teto por pedido, agente em segundo plano e relatório que o teste grava', () => {
+  // O código muda a cada volta e o teste segue vermelho: no máximo 8 cobranças por pedido (a
+  // prova, desligada aqui, cobraria a parte dela uma vez depois disso).
+  const { claude, env } = ambiente({ EQUIPE_DESLIGAR: 'revisao,prova' });
+  const raiz = projeto({ mapa: false });
+  const s = sessaoComObjetivo(raiz, env, 'ta');
+  s.pedido();
+  s.gravar('# Objetivo\nPronto quando:\n- `flutter test`\nStatus: ativo\n');
+  let n = 0;
+  for (let i = 0; i < 12; i++) {
+    s.editar(1);
+    s.rodou('flutter test', false, `v${i}`);
+    if (barrou(s.fim({ stop_hook_active: i > 0 }))) n++;
+  }
+  assert.equal(n, 8);
+  assert.ok(registro(claude).some((l) => l[1] === 'objetivo' && l[2] === 'sem-progresso'));
+  // Mensagem nova do usuário: volta a cobrar.
+  s.pedido('tente de novo');
+  assert.ok(barrou(s.fim()));
+
+  // Verificador em segundo plano: o mestre parou para esperar; não barra nem gasta cobrança.
+  const { claude: c2, env: e2 } = ambiente({ EQUIPE_DESLIGAR: 'revisao' });
+  const r2 = projeto({ mapa: false });
+  const s2 = sessaoComObjetivo(r2, e2, 'tb');
+  s2.pedido();
+  s2.gravar('# Objetivo\nPronto quando:\n- `flutter test`\nStatus: ativo\n');
+  s2.editar(2);
+  const bg = { background_tasks: [{ id: 'b1', agent_type: 'verificador', status: 'running' }] };
+  for (let i = 0; i < 4; i++) assert.equal(barrou(s2.fim({ ...bg, stop_hook_active: i > 0 })), false);
+  assert.ok(registro(c2).some((l) => l[1] === 'objetivo' && l[2] === 'esperando-agente'));
+  assert.ok(registro(c2).some((l) => l[1] === 'prova' && l[2] === 'verificador-rodando'), 'a prova também espera');
+  // O verificador termina com falha: a cobrança vem, com o código de antes.
+  s2.rodou('flutter test', false);
+  assert.ok(barrou(s2.fim({ stop_hook_active: true })));
+
+  // O teste grava um relatório (junit.xml, fora do .gitignore): o código não "muda" a cada
+  // rodada, e as duas linhas ficam verdes juntas (antes, a trava alternava entre elas).
+  const { env: e3 } = ambiente({ EQUIPE_DESLIGAR: 'revisao' });
+  const r3 = projeto({ mapa: false });
+  escrever(path.join(r3, '.claude', 'verificador-comandos.txt'), 'npm test\nnpm run e2e\n');
+  git(r3, 'add', '-A');
+  git(r3, 'commit', '-q', '-m', 'lista');
+  const s3 = sessaoComObjetivo(r3, e3, 'tc');
+  s3.pedido();
+  s3.gravar('# Objetivo\nPronto quando:\n- `npm test`\n- `npm run e2e`\nStatus: ativo\n');
+  s3.editar(1);
+  const comRelatorio = (cmd, i) => { escrever(path.join(r3, 'junit.xml'), `<testsuites id="${i}-${Math.random()}"/>\n`); s3.rodou(cmd, true, `v${i}`); };
+  comRelatorio('npm test', 1);
+  comRelatorio('npm run e2e', 2);
+  assert.equal(s3.fim(), null);
+});
+
+test('objetivo: sem linha da lista, código novo ou arquivo regravado voltam a cobrar; Status em item e título', () => {
+  const { env } = ambiente({ EQUIPE_DESLIGAR: 'revisao,prova' });
+  const raiz = projeto({ mapa: false });
+  const s = sessaoComObjetivo(raiz, env, 'sa');
+  s.pedido();
+  s.gravar('# Objetivo\nPronto quando:\n- a tela abre\nStatus: ativo\n');
+  assert.deepEqual([barrou(s.fim()), barrou(s.fim({ stop_hook_active: true })), barrou(s.fim({ stop_hook_active: true })), barrou(s.fim({ stop_hook_active: true }))], [true, true, true, false]);
+  s.editar(2);
+  assert.ok(barrou(s.fim({ stop_hook_active: true })), 'código novo cobra de novo');
+  s.gravar('# Objetivo\nPronto quando:\n- a tela abre\n- o PDF sai\nStatus: ativo\n');
+  assert.ok(barrou(s.fim({ stop_hook_active: true })), 'objetivo regravado cobra de novo');
+  // Status em item de lista e em título (com o valor na linha seguinte): vale a espera.
+  s.gravar('# Objetivo\nPronto quando:\n- a tela abre\n- Status: aguardando usuário: aprovar o push\n');
+  assert.equal(s.fim(), null);
+  s.gravar('# Objetivo\n## Pronto quando\n- a tela abre\n## Status\naguardando usuário: escolher a cor\n');
+  assert.equal(s.fim(), null);
+  // Mensagem nova do usuário com o objetivo em espera: o lembrete de voltar ao ativo.
+  const c = contexto(s.pedido('pode usar azul'));
+  assert.match(c, /objetivo em \.revisao\/objetivo\.md está esperando o usuário \(aguardando usuário: escolher a cor\)\. Se esta mensagem destrava o trabalho, volte o Status para "ativo"/);
+  s.gravar('# Objetivo\n## Pronto quando\n- a tela abre\n## Status\nativo\n');
+  assert.ok(!/esperando o usuário/.test(contexto(s.pedido('e o resto?'))));
+  assert.ok(barrou(s.fim()));
+});
+
+test('boletim: objetivo de outra sessão depois de resumir, "pronto" e Status em item de lista', () => {
+  const { env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const BOLETIM = path.join(HOOKS, 'equipe-boletim.mjs');
+  const boletim = (source, sid = 'bx') => contexto(rodar(BOLETIM, { hook_event_name: 'SessionStart', session_id: sid, cwd: raiz, source }, env));
+  const alvo = path.join(raiz, '.revisao', 'objetivo.md');
+  escrever(alvo, '# Objetivo\nPronto quando:\n- `flutter test`\nStatus: pronto\n');
+  assert.ok(!/Objetivo/.test(boletim('startup')), '"pronto" é concluído');
+  escrever(alvo, '# Objetivo\nPronto quando:\n- `flutter test`\n- Status: aguardando usuário: aprovar o push\n');
+  assert.match(boletim('startup'), /\(Status: aguardando usuário: aprovar o push\)/);
+  // Resumo numa sessão que não gravou o objetivo: não diz que a trava segue cobrando.
+  escrever(alvo, '# Objetivo\nPronto quando:\n- `flutter test`\nStatus: ativo\n');
+  let b = boletim('compact');
+  assert.ok(!/A trava segue cobrando/.test(b));
+  assert.match(b, /a trava só vale na sessão que o gravou/);
+  // Na sessão que gravou: segue.
+  rodar(POS, { session_id: 'bx', cwd: raiz, tool_name: 'Write', tool_input: { file_path: alvo } }, env);
+  b = boletim('compact');
+  assert.match(b, /Objetivo desta sessão em \.revisao\/objetivo\.md \(Status: ativo\): releia antes de continuar\. A trava segue cobrando/);
+});
+
+test('teste de trava: data longe não desliga, as que seguram a qualidade nunca, e o comando pede o OK', () => {
+  const { claude, env } = ambiente();
+  const diario = path.join(claude, 'equipe-diario');
+  const COMUM = new URL('../hooks/equipe-comum.mjs', import.meta.url).href;
+  const desligadas = () => execFileSync(process.execPath, ['--input-type=module', '-e', `import { desligada } from ${JSON.stringify(COMUM)}; console.log(JSON.stringify(['orcamento', 'revisao', 'prova', 'convergencia', 'sobras'].map(desligada)));`], { encoding: 'utf8', env: { ...process.env, ...env } }).trim();
+  const agora = Date.now();
+  escrever(path.join(diario, 'teste-trava.json'), JSON.stringify({ trava: 'orcamento', desde: new Date(agora).toISOString(), ate: new Date(agora + 3 * 86400000).toISOString() }));
+  assert.equal(desligadas(), '[true,false,false,false,false]');
+  // "ate" daqui a 10 anos, ou um começo velho com o fim longe: não desliga.
+  escrever(path.join(diario, 'teste-trava.json'), JSON.stringify({ trava: 'orcamento', desde: new Date(agora).toISOString(), ate: new Date(agora + 3650 * 86400000).toISOString() }));
+  assert.equal(desligadas(), '[false,false,false,false,false]');
+  // Revisão e prova no arquivo: continuam ligadas.
+  for (const trava of ['revisao', 'prova', 'convergencia', 'sobras']) {
+    escrever(path.join(diario, 'teste-trava.json'), JSON.stringify({ trava, desde: new Date(agora).toISOString(), ate: new Date(agora + 86400000).toISOString() }));
+    assert.equal(desligadas(), '[false,false,false,false,false]', trava);
+  }
+  // O comando que liga o teste (e quem mexe direto no arquivo) pede o OK do usuário; encerrar não.
+  const raiz = projeto({ mapa: false });
+  const pre = (command, tool = 'Bash') => rodar(PRE, { hook_event_name: 'PreToolUse', session_id: 'tq', cwd: raiz, tool_name: tool, tool_input: { command } }, env);
+  let s = pre('node "/home/x/.claude/hooks/equipe-medir.mjs" --testar-trava orcamento');
+  assert.equal(decisao(s), 'ask');
+  assert.match(motivo(s), /desligar a trava "orcamento" por 7 dias, em todos os projetos, pede o seu OK/);
+  assert.equal(decisao(pre('node "$HOME\\.claude\\hooks\\equipe-medir.mjs" --testar-trava mapa', 'PowerShell')), 'ask');
+  assert.equal(decisao(pre('echo {} > ~/.claude/equipe-diario/teste-trava.json')), 'ask');
+  assert.equal(pre('node ~/.claude/hooks/equipe-medir.mjs --fim-teste'), null);
+  assert.equal(pre('node ~/.claude/hooks/equipe-medir.mjs --retro'), null);
+  assert.ok(registro(claude).some((l) => l[1] === 'teste-trava' && l[2] === 'pediu'));
+  // Ler, buscar e citar num commit não pedem OK; gravar pelas ferramentas de arquivo, sim.
+  assert.equal(pre('cat ~/.claude/equipe-diario/teste-trava.json'), null);
+  assert.equal(pre('grep -rn "teste-trava.json" hooks/ README.md'), null);
+  assert.equal(pre('git commit -m "medidor: node equipe-medir.mjs --testar-trava e teste-trava.json" -- hooks/equipe-medir.mjs'), null);
+  assert.equal(decisao(pre('cd ~ && rm .claude/equipe-diario/teste-trava.json')), 'ask');
+  assert.equal(decisao(pre("cat > ~/.claude/equipe-diario/teste-trava.json <<'EOF'\n{}\nEOF")), 'ask');
+  assert.equal(decisao(pre('cat modelo.json > ~/.claude/equipe-diario/teste-trava.json')), 'ask');
+  assert.equal(decisao(pre('type modelo.json > %USERPROFILE%\\.claude\\equipe-diario\\teste-trava.json', 'PowerShell')), 'ask');
+  assert.equal(pre('grep -n trava ~/.claude/equipe-diario/teste-trava.json > /tmp/saida.txt'), null);
+  const gravar = (tool_name) => rodar(PRE, { hook_event_name: 'PreToolUse', session_id: 'tq', cwd: raiz, tool_name, tool_input: { file_path: path.join(claude, 'equipe-diario', 'teste-trava.json'), content: '{}' } }, env);
+  assert.equal(decisao(gravar('Write')), 'ask');
+  assert.equal(decisao(gravar('Edit')), 'ask');
+});
+
+test('sobras: comentário que explica o código e saída de programa de linha de comando não avisam', async () => {
+  const { sobrasDasLinhas } = await import(new URL('../hooks/equipe-sobras.mjs', import.meta.url).href);
+  const avisa = (rel, texto) => sobrasDasLinhas(rel, [{ n: 1, texto }]).length > 0;
+  for (const [rel, texto] of [
+    ['lib/lista.dart', '  // Remover itens duplicados da lista'],
+    ['src/cache.ts', '// apagar o cache antigo antes de gravar'],
+    ['src/nome.py', '    # tirar o prefixo do nome'],
+    ['db/consulta.sql', '-- temp table com os totais do mês'],
+    ['src/app.py', '# Debug mode: liga o log detalhado'],
+    ['src/api.ts', '// TODO: remover quando a API v2 sair'],
+    ['src/ok.ts', 'const debugMode = false; // debug'],
+    ['src/c.c', '#define DEBUG 1'],
+    ['bin/cli.mjs', "console.log('Uso: cli <arquivo>');"],
+    ['scripts/build.mjs', 'console.log(`Gerado ${n} arquivos`);'],
+    ['bin/main.dart', "  print('Uso: app <arquivo>');"],
+    ['tool/gerar.dart', "  print('ok');"],
+    ['cypress/e2e/login.cy.ts', 'console.log(1)'],
+    ['packages/app/bin/main.dart', "  print('uso');"],
+    ['packages/app/scripts/build.mjs', 'console.log(1);'],
+    ['src/a.ts', 'const s = "use -- para tirar depois";'],
+    ['src/a.ts', "const s = 'veja // DEBUG';"],
+  ]) assert.equal(avisa(rel, texto), false, `${rel}: ${texto}`);
+  for (const [rel, texto] of [
+    ['src/a.ts', 'console.log("x");'],
+    ['src/a.ts', 'x(); // DEBUG'],
+    ['src/a.py', '# TEMP: tirar'],
+    ['src/a.ts', '/* DEBUG */ f();'],
+    ['src/a.ts', '// remover depois'],
+    ['src/a.ts', '// TODO remover antes do commit'],
+    ['src/a.ts', '// remove before commit'],
+    ['lib/a.dart', '  print(total);'],
+    ['src/a.ts', 'debugger;'],
+    ['lib/src/tools/conta.dart', '  print(total);'],
+    ['src/scripts/app.ts', 'console.log(x);'],
+    ['src/a.ts', 'f("x"); // DEBUG'],
+  ]) assert.equal(avisa(rel, texto), true, `${rel}: ${texto}`);
+  // O que usa o git roda num processo novo, como o hook (o tempo do git conta da partida).
+  const SOBRAS = new URL('../hooks/equipe-sobras.mjs', import.meta.url).href;
+  const noFilho = (expr, extra = {}) => JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', `import * as m from ${JSON.stringify(SOBRAS)}; console.log(JSON.stringify(${expr}));`], { encoding: 'utf8', env: { ...process.env, ...extra } }));
+  // Arquivo com #! fora das pastas de CLI: console.log é a saída dele.
+  const raiz = projeto({ mapa: false });
+  const r = JSON.stringify(raiz);
+  escrever(path.join(raiz, 'src', 'gerar.mjs'), '#!/usr/bin/env node\nconsole.log("ok");\n');
+  escrever(path.join(raiz, 'src', 'conta.js'), 'let i = 0;\n');
+  git(raiz, 'add', '-A');
+  git(raiz, 'commit', '-q', '-m', 'js');
+  fs.appendFileSync(path.join(raiz, 'src', 'gerar.mjs'), 'console.log("mais");\n');
+  assert.deepEqual(noFilho(`m.sobrasDosArquivos(${r}, ['src/gerar.mjs'])`), []);
+  // Linha nova que começa com "++" conta, e a numeração não se desloca.
+  fs.appendFileSync(path.join(raiz, 'src', 'conta.js'), '++i;\nconsole.log(i);\n');
+  assert.deepEqual(noFilho(`m.linhasNovas(${r}, 'src/conta.js')`), [{ n: 2, texto: '++i;' }, { n: 3, texto: 'console.log(i);' }]);
+  assert.deepEqual(noFilho(`m.sobrasDosArquivos(${r}, ['src/conta.js']).map((x) => x.n)`), [3]);
+  // Git com erro (sem tempo): nenhuma linha vira sobra, em vez de o arquivo inteiro.
+  assert.deepEqual(noFilho(`m.linhasNovas(${r}, 'src/conta.js')`, { EQUIPE_ORCAMENTO_MS: '1' }), []);
+});
+
+test('sobras: arquivo com cara de temporário criado por comando aparece na lista do implementador', () => {
+  const { env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const transcricao = path.join(tmp('tr'), 'agente.jsonl');
+  escrever(transcricao, `${JSON.stringify({ type: 'user', message: { role: 'user', content: 'Objetivo: ajustar\nEscopo: lib/\nCritério de aceite: teste\nComo verificar: flutter test' } })}\n`);
+  const base = { session_id: 'tl', cwd: raiz, agent_type: 'implementador', agent_id: 'i1', agent_transcript_path: transcricao };
+  rodar(EVENTOS, { ...base, hook_event_name: 'SubagentStart' }, env);
+  const arq = path.join(raiz, 'lib', 'a2.dart');
+  fs.appendFileSync(arq, 'void h() {}\n');
+  rodar(POS, { ...base, tool_name: 'Edit', tool_input: { file_path: arq } }, env);
+  fs.writeFileSync(path.join(raiz, 'nul'), '');
+  fs.writeFileSync(path.join(raiz, 'saida.log'), 'x');
+  rodar(POS, { ...base, tool_name: 'Bash', tool_input: { command: 'flutter test 2>nul > saida.log' } }, env);
+  rodar(EVENTOS, { ...base, hook_event_name: 'SubagentStop' }, env);
+  const lista = fs.readFileSync(path.join(raiz, '.revisao', 'escopo.md'), 'utf8');
+  assert.match(lista, /Sobras de depuração \(2\): nul \(arquivo com cara de temporário\); saida\.log \(arquivo com cara de temporário\)/);
+});
+
+test('fim da resposta: sem gravar o registro do fim, só o primeiro da sequência é barrado', () => {
+  // O registro do fim anterior não grava (aqui, uma pasta no lugar do arquivo): a revisão barra
+  // uma vez e, insistindo, passa, como antes, em vez de barrar todo fim.
+  const { claude, env } = ambiente();
+  const raiz = projeto({ mapa: false });
+  const s = sessaoComObjetivo(raiz, env, 'gx');
+  s.pedido('corrija o total');
+  s.editar(120);
+  s.rodou('flutter test', true);
+  fs.mkdirSync(path.join(claude, 'equipe-diario', 'estado', 'gx-sessao.fim-barrado'), { recursive: true });
+  const r = [];
+  for (let i = 0; i < 4; i++) r.push(barrou(s.fim({ stop_hook_active: i > 0 })));
+  assert.deepEqual(r, [true, false, false, false]);
+});
+
+test('prova: código novo criado por comando ou gravado por um agente de plugin conta', () => {
+  const { env } = ambiente({ EQUIPE_DESLIGAR: 'revisao' });
+  const raiz = projeto({ mapa: false });
+  const s = sessaoComObjetivo(raiz, env, 'px');
+  s.pedido('corrija o total');
+  s.editar(2);
+  s.rodou('flutter test', true);
+  s.rodou('flutter analyze', true);
+  assert.equal(s.fim(), null);
+  // Um comando (gerador, cp) cria código novo depois do verde: a prova cobra.
+  escrever(path.join(raiz, 'lib', 'novo.dart'), 'void quebrado( {}\n');
+  rodar(POS, { session_id: 'px', cwd: raiz, tool_name: 'Bash', tool_input: { command: 'dart run gerador' } }, env);
+  s.pedido('e o resto?');
+  assert.match(s.fim().reason, /o código mudou e não há verificação verde/);
+  // Um agente de plugin grava uma tela nova (.html) pelo Write depois do verde: conta como
+  // edição da sessão (o .html que só um comando cria, como a cobertura, não conta).
+  const { env: e2 } = ambiente({ EQUIPE_DESLIGAR: 'revisao' });
+  const r2 = projeto({ mapa: false });
+  const s2 = sessaoComObjetivo(r2, e2, 'py');
+  s2.pedido('corrija');
+  s2.editar(2);
+  s2.rodou('flutter test', true);
+  s2.rodou('flutter analyze', true);
+  escrever(path.join(r2, 'coverage', 'index.html'), '<html>cobertura</html>\n');
+  rodar(POS, { session_id: 'py', cwd: r2, tool_name: 'Bash', tool_input: { command: 'flutter test --coverage' } }, e2);
+  assert.equal(s2.fim(), null, 'a cobertura gravada pelo comando não conta');
+  const novo = path.join(r2, 'web', 'pagina.html');
+  escrever(novo, '<html>tela</html>\n');
+  rodar(POS, { session_id: 'py', cwd: r2, tool_name: 'Write', tool_input: { file_path: novo }, agent_type: 'meu-plugin:dev', agent_id: 'p1' }, e2);
+  s2.pedido('e agora?');
+  assert.match(s2.fim().reason, /o código mudou e não há verificação verde/);
+});

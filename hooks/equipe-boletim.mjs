@@ -3,13 +3,14 @@
 //
 // Diz, em poucas linhas, o que o mestre levaria várias chamadas para descobrir: o tamanho
 // do projeto e se o mapa do código é obrigatório, se o projeto está configurado para o
-// verificador, as notas de área, o plano em andamento, se há versão nova da equipe e se
-// a retrospectiva está pendente, se esta cópia está no mapa, se a revisão de escopo achou
-// algo fora do pedido e se a instalação da equipe tem problema. Só lê; nunca bloqueia;
+// verificador, as notas de área, o plano em andamento, o registro de progresso e o objetivo
+// (por onde retomar), se há versão nova da equipe e se a retrospectiva está pendente (ou um
+// teste dela em andamento), se esta cópia está no mapa, se a revisão de escopo achou algo
+// fora do pedido e se a instalação da equipe tem problema. Só lê; nunca bloqueia;
 // qualquer erro vira silêncio.
 import fs from 'node:fs';
 import path from 'node:path';
-import { anotar, fatosDoProjeto, lerEntrada, lerJson, lerTexto, pastaDiario, saidaContexto, sessoesDesde, versaoDaEquipe } from './equipe-comum.mjs';
+import { anotar, caminhoReal, fatosDoProjeto, lerEntrada, lerEstado, lerJson, lerObjetivo, lerTexto, normalizar, pastaDiario, saidaContexto, sessoesDesde, testeDeTrava, versaoDaEquipe } from './equipe-comum.mjs';
 import { acharMapa, projetoIndexado, projetosDoMapa, resumoRapido, rodarMapa } from './equipe-diagnostico.mjs';
 import { CONEXAO_LEITURA, leituraDeclarada } from './equipe-sql.mjs';
 
@@ -22,6 +23,7 @@ export function boletim(entrada) {
   const origem = entrada.source || 'startup';
   const l = [];
   if (fatos.codigo > 0) linhasDoProjeto(fatos, origem, l);
+  continuidade(fatos.raiz, origem, l, entrada);
   escopo(fatos.raiz, l);
   if (origem === 'startup') avisos(l);
   if (!l.length) return '';
@@ -85,6 +87,54 @@ export function mapaIndexado(raiz) {
   return projetoIndexado(projetos, raiz);
 }
 
+// Registro de progresso (de até 30 dias) e objetivo em andamento: por onde retomar, sem
+// descobrir de novo. Depois de um resumo da conversa, os dois são relidos.
+const DIAS_PROGRESSO = 30;
+export function campoDoTexto(texto, nome) {
+  for (const linha of String(texto || '').split(/\r?\n/)) {
+    const m = normalizar(linha.replace(/\*+/g, '')).match(/^\s*[-*+]?\s*([a-z ]+?)\s*:\s*(.+)$/);
+    if (m && m[1] === nome) return linha.replace(/\*+/g, '').replace(/^[^:]*:\s*/, '').trim().slice(0, 200);
+  }
+  return '';
+}
+function continuidade(raiz, origem, l, entrada = {}) {
+  const prog = path.join(raiz, '.revisao', 'progresso.md');
+  let idade = null;
+  try { idade = Date.now() - fs.statSync(prog).mtimeMs; } catch { idade = null; }
+  if (idade !== null && idade <= DIAS_PROGRESSO * 86400000) {
+    const texto = lerTexto(prog) || '';
+    const retomar = campoDoTexto(texto, 'retomar por') || campoDoTexto(texto, 'retomar');
+    const falta = campoDoTexto(texto, 'falta');
+    const dias = Math.floor(idade / 86400000);
+    const quando = dias === 0 ? 'hoje' : `há ${dias} dia(s)`;
+    const resumo = retomar ? `: retomar por ${retomar}` : falta ? `: falta ${falta}` : '';
+    const acao = origem === 'compact'
+      ? 'A conversa acabou de ser resumida: releia antes de continuar.'
+      : 'Se a tarefa de agora é a mesma, comece por ele; se não, ignore.';
+    l.push(`- Progresso em .revisao/progresso.md (atualizado ${quando})${resumo}. ${acao}`);
+  }
+  const obj = path.join(raiz, '.revisao', 'objetivo.md');
+  let idadeObj = null;
+  try { idadeObj = Date.now() - fs.statSync(obj).mtimeMs; } catch { idadeObj = null; }
+  if (idadeObj === null || idadeObj > 86400000) return;
+  const o = lerObjetivo(lerTexto(obj) || '');
+  if (o.status === 'concluido' || o.status === 'encerrado') return;
+  const status = o.status === 'aguardando' ? o.motivo || 'aguardando o usuário' : 'ativo';
+  // A trava só vale na sessão que gravou o arquivo: depois de resumir essa conversa, ela segue.
+  const sid = String(entrada.session_id || '').replace(/[^A-Za-z0-9_-]/g, '');
+  const st = sid ? lerEstado(`${sid}-sessao`, 'objetivo') : null;
+  const mesmo = (a, b) => {
+    const n = (p) => { const r = caminhoReal(p).replace(/\\/g, '/'); return process.platform === 'win32' ? r.toLowerCase() : r; };
+    return n(a) === n(b);
+  };
+  const desta = Boolean(st && st.arquivo && mesmo(st.arquivo, obj));
+  if (origem === 'compact' && desta) {
+    l.push(`- Objetivo desta sessão em .revisao/objetivo.md (Status: ${status}): releia antes de continuar.${o.status === 'ativo' ? ' A trava segue cobrando o "Pronto quando" até ele estar verde ou o Status mudar.' : ''}`);
+    return;
+  }
+  l.push(`- Objetivo de menos de 1 dia em .revisao/objetivo.md (Status: ${status}). Se a tarefa de agora é ele, releia e regrave o arquivo (a trava só vale na sessão que o gravou); se não, ignore.`);
+}
+
 // A revisão de escopo de menos de 1 dia achou mudança fora do pedido: o mestre lê antes
 // do commit.
 function escopo(raiz, l) {
@@ -102,6 +152,8 @@ function escopo(raiz, l) {
 function avisos(l) {
   const problema = resumoRapido();
   if (problema) l.push(`- ${problema}`);
+  const teste = testeDeTrava();
+  if (teste) l.push(`- Teste da retrospectiva: a trava "${teste.trava}" está desligada até ${String(teste.ate).slice(0, 10)}, para medir se ela faz falta. A próxima /retro-equipe compara.`);
   const v = versaoDaEquipe();
   if (v && v.atrasada) {
     l.push(`- Há versão nova da equipe no GitHub (instalada ${v.instalada.slice(0, 7)}, disponível ${v.remota.slice(0, 7)}). No fim da primeira tarefa, avise o usuário uma vez: rodar de novo a linha de instalação.`);

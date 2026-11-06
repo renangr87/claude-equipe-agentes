@@ -14,10 +14,10 @@
 // Trava de retrabalho: erro ou dúvida deixa passar.
 import path from 'node:path';
 import {
-  anotacoes, anotar, chaveDaChamada, desligada, ehCodigo, fatosRapidos, lerEstado, marcaDoTexto, TESTE_DE_VERDADE,
-  tipoDoAgente,
+  anotacoes, anotar, chaveDaChamada, desligada, ehCodigo, fatosRapidos, lerEstado, marcaDoTexto, mesmaPasta,
+  TESTE_DE_VERDADE, tipoDoAgente,
 } from './equipe-comum.mjs';
-import { arquivosDaSessao, chaveDaSessao, CONTA_COMO_CODIGO, hashes, raizGit } from './equipe-entrega.mjs';
+import { agentesEmSegundoPlano, arquivosDaSessao, chaveDaSessao, CONTA_COMO_CODIGO, hashes, raizGit } from './equipe-entrega.mjs';
 
 const espacos = (s) => String(s || '').replace(/\s+/g, ' ').trim();
 const lerJson = (l) => { try { return JSON.parse(l); } catch { return null; } };
@@ -46,9 +46,14 @@ export function linhaDaLista(comando, cwd) {
 }
 
 // Impressão do código da sessão num repositório: o conteúdo dos arquivos de código (com os
-// testes) que ela mudou. '' se não mudou código ali.
+// testes) que ela mudou. '' se não mudou código ali. Arquivo novo que só um comando criou (o
+// relatório do teste em junit.xml, a cobertura em HTML) não conta: cada rodada o reescreve, e
+// o código pareceria mudar a cada teste.
 export function impressao(raiz, arquivos) {
-  const rels = [...(arquivos.get(raiz) || [])].filter((r) => ehCodigo(r) || CONTA_COMO_CODIGO.test(r)).sort();
+  // A chave do Map pode vir noutra forma do mesmo caminho (nome curto no Windows).
+  const chave = arquivos.has(raiz) ? raiz : [...arquivos.keys()].find((k) => mesmaPasta(k, raiz)) || raiz;
+  const fora = (arquivos.soPorComando && arquivos.soPorComando.get(chave)) || null;
+  const rels = [...(arquivos.get(chave) || [])].filter((r) => !(fora && fora.has(r)) && (ehCodigo(r) || CONTA_COMO_CODIGO.test(r))).sort();
   if (!rels.length) return '';
   const h = hashes(raiz, rels);
   // Git com erro ou sem tempo: não dá para saber qual é o código de agora (null: deixa passar).
@@ -127,6 +132,11 @@ export function provaNoFim(entrada, arquivos = null) {
   if (!sessao) return null;
   const pedido = lerEstado(chaveDaChamada(entrada), 'pedido');
   if (pedido && pedido.semVerificar) return null;
+  // Um verificador (ou implementador) ainda roda em segundo plano: a verificação está a
+  // caminho, e o mestre parou para esperar. Nem cobra, nem gasta a cobrança deste código.
+  if (agentesEmSegundoPlano(entrada).some((t) => /^(verificador|implementador)$/.test(String(t.agent_type)))) {
+    return { bloquear: false, registro: 'verificador-rodando' };
+  }
   const porRaiz = arquivos || arquivosDaSessao(sessao);
   // Uma vez por versão do código e uma vez por pedido do usuário: um teste que já estava
   // vermelho, ou uma resposta que não mexeu no código, não cobram a cada resposta.
@@ -142,7 +152,7 @@ export function provaNoFim(entrada, arquivos = null) {
     if (!lista.length) continue;
     const imp = impressao(raiz, porRaiz);
     if (!imp || cobradas.has(`${raiz}|${imp}`) || (doPedido && cobradas.has(`${raiz}|${doPedido}`))) continue;
-    const r = avaliar(execs.filter((x) => x.raiz === raiz && x.imp === imp));
+    const r = avaliar(execs.filter((x) => mesmaPasta(x.raiz, raiz) && x.imp === imp));
     const testes = lista.filter((l) => TESTE_DE_VERDADE.test(l));
     const ok = !r.falharam.length && r.passaram.length && (!testes.length || r.passaram.some((l) => TESTE_DE_VERDADE.test(l)));
     if (!ok) faltas.push({ raiz, imp, r, sugestao: testes[0] || lista[0] });

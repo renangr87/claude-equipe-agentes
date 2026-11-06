@@ -8,22 +8,24 @@
 //   - SubagentStop: zera as contas da chamada (leituras, mapa); no implementador, barra uma
 //     vez a entrega sem verificação, grava a lista do escopo e conta a tentativa; no
 //     verificador, guarda o resultado e a assinatura da falha; no revisor, o veredito;
-//   - Stop do mestre: revisão obrigatória (mudança grande, sensível ou reprovada) e prova
-//     (verificação verde com o código de agora), numa cobrança só.
+//   - Stop do mestre: revisão obrigatória (mudança grande, sensível ou reprovada), prova
+//     (verificação verde com o código de agora) e objetivo (/objetivo: seguir até o "Pronto
+//     quando"), numa cobrança só.
 // Erro vira silêncio: nunca impede a sessão por defeito próprio.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   anotacoes, anotar, apagarEstado, carregarModulo, chaveDaChamada, desligada, ehAgenteDeRevisao, gravarEstado, lerEntrada,
-  limparChamada, normalizar, registrarTrava, tipoDoAgente,
+  lerEstado, limparChamada, normalizar, registrarTrava, tipoDoAgente,
 } from './equipe-comum.mjs';
 
 // Cada módulo à parte: um quebrado não leva os outros junto, e a falha vai para o registro.
 const carregar = (arquivo) => carregarModulo(import.meta.url, arquivo);
-const [entrega, convergencia, leitura, prova, paralelo, push] = await Promise.all([
+const [entrega, convergencia, leitura, prova, paralelo, push, objetivo] = await Promise.all([
   carregar('./equipe-entrega.mjs'), carregar('./equipe-convergencia.mjs'), carregar('./equipe-leitura.mjs'),
   carregar('./equipe-prova.mjs'), carregar('./equipe-paralelo.mjs'), carregar('./equipe-push.mjs'),
+  carregar('./equipe-objetivo.mjs'),
 ]);
 
 const tentar = (f) => { try { return f(); } catch { return null; } };
@@ -46,7 +48,7 @@ export function avisoDeConversaLonga(entrada) {
   const avisado = Math.max(0, ...anotacoes(sessao, 'resumos-avisados').map(Number).filter(Number.isFinite));
   if (n <= avisado) return null;
   anotar(sessao, 'resumos-avisados', n);
-  return `Aviso da equipe: esta conversa já foi resumida ${n} vezes. Cada passo relê um contexto grande, e o custo de cada resposta cresce. No fim desta resposta, sugira ao usuário, em uma linha, abrir uma conversa nova para a próxima tarefa: o plano (.revisao/plano.md), as notas de área e a memória levam o que precisa continuar.`;
+  return `Aviso da equipe: esta conversa já foi resumida ${n} vezes. Cada passo relê um contexto grande, e o custo de cada resposta cresce. Antes de terminar esta resposta, atualize .revisao/progresso.md (o pedido, o que foi feito, como foi verificado, o que falta e por onde retomar). No fim, sugira ao usuário, em uma linha, abrir uma conversa nova para a próxima tarefa: ela começa pelo progresso, pelo plano (.revisao/plano.md), pelas notas de área e pela memória.`;
 }
 
 export function flagsDoPedido(texto) {
@@ -68,12 +70,14 @@ export function tratar(entrada) {
     if (push) tentar(() => push.novoPedidoPush(entrada));
     if (entrega) tentar(() => entrega.inicioDaSessao(entrada));
     if (convergencia) tentar(() => convergencia.novoPedidoConvergencia(entrada));
-    // Listas de escopo de implementadores de segundo plano que o mestre ainda não viu, e o
-    // aviso de conversa longa.
+    // Listas de escopo de implementadores de segundo plano que o mestre ainda não viu, o
+    // aviso de conversa longa e o objetivo que espera o usuário.
     const escopo = entrega ? tentar(() => entrega.escopoParaMestre(entrada)) : null;
     const longa = tentar(() => avisoDeConversaLonga(entrada));
     if (longa) registrarTrava('conversa', 'avisou', 0, entrada);
-    const contexto = [escopo, longa].filter(Boolean).join('\n\n');
+    const espera = objetivo ? tentar(() => objetivo.avisoDeEspera(entrada)) : null;
+    if (espera) registrarTrava('objetivo', 'lembrou', 0, entrada);
+    const contexto = [escopo, longa, espera].filter(Boolean).join('\n\n');
     if (contexto) return { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: contexto } };
     return null;
   }
@@ -129,19 +133,46 @@ export function tratar(entrada) {
     // O 2º degrau mandou parar e explicar: cobrar revisão ou teste agora só atrasaria isso.
     if (convergencia && tentar(() => convergencia.pararAtivo(entrada))) return null;
     const sessao = entrega ? tentar(() => entrega.chaveDaSessao(entrada)) : null;
+    // stop_hook_active diz que a resposta continuou porque um fim foi barrado, mas não diz por
+    // quem (outra trava, ou outro hook). Cada trava só conta como "já cobrou, agora passa" se
+    // foi ela que barrou o fim anterior.
+    // Sem esse registro (não gravou, ou não deu para ler), vale o de antes: toda trava conta
+    // como já tendo cobrado, e o fim passa.
+    const anterior = entrada.stop_hook_active && sessao ? tentar(() => lerEstado(sessao, 'fim-barrado')) : null;
+    const semMemoria = Boolean(entrada.stop_hook_active) && !(anterior && Array.isArray(anterior.travas));
+    const insistiu = (nome) => semMemoria || Boolean(anterior && Array.isArray(anterior.travas) && anterior.travas.includes(nome));
+    const para = (nome) => ({ ...entrada, stop_hook_active: insistiu(nome) });
     const arquivos = sessao ? tentar(() => entrega.arquivosDaSessao(sessao)) : null;
-    const revisao = entrega ? tentar(() => entrega.revisaoNoFim(entrada, arquivos)) : null;
+    const revisao = entrega ? tentar(() => entrega.revisaoNoFim(para('revisao'), arquivos)) : null;
     if (revisao && revisao.registro) registrarTrava('revisao', revisao.registro, Date.now() - inicio, entrada);
-    const verde = prova ? tentar(() => prova.provaNoFim(entrada, arquivos)) : null;
+    const alvo = objetivo ? tentar(() => objetivo.objetivoNoFim(entrada, arquivos)) : null;
+    if (alvo && alvo.registro) registrarTrava('objetivo', alvo.registro, Date.now() - inicio, entrada);
+    // Com o objetivo cobrando as linhas da lista que faltam, a prova espera: ela cobra quando o
+    // objetivo deixar parar (e aí o que ela pede a mais, como um teste de verdade, aparece).
+    const verde = prova && !(alvo && alvo.bloquear && alvo.cobraLinhas) ? tentar(() => prova.provaNoFim(para('prova'), arquivos)) : null;
     if (verde && verde.registro) registrarTrava('prova', verde.registro, Date.now() - inicio, entrada);
-    const motivos = [revisao, verde].filter((r) => r && r.bloquear).map((r) => r.motivo);
+    const motivos = [];
+    const barraram = [];
+    for (const [nome, r] of [['revisao', revisao], ['prova', verde], ['objetivo', alvo]]) {
+      if (r && r.bloquear) { motivos.push(r.motivo); barraram.push(nome); }
+    }
     // Lista de escopo com problema (fora do escopo, entrega sem verificação) que o mestre não viu.
-    const escopo = !entrada.stop_hook_active && entrega ? tentar(() => entrega.escopoParaMestre(entrada, { soComProblema: true })) : null;
+    const escopo = !insistiu('escopo') && entrega ? tentar(() => entrega.escopoParaMestre(entrada, { soComProblema: true })) : null;
     if (escopo) {
       registrarTrava('escopo', 'entregou-no-fim', 0, entrada);
       motivos.push(`Trava da equipe: um implementador terminou com algo a conferir antes de concluir.\n${escopo}`);
+      barraram.push('escopo');
     }
-    if (motivos.length) return { decision: 'block', reason: motivos.join('\n\n') };
+    let lembrou = true;
+    if (sessao) {
+      const marca = `${Date.now()}-${process.pid}`;
+      tentar(() => gravarEstado(sessao, 'fim-barrado', { em: Date.now(), marca, travas: barraram }));
+      const lido = tentar(() => lerEstado(sessao, 'fim-barrado'));
+      lembrou = Boolean(lido && lido.marca === marca);
+    }
+    // Barrar sem lembrar quem barrou faria cada fim seguinte cobrar de novo, sem fim: sem o
+    // registro, como antes, só o primeiro fim da sequência é barrado.
+    if (motivos.length && (lembrou || !entrada.stop_hook_active)) return { decision: 'block', reason: motivos.join('\n\n') };
     return null;
   }
   return null;

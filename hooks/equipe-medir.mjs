@@ -12,13 +12,15 @@
 // Uso:
 //   node equipe-medir.mjs [--dias 7] [--projeto texto] [--json]
 //   node equipe-medir.mjs --retro                 mede, compara com a última retro e guarda a medição
+//   node equipe-medir.mjs --testar-trava <nome>   desliga uma trava testável por 7 dias (teste da retro)
+//   node equipe-medir.mjs --fim-teste             encerra o teste antes da hora
 //   node equipe-medir.mjs --guardar-propostas F   guarda as propostas da retro (arquivo .md)
 //   node equipe-medir.mjs --ultima                mostra a última retro guardada
 // Opções para teste: --raiz <pasta projects> (EQUIPE_PASTA_CLAUDE muda a pasta do Claude).
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pastaClaude, pastaDiario, lerJson, lerTexto, ehCodigo, EXTENSOES_CODIGO, normalizar, statusDoRelatorio, TESTE_DE_VERDADE } from './equipe-comum.mjs';
+import { pastaClaude, pastaDiario, lerJson, lerTexto, desligada, DIAS_TESTE, ehCodigo, EXTENSOES_CODIGO, normalizar, registrarTrava, statusDoRelatorio, TESTE_DE_VERDADE, testeValido, TRAVAS_TESTAVEIS } from './equipe-comum.mjs';
 
 // Briefing de correção de bug (só o sim ou não sai daqui, nunca o texto): "bug" ou
 // "regressão", ou "corrigir"/"consertar" perto de erro, falha ou quebra. "Corrigir o texto"
@@ -31,7 +33,7 @@ const ARQUIVO_DE_TESTE = /(^|[\\/])(test|tests|spec|specs|__tests__|testes)[\\/]
 
 // ---------- opções ----------
 function opcoes(argv) {
-  const o = { dias: 7, projeto: '', json: false, retro: false, propostas: '', ultima: false, raiz: '' };
+  const o = { dias: 7, projeto: '', json: false, retro: false, propostas: '', ultima: false, raiz: '', testarTrava: '', fimTeste: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--dias') o.dias = Math.max(1, Number(argv[++i]) || 7);
@@ -41,6 +43,13 @@ function opcoes(argv) {
     else if (a === '--guardar-propostas') o.propostas = String(argv[++i] || '');
     else if (a === '--ultima') o.ultima = true;
     else if (a === '--raiz') o.raiz = String(argv[++i] || '');
+    else if (a === '--testar-trava') {
+      // Sem o nome (ou com outra opção no lugar dele): erro, não a medição normal.
+      const v = argv[i + 1];
+      if (!v || v.startsWith('--')) o.testarTrava = '-';
+      else { o.testarTrava = String(v).toLowerCase(); i++; }
+    }
+    else if (a === '--fim-teste') o.fimTeste = true;
   }
   return o;
 }
@@ -402,6 +411,8 @@ const INSTANTANEAS = /^(Edit|Write|MultiEdit|NotebookEdit)$|__(execute_sql|apply
 const RECUSA = /doesn't want to proceed|tool use was rejected/i;
 const BARRADO = /denied by the Claude Code auto mode classifier/i;
 const MAPA_CONSULTA = /^mcp__codebase-memory__(search_graph|search_code|trace_path|query_graph|get_code_snippet|get_architecture|detect_changes)$/;
+// O mestre gravou o progresso pelo terminal ("> .revisao/progresso.md", tee, Set-Content).
+const GRAVA_PROGRESSO = /(>|\btee\b|Set-Content|Add-Content|Out-File)[^|;&]*\.revisao[\\/]progresso\.md/i;
 
 // Agentes em segundo plano não devolvem o relatório no resultado da chamada: ele chega como
 // mensagem na fila da sessão principal (anexo "queued_command" e a linha "enqueue" da fila,
@@ -433,6 +444,8 @@ function novaAnalise() {
     seq: 0, primeiroMapa: null, primeiraLeitura: null, linhaDoTempo: [],
     // Correção de bug: o teste ficou vermelho antes da primeira edição de código (fora de teste)?
     pedeCorrecao: null, testesPorUso: new Map(), primeiroVermelho: null, primeiraEdicao: null,
+    // O mestre atualizou .revisao/progresso.md? Editou código?
+    progresso: false, editouCodigo: false,
   };
 }
 
@@ -526,6 +539,14 @@ function analisar(arquivo, desdeMs, r = novaAnalise()) {
             if (c.name === 'Read' && !d.isSidechain) r.linhaDoTempo.push({ ts, seq: r.seq, k: 'leitura' });
           }
           if (/^(Bash|PowerShell)$/.test(c.name) && c.input && TESTE_DE_VERDADE.test(String(c.input.command || ''))) r.testesPorUso.set(c.id, r.seq);
+          // Progresso (só o mestre) e edição de código (o mestre, ou o agente no arquivo dele).
+          if (/^(Edit|Write|MultiEdit)$/.test(c.name) && c.input) {
+            const alvo = String(c.input.file_path || '');
+            const progresso = /(^|[\\/])\.revisao[\\/]progresso\.md$/i.test(alvo);
+            if (progresso && !d.isSidechain) r.progresso = true;
+            else if (!progresso && ehCodigo(alvo)) r.editouCodigo = true;
+          }
+          if (/^(Bash|PowerShell)$/.test(c.name) && c.input && !d.isSidechain && GRAVA_PROGRESSO.test(String(c.input.command || ''))) r.progresso = true;
           if (r.primeiraEdicao === null && /^(Edit|Write|MultiEdit)$/.test(c.name) && c.input) {
             const arq = String(c.input.file_path || '').replace(/\\/g, '/');
             // Teste ou não pelo caminho dentro do projeto: um projeto numa pasta "tests/" não
@@ -746,6 +767,7 @@ export function medir({ dias = 7, projeto = '', raiz = '', diario = '' } = {}) {
           leituras: f.Read || 0,
           buscas: (f.Grep || 0) + (f.Glob || 0),
           consultouMapa: nomesF.some((x) => MAPA_CONSULTA.test(x)),
+          editouCodigo: a.editouCodigo,
           // null: a chamada não leu código. true: consultou o mapa antes da primeira leitura.
           mapaAntes: a.primeiraLeitura === null ? null : a.primeiroMapa !== null && a.primeiroMapa < a.primeiraLeitura,
           // null: não é correção de bug (ou não editou código). true: teste vermelho antes da correção.
@@ -781,6 +803,9 @@ export function medir({ dias = 7, projeto = '', raiz = '', diario = '' } = {}) {
         agentes,
         compactacoes: principal.compactacoes,
         errosApi: principal.errosApi,
+        // Sessão que mudou código (o mestre ou um implementador) e se atualizou o progresso.
+        mudouCodigo: principal.editouCodigo || agentes.some((a) => a.editouCodigo),
+        progresso: principal.progresso,
         ...decisoes(principal),
         perguntas: principal.perguntas,
         bloqueios: principal.bloqueios,
@@ -794,7 +819,8 @@ export function medir({ dias = 7, projeto = '', raiz = '', diario = '' } = {}) {
   // Com filtro de projeto, só as decisões das sessões medidas (a chave da chamada começa
   // pelo id da sessão).
   const travas = lerTravas(diario || pastaDiario(), desdeMs, projeto ? idsMedidos : null);
-  return { ...resumir(sessoes, { dias, desdeMs, pastaProjetos, travas }), filtro: projeto || null };
+  const teste = testeDaRetro(travas.intervencoes, diario || pastaDiario());
+  return { ...resumir(sessoes, { dias, desdeMs, pastaProjetos, travas }), teste, filtro: projeto || null };
 }
 
 // ---------- registro das travas ----------
@@ -802,6 +828,7 @@ export function medir({ dias = 7, projeto = '', raiz = '', diario = '' } = {}) {
 // Os despachantes (pre, pos, eventos) gravam o tempo do processo inteiro; no "eventos" a
 // decisão é o nome do evento do hook.
 const DESPACHANTES = ['pre', 'pos', 'eventos'];
+const INTERVENCAO = /^(barrou|pediu|avisou|sonnet|parou|entregou-falha|entregou-no-fim)$/;
 const NOME_VALIDO = /^[A-Za-z][A-Za-z0-9_-]{0,39}$/;
 
 function percentil(ordenados, p) {
@@ -822,6 +849,8 @@ export function lerTravas(pasta, desdeMs, sessoes = null) {
     // aprovação reconhecida (reprovou, ou o relatório veio sem veredito). A pausa para
     // perguntar ao usuário não conta como conclusão.
     conclusoesSemRevisao: 0, conclusoesComRevisor: 0, pausasSemRevisao: 0, foraDoEscopo: 0,
+    // Vezes que cada trava mudou o rumo (barrou, pediu, avisou, trocou o modelo, mandou parar).
+    intervencoes: {},
   };
   // Sessões com a cobrança da revisão em aberto: se um revisor terminou depois dela.
   const cobradas = new Map();
@@ -849,6 +878,7 @@ export function lerTravas(pasta, desdeMs, sessoes = null) {
       }
       const t = r.porTrava[trava] = r.porTrava[trava] || {};
       t[decisao] = (t[decisao] || 0) + 1;
+      if (INTERVENCAO.test(decisao)) r.intervencoes[trava] = (r.intervencoes[trava] || 0) + 1;
       if (decisao === 'entregou-sem-verificar') r.entregasSemVerificar++;
       if (trava === 'revisao' && decisao === 'barrou') cobradas.set(sessaoDe(chave), cobradas.get(sessaoDe(chave)) || false);
       if (decisao === 'concluiu-sem-revisao') {
@@ -1005,6 +1035,7 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos, travas }) {
   const barrouOuPediu = Object.values(tv.porTrava).reduce((x, d) => x + (d.barrou || 0) + (d.pediu || 0), 0);
   const p95s = Object.values(tv.tempos).map((t) => t.p95);
 
+  const comCodigo = sessoes.filter((s) => s.mudouCodigo);
   const indicadores = {
     sessoes: sessoes.length,
     custo_por_sessao: custoTotal / n,
@@ -1030,6 +1061,8 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos, travas }) {
     conclusoes_sem_revisor: tv.linhas ? tv.conclusoesSemRevisao : null,
     correcao_com_teste_vermelho_pct: imp && imp.correcoes ? (100 * imp.vermelhoAntes) / imp.correcoes : null,
     hooks_p95_ms: p95s.length ? Math.max(...p95s) : null,
+    // Sessões que mudaram código e deixaram o progresso atualizado (null: nenhuma mudou código).
+    progresso_atualizado_pct: comCodigo.length ? (100 * comCodigo.filter((s) => s.progresso).length) / comCodigo.length : null,
     // Para onde vai o custo (estimativa): a parte de cada fonte no custo total.
     gasto_fixo_pct: parte('fixo'),
     gasto_leitura_pct: parte('leitura', 'busca'),
@@ -1043,12 +1076,45 @@ function resumir(sessoes, { dias, desdeMs, pastaProjetos, travas }) {
     sessoes: sessoes.length,
     custo: { total: custoTotal, mestre: custoMestre, agentes: custoAgentes, registradoPeloClaudeCode: sessoesComRegistro ? custoRegistrado : null, sessoesComRegistro },
     mestre: { leituras: leiturasMestre, modelos: contar(sessoes.map((s) => s.mestre.modelo)), pedidos },
+    progresso: { sessoesComCodigo: comCodigo.length, atualizaram: comCodigo.filter((s) => s.progresso).length },
     porTipo, projetos, bloqueios, aprovacoes, barrados, comandosBarrados, estimado, subidas,
     compactacoes, errosApi, recusas, perguntas, segundosPerguntas,
     travas: tv,
     gasto,
     indicadores,
   };
+}
+
+// ---------- teste de desligar uma trava ----------
+const ARQUIVO_TESTE = 'teste-trava.json';
+// O teste em andamento (ou o que terminou e ainda não foi encerrado) e a candidata: entre as
+// travas testáveis ligadas, a que menos mudou o rumo no período.
+export function testeDaRetro(intervencoes = {}, diario = pastaDiario()) {
+  const bruto = lerJson(path.join(diario, ARQUIVO_TESTE));
+  let atual = null;
+  if (bruto && TRAVAS_TESTAVEIS.includes(bruto.trava)) {
+    const ate = Date.parse(bruto.ate || '');
+    atual = { trava: bruto.trava, desde: bruto.desde || null, ate: bruto.ate || null, terminado: !(Date.now() < ate) || !testeValido(bruto) };
+  }
+  const contas = Object.fromEntries(TRAVAS_TESTAVEIS.map((n) => [n, intervencoes[n] || 0]));
+  const ligadas = TRAVAS_TESTAVEIS.filter((n) => !(atual && atual.trava === n) && !desligada(n));
+  const candidata = atual && !atual.terminado ? null
+    : ligadas.sort((a, b) => contas[a] - contas[b] || a.localeCompare(b))[0] || null;
+  return { atual, candidata, intervencoes: contas };
+}
+
+function textoDoTeste(t) {
+  const l = ['', '## Teste de desligar uma trava', ''];
+  if (t.atual && !t.atual.terminado) {
+    l.push(`- Em andamento: a trava "${t.atual.trava}" está desligada desde ${t.atual.desde ? data(t.atual.desde) : '?'} e volta em ${data(t.atual.ate)}. Compare na retrospectiva depois dessa data.`);
+  } else if (t.atual) {
+    l.push(`- Terminado: a trava "${t.atual.trava}" ficou desligada de ${t.atual.desde ? data(t.atual.desde) : '?'} a ${data(t.atual.ate)} (já voltou). Compare os indicadores dela com a retrospectiva anterior e proponha: tirar de vez (nada piorou), manter (piorou) ou trocar por algo mais leve. Depois, rode com --fim-teste.`);
+  }
+  if (t.candidata) {
+    const outras = Object.entries(t.intervencoes).filter(([n]) => n !== t.candidata).sort((a, b) => a[1] - b[1]).slice(0, 4).map(([n, v]) => `${n} ${v}`).join(', ');
+    l.push(`- Candidata a um teste de 7 dias desligada: "${t.candidata}" (mudou o rumo ${t.intervencoes[t.candidata]} vez(es) no período; as seguintes: ${outras}). Antes de propor, veja se ela se aplica aos projetos do período.`);
+  }
+  return l.length > 3 ? l.join('\n') : '';
 }
 
 function contar(lista) {
@@ -1119,6 +1185,7 @@ export function texto(r) {
   const subidas = Object.entries(r.subidas);
   out.push(`- Subidas de modelo: ${subidas.length ? subidas.map(([k, v]) => `${k} (${v})`).join(', ') : 'nenhuma'}.`);
   out.push(`- Compactações: ${r.compactacoes} (${nf(1).format(i.compactacoes_por_sessao)} por sessão). Erros da API: ${r.errosApi}.`);
+  if (r.progresso && r.progresso.sessoesComCodigo) out.push(`- Registro de progresso (.revisao/progresso.md): atualizado em ${r.progresso.atualizaram} de ${r.progresso.sessoesComCodigo} sessões que mudaram código (${pct(i.progresso_atualizado_pct)}).`);
   const aprov = Object.entries(r.aprovacoes).sort((a, b) => b[1].segundos - a[1].segundos);
   const totalAprov = aprov.reduce((x, [, e]) => x + e.vezes, 0);
   const comoMedido = r.estimado ? ' (estimado onde a sessão não grava as decisões: ferramenta instantânea que levou mais de 1 min)' : '';
@@ -1134,6 +1201,8 @@ export function texto(r) {
   for (const [k, v] of bloqueios.slice(0, 8)) out.push(`  - ${v}x ${k}`);
   out.push('');
   out.push(...textoTravas(r.travas));
+  const teste = r.teste ? textoDoTeste(r.teste) : '';
+  if (teste) { out.push(teste.replace(/^\n/, '')); out.push(''); }
   out.push('## Por projeto');
   out.push('');
   out.push('| Projeto | Sessões | Chamadas de agente | Compactações | Custo |');
@@ -1190,7 +1259,7 @@ function textoTravas(tv) {
 }
 
 // Indicadores em que subir é bom; nos outros, descer é bom.
-const MAIOR_MELHOR = new Set(['explore_mapa_pct', 'mapa_antes_da_leitura_pct', 'correcao_com_teste_vermelho_pct']);
+const MAIOR_MELHOR = new Set(['explore_mapa_pct', 'mapa_antes_da_leitura_pct', 'correcao_com_teste_vermelho_pct', 'progresso_atualizado_pct']);
 const ROTULOS = {
   custo_por_sessao: ['Custo por sessão', dinheiro],
   custo_mestre_pct: ['Parte do mestre no custo', pct],
@@ -1214,6 +1283,7 @@ const ROTULOS = {
   conclusoes_sem_revisor: ['Mudanças concluídas sem chamar o revisor', (v) => nf(0).format(v)],
   correcao_com_teste_vermelho_pct: ['Correções de bug com teste vermelho antes da correção', pct],
   hooks_p95_ms: ['Tempo dos hooks (p95 do mais lento)', ms],
+  progresso_atualizado_pct: ['Sessões com mudança de código que atualizaram o progresso', pct],
   gasto_fixo_pct: ['Parte do custo: começo de cada conversa (regras, prompt)', pct],
   gasto_leitura_pct: ['Parte do custo: leitura e busca de arquivos', pct],
   gasto_terminal_pct: ['Parte do custo: saída de terminal', pct],
@@ -1269,6 +1339,30 @@ function principal() {
     fs.mkdirSync(diario, { recursive: true });
     fs.writeFileSync(arquivoEstado, JSON.stringify(e, null, 2));
   };
+
+  // Teste de desligar uma trava (a retrospectiva propõe, o usuário aprova): 7 dias, em todos
+  // os projetos; a trava volta sozinha no fim.
+  if (o.testarTrava) {
+    if (!TRAVAS_TESTAVEIS.includes(o.testarTrava)) {
+      console.error(o.testarTrava === '-'
+        ? `Diga qual trava: --testar-trava <nome>. As testáveis: ${TRAVAS_TESTAVEIS.join(', ')}.`
+        : `"${o.testarTrava}" não é uma trava testável. As testáveis: ${TRAVAS_TESTAVEIS.join(', ')}.`);
+      process.exit(1);
+    }
+    const ate = new Date(Date.now() + DIAS_TESTE * 86400000);
+    fs.mkdirSync(diario, { recursive: true });
+    fs.writeFileSync(path.join(diario, ARQUIVO_TESTE), `${JSON.stringify({ trava: o.testarTrava, desde: new Date().toISOString(), ate: ate.toISOString() }, null, 2)}\n`);
+    registrarTrava(o.testarTrava, 'teste-ligou', 0, {});
+    console.log(`A trava "${o.testarTrava}" fica desligada até ${data(ate.toISOString())}, em todos os projetos. Ela volta sozinha nessa data; para voltar antes, rode com --fim-teste. A próxima retrospectiva compara os indicadores dela.`);
+    return;
+  }
+  if (o.fimTeste) {
+    const t = lerJson(path.join(diario, ARQUIVO_TESTE));
+    try { fs.rmSync(path.join(diario, ARQUIVO_TESTE), { force: true }); } catch { /* já não existia */ }
+    if (t && t.trava) registrarTrava(String(t.trava), 'teste-fim', 0, {});
+    console.log('Teste encerrado: todas as travas voltaram ao normal.');
+    return;
+  }
 
   if (o.propostas) {
     const conteudo = lerTexto(o.propostas);

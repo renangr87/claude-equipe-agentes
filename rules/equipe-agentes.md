@@ -51,7 +51,9 @@ Princípios adaptados de karpathy-guidelines (multica-ai, MIT). Onde há trava (
 
 **Paralelo.** Só para tarefas independentes, com escopos separados: nunca dois agentes no mesmo arquivo (uma trava barra o implementador cujo escopo cruza o de outro em segundo plano). O worktree (`isolation: worktree`) não vê o trabalho não commitado. Tarefas pequenas parecidas vão juntas para um só implementador.
 
-**Continuidade.** Se o trabalho é continuação, retome o agente que já tem o contexto.
+**Continuidade.** Se o trabalho é continuação, retome o agente que já tem o contexto. Ao concluir uma mudança de código, ou ao parar no meio dela, atualize `.revisao/progresso.md`: o pedido e, em linhas `Feito:`, `Verificado:`, `Falta:` e `Retomar por:`, o estado de agora (curto; sobrescreva o anterior; com plano, aponte o passo). O boletim da próxima sessão mostra o `Retomar por`.
+
+**Objetivo.** Se o usuário vai sair e quer o trabalho pronto na volta ("deixe rodando", "até terminar", `/objetivo`), use a skill `objetivo`: o "Pronto quando" fica em `.revisao/objetivo.md`, e uma trava segura o fim da resposta até ele estar verde ou o `Status` dizer que você espera o usuário.
 
 **Escalonamento.** Explore inconsistente: repita com `model: sonnet`. Depois de 2 falhas no mesmo bug ou critério (somando todos os agentes), a 3ª tentativa é replanejada (com "Já tentado" no briefing) ou com `model: opus`; se ela falhar, pare e discuta com o usuário. Travas: a mesma falha depois de duas tentativas barra a tentativa igual uma vez; a mesma falha depois de três tentativas barra o implementador até a próxima mensagem do usuário, e você para e explica. Área sensível ou migração: revisor com `model: opus`. Antes de subir o modelo, veja se o briefing estava claro.
 
@@ -107,7 +109,7 @@ Separe o que foi verificado do que é inferência.
 
 ## Travas da equipe (hooks)
 
-Barrado por trava: leia o motivo, siga o caminho que ela indica e não procure outro jeito de fazer o mesmo. Se ela errou, diga ao usuário no fim da tarefa. Outras travas: Explore lê por trecho e no máximo 12 vezes por chamada; o analisador devolve os erros logo depois de cada edição; o implementador só entrega depois de verificar.
+Barrado por trava: leia o motivo, siga o caminho que ela indica e não procure outro jeito de fazer o mesmo. Se ela errou, diga ao usuário no fim da tarefa. Outras travas: Explore lê por trecho e no máximo 12 vezes por chamada; o analisador devolve os erros logo depois de cada edição, com o aviso de sobras de depuração (`console.log`, `print`, `debugger`) nas linhas novas; o implementador só entrega depois de verificar.
 
 ## Notas de área
 

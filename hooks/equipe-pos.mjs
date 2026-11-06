@@ -3,7 +3,9 @@
 // terminal, também depois da que falhou: PostToolUseFailure).
 //   - consulta ao mapa do código (Explore e revisor): anota, e a trava "mapa primeiro" libera;
 //   - Edit e Write (mestre e implementador): roda o analisador no arquivo e devolve os erros
-//     na hora; anota a edição (verificação antes da entrega e revisão obrigatória);
+//     na hora, e o aviso de sobras de depuração nas linhas novas; anota a edição (verificação
+//     antes da entrega e revisão obrigatória) e o objetivo que o mestre gravou; arquivo
+//     gravado em .revisao/ ganha o .gitignore da pasta, se faltar;
 //   - terminal: anota quando o implementador rodou uma verificação (também quando o comando
 //     falhou) e, de qualquer agente, o resultado das linhas da lista do verificador (a prova);
 //   - Read do mestre que falhou: devolve a conta do orçamento de leitura;
@@ -18,10 +20,10 @@ import { carregarModulo, fatosRapidos, lerEntrada, registrarTrava, tipoDoAgente 
 
 // Cada módulo à parte: um quebrado não leva os outros junto, e a falha vai para o registro.
 const carregar = (arquivo) => carregarModulo(import.meta.url, arquivo);
-const [analisador, entrega, mapa, convergencia, prova, push, paralelo] = await Promise.all([
+const [analisador, entrega, mapa, convergencia, prova, push, paralelo, sobras, objetivo] = await Promise.all([
   carregar('./equipe-analisar.mjs'), carregar('./equipe-entrega.mjs'), carregar('./equipe-mapa.mjs'),
   carregar('./equipe-convergencia.mjs'), carregar('./equipe-prova.mjs'), carregar('./equipe-push.mjs'),
-  carregar('./equipe-paralelo.mjs'),
+  carregar('./equipe-paralelo.mjs'), carregar('./equipe-sobras.mjs'), carregar('./equipe-objetivo.mjs'),
 ]);
 
 const tentar = (f) => { try { return f(); } catch { return null; } };
@@ -65,6 +67,18 @@ export function tratar(entrada) {
         contexto.push(erros);
       }
     }
+    // Sobras de depuração nas linhas novas (só aviso) e o objetivo que o mestre gravou.
+    if (/^(Edit|Write|MultiEdit)$/.test(nome) && sobras) {
+      const inicio = Date.now();
+      const aviso = tentar(() => sobras.avisoDaEdicao(entrada));
+      if (aviso) {
+        registrarTrava('sobras', 'avisou', Date.now() - inicio, entrada);
+        contexto.push(aviso);
+      }
+    }
+    if (/^(Edit|Write|MultiEdit)$/.test(nome) && objetivo && tentar(() => objetivo.anotarObjetivo(entrada))) registrarTrava('objetivo', 'gravou', 0, entrada);
+    // Arquivo gravado em .revisao/ sem o .gitignore da pasta: cria, para não entrar em commit.
+    if (/^(Edit|Write|MultiEdit)$/.test(nome) && entrega) tentar(() => entrega.ignorarRevisao(entrada));
   }
   if (tipo === 'mestre') {
     const escopo = entrega ? tentar(() => entrega.escopoParaMestre(entrada)) : null;

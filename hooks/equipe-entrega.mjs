@@ -22,6 +22,7 @@ import {
   gravarEstado, lerEstado, lerTexto, limparChamada, marcaDoTexto, normalizar, relatorioDaChamada, statusDoRelatorio,
   tipoDoAgente, ultimaFalaDoMestre,
 } from './equipe-comum.mjs';
+import { descrever, sobrasDosArquivos, TEMPORARIO } from './equipe-sobras.mjs';
 
 const LIMITE_LINHAS = 50;
 // Não é código, mas muda o que roda: dependências e configuração do analisador e dos tipos.
@@ -78,15 +79,14 @@ export function anotarFerramenta(entrada, lista) {
       if (ehCodigo(arq)) anotar(chave, 'editou', Date.now());
       anotar(chave, 'arquivos', absoluto);
     }
-    if (tipo === 'implementador' || tipo === 'mestre') {
-      const sessao = chaveDaSessao(entrada);
-      // Base do repositório (se o envio do pedido ainda não a gravou): o commit de agora e o
-      // que já estava mudado, fora o arquivo que a sessão acabou de editar.
-      const raiz = raizGit(path.dirname(absoluto));
-      if (raiz) inicioDaSessao(entrada, raiz, [posix(path.relative(caminhoReal(raiz), absoluto))]);
-      // A raiz vai junto: no fim, não é preciso perguntar ao git de novo por pasta.
-      anotar(sessao, 'edicoes', raiz ? `${raiz}\t${absoluto}` : absoluto);
-    }
+    // O que a sessão gravou pelas ferramentas, de qualquer agente que edita (o mestre, o
+    // implementador, o genérico, o de um plugin). Base do repositório (se o envio do pedido
+    // ainda não a gravou): o commit de agora e o que já estava mudado, fora o arquivo que a
+    // sessão acabou de editar. A raiz vai junto: no fim, não é preciso perguntar ao git de novo.
+    const sessao = chaveDaSessao(entrada);
+    const raiz = raizGit(path.dirname(absoluto));
+    if (raiz) inicioDaSessao(entrada, raiz, [posix(path.relative(caminhoReal(raiz), absoluto))]);
+    anotar(sessao, 'edicoes', raiz ? `${raiz}\t${absoluto}` : absoluto);
     return;
   }
   if (/^(Bash|PowerShell)$/.test(nome) && tipo === 'implementador' && ehVerificacao(ti.command, lista)) {
@@ -153,13 +153,22 @@ export function baseEfetiva(raiz, base) {
 // O que esta sessão mudou, por repositório: o que ela editou pelas ferramentas mais o que
 // mudou no git desde a base (por comando de terminal, por outro agente, por um plugin),
 // tirando o que já estava mudado antes dela e não mudou de novo.
-// Devolve um Map raiz -> Set de caminhos relativos.
+// Devolve um Map raiz -> Set de caminhos relativos. Em porRaiz.soPorComando (Map raiz -> Set),
+// os arquivos novos que nenhuma ferramenta de edição gravou e que não são código de
+// programa (o relatório .xml que o teste escreve, a cobertura em .html): a impressão do
+// código da prova não conta com eles. Código novo criado por comando (um gerador, um cp)
+// continua contando.
 export function arquivosDaSessao(sessao) {
   const porRaiz = new Map();
-  const juntar = (raiz, rel) => {
+  const editados = new Map();
+  const juntar = (raiz, rel, editado = false) => {
     if (!rel || rel.startsWith('..') || /^\.revisao\//.test(rel)) return;
     if (!porRaiz.has(raiz)) porRaiz.set(raiz, new Set());
     porRaiz.get(raiz).add(rel);
+    if (editado) {
+      if (!editados.has(raiz)) editados.set(raiz, new Set());
+      editados.get(raiz).add(rel);
+    }
   };
   const raizDaPasta = new Map();
   for (const linha of [...new Set(anotacoes(sessao, 'edicoes'))]) {
@@ -174,7 +183,7 @@ export function arquivosDaSessao(sessao) {
       }
       raiz = raizDaPasta.get(pasta);
     }
-    if (raiz) juntar(raiz, posix(path.relative(caminhoReal(raiz), caminhoReal(a))));
+    if (raiz) juntar(raiz, posix(path.relative(caminhoReal(raiz), caminhoReal(a))), true);
   }
   const bases = lerEstado(sessao, 'base') || {};
   const sujos = lerEstado(sessao, 'sujos') || {};
@@ -192,6 +201,15 @@ export function arquivosDaSessao(sessao) {
       juntar(raiz, n);
     }
   }
+  const soPorComando = new Map();
+  for (const [raiz, rels] of porRaiz) {
+    const novos = novosDaRaiz.get(raiz);
+    if (!novos) continue;
+    const ed = editados.get(raiz) || new Set();
+    const s = new Set([...rels].filter((r) => novos.has(r) && !ed.has(r) && !ehCodigo(r)));
+    if (s.size) soPorComando.set(raiz, s);
+  }
+  porRaiz.soPorComando = soPorComando;
   return porRaiz;
 }
 // Os arquivos novos (fora do git, não ignorados) de cada raiz, do último arquivosDaSessao.
@@ -288,6 +306,20 @@ function garantirRevisao(raiz) {
   return pasta;
 }
 
+// Depois de Edit, Write ou MultiEdit num arquivo de .revisao/ (plano, progresso, objetivo): a
+// pasta ganha o .gitignore com "*" se ainda não tem, e nada dela aparece no git status nem
+// entra em commit. Devolve true se criou.
+export function ignorarRevisao(entrada) {
+  if (!/^(Edit|Write|MultiEdit)$/.test(String(entrada.tool_name || ''))) return false;
+  const arq = String((entrada.tool_input || {}).file_path || '');
+  if (!arq) return false;
+  const pasta = path.dirname(path.resolve(entrada.cwd || process.cwd(), arq));
+  if (path.basename(pasta).toLowerCase() !== '.revisao' || !fs.existsSync(pasta)) return false;
+  const ign = path.join(pasta, '.gitignore');
+  if (fs.existsSync(ign)) return false;
+  try { fs.writeFileSync(ign, '*\n', { flag: 'wx' }); return true; } catch { return false; }
+}
+
 // Lista do escopo no fim do implementador: grava .revisao/escopo.md e devolve o texto.
 // "Fora do escopo" só entre os arquivos que ele mesmo editou (pelas ferramentas de edição):
 // mudança de outro agente, do mestre ou de um comando aparece à parte, para conferir, e não
@@ -317,6 +349,12 @@ export function relatorioDeEscopo(entrada, { semVerificar = false } = {}) {
   else if (fora.length) l.push(`- FORA DO ESCOPO (${fora.length}): ${fora.join(', ')}. Não entram no commit sem o OK do usuário; descartar também só com o OK dele.`);
   else l.push('- Os arquivos que ele editou estão dentro do escopo do briefing.');
   if (semVerificar) l.push('- Ele entregou sem rodar a verificação depois da última edição: confira antes do commit.');
+  // Sobras de depuração nas linhas novas dos arquivos dele, e arquivo com cara de temporário
+  // na pasta, também o criado por comando ("2>nul", "> saida.log"). Só aviso.
+  let sobras = [];
+  const temporarios = outros.filter((a) => TEMPORARIO.test(posix(a)));
+  if (!desligada('sobras')) { try { sobras = sobrasDosArquivos(foto.raiz, [...dele, ...temporarios]); } catch { sobras = []; } }
+  if (sobras.length) l.push(`- Sobras de depuração (${sobras.length}): ${sobras.slice(0, 8).map(descrever).join('; ')}${sobras.length > 8 ? ' ...' : ''}. Tire antes do commit, ou diga ao usuário por que ficam.`);
   const texto = l.join('\n');
   const sessao = chaveDaSessao(entrada);
   const id = briefing ? marcaDoTexto(briefing) : `sem-briefing-${Date.now()}`;
@@ -558,11 +596,16 @@ export function ehPausa(entrada) {
   return /\?\s*[*_`)\]]*\s*$/.test(t) || PAUSA_FRACA.test(fim);
 }
 
-// Um revisor ainda rodando em segundo plano (o Stop das versões novas traz a lista)? O
-// veredito vem depois, e a parada não é conclusão sem revisão.
-export function revisorEmSegundoPlano(entrada) {
+// Os agentes que ainda rodam em segundo plano (o Stop das versões novas traz a lista).
+export function agentesEmSegundoPlano(entrada) {
   const tarefas = Array.isArray(entrada.background_tasks) ? entrada.background_tasks : [];
-  return tarefas.some((t) => t && typeof t === 'object' && ehAgenteDeRevisao(t.agent_type) && !/^(completed|failed|killed|stopped|cancelled)$/i.test(String(t.status || '')));
+  return tarefas.filter((t) => t && typeof t === 'object' && t.agent_type && !/^(completed|failed|killed|stopped|cancelled)$/i.test(String(t.status || '')));
+}
+
+// Um revisor ainda rodando em segundo plano? O veredito vem depois, e a parada não é
+// conclusão sem revisão.
+export function revisorEmSegundoPlano(entrada) {
+  return agentesEmSegundoPlano(entrada).some((t) => ehAgenteDeRevisao(t.agent_type));
 }
 
 // Stop do mestre: { bloquear, motivo, registro } ou null. arquivos: o Map de

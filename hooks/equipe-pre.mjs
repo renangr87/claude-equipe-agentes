@@ -5,7 +5,7 @@
 // Travas, nesta ordem (as que anotam algo ficam por último, para só anotar o que passou):
 //   segurança: SQL pela conexão que escreve, chave secreta em arquivo ou commit, comando que
 //              altera o banco (pede aprovação no mestre, barra no implementador), push sem o
-//              pedido do usuário (pede aprovação);
+//              pedido do usuário (pede aprovação), teste de desligar uma trava (pede aprovação);
 //   retrabalho: briefing do mestre para os agentes; diff em dia, completo e opus em área
 //              sensível para o revisor; a mesma falha que voltou e a parada depois de três
 //              tentativas (convergência); dois implementadores no mesmo arquivo (paralelo);
@@ -30,6 +30,38 @@ const [sql, segredos, banco, push, briefing, revisao, convergencia, paralelo, ma
 ]);
 const nada = () => null;
 
+// Teste da retrospectiva: desligar uma trava por 7 dias vale para todos os projetos, então pede
+// o OK do usuário, também quando quem roda é um agente que a trava acabou de barrar. Valem o
+// medidor rodado com --testar-trava e o que grava, copia, move ou apaga o arquivo do teste
+// (pelo terminal ou pelas ferramentas de arquivo). Ler, buscar e citar num commit, não.
+// Nunca desliga.
+const RODA_TESTE = /\bnode(?:\.exe)?["']?\s[^|;&\n]*equipe-medir(?:\.mjs)?["']?[^|;&\n]*--testar-trava\b/i;
+const MEXE_NO_ARQUIVO = /(?:>|\btee\b|\b(?:cp|mv|rm|del|copy|move)\b|Copy-Item|Move-Item|Remove-Item|Set-Content|Add-Content|Out-File|New-Item|write\w*|unlink\w*|rm\w*Sync|rename\w*)[^|;&\n]*teste-trava\.json/i;
+const ARQUIVO_DO_TESTE = /(^|[\\/])teste-trava\.json$/i;
+export function pedirTesteDeTrava(entrada) {
+  const nome = String(entrada.tool_name || '');
+  const ti = entrada.tool_input || {};
+  let pedido = false;
+  let trava = null;
+  if (/^(Write|Edit|MultiEdit)$/.test(nome)) {
+    pedido = ARQUIVO_DO_TESTE.test(String(ti.file_path || ''));
+  } else {
+    // Cada comando simples. Os que só leem ou citam (git, grep, cat, o texto de um commit)
+    // ficam de fora, a não ser que gravem com ">" ("cat > teste-trava.json <<EOF").
+    for (const parte of String(ti.command || '').split(/&&|\|\||[;\n|]/)) {
+      const p = parte.trim();
+      if (!p || (/^(git|grep|rg|findstr|Select-String|cat|type|Get-Content|less|more|head|tail)\b/i.test(p) && !p.includes('>'))) continue;
+      if (RODA_TESTE.test(p)) { pedido = true; trava = trava || (p.match(/--testar-trava[\s=]+["']?([A-Za-z]+)/) || [])[1] || null; }
+      else if (MEXE_NO_ARQUIVO.test(p)) pedido = true;
+    }
+  }
+  if (!pedido) return null;
+  return {
+    decisao: 'ask',
+    motivo: `Teste da retrospectiva: ${trava ? `desligar a trava "${trava}"` : 'mexer no teste de desligar uma trava'} por 7 dias, em todos os projetos, pede o seu OK. Aprove só se você escolheu esse teste na /retro-equipe.`,
+  };
+}
+
 // Saída no formato dos hooks antigos (hookSpecificOutput) para { decisao, motivo }.
 const deHook = (d) => (d && d.hookSpecificOutput ? { decisao: d.hookSpecificOutput.permissionDecision, motivo: d.hookSpecificOutput.permissionDecisionReason } : null);
 
@@ -38,6 +70,7 @@ export const TRAVAS = [
   { nome: 'segredos', quando: /^(Write|Edit|MultiEdit|NotebookEdit|Bash|PowerShell)$/, rodar: segredos ? (e) => deHook(segredos.decidir(e)) : nada },
   { nome: 'banco', quando: /^(Bash|PowerShell)$/, rodar: banco ? (e) => deHook(banco.decidir(e)) : nada },
   { nome: 'push', quando: /^(Bash|PowerShell)$/, rodar: push ? push.decidirPush : nada },
+  { nome: 'teste-trava', quando: /^(Bash|PowerShell|Write|Edit|MultiEdit)$/, rodar: pedirTesteDeTrava },
   { nome: 'briefing', quando: /^(Agent|Task)$/, rodar: briefing ? briefing.decidirBriefing : nada },
   { nome: 'modelo', quando: /^(Agent|Task)$/, rodar: briefing ? briefing.modeloDoGenerico : nada },
   { nome: 'revisor', quando: /^(Agent|Task)$/, rodar: revisao ? revisao.decidirRevisor : nada },

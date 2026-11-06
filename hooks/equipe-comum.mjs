@@ -97,6 +97,17 @@ export function caminhoReal(p) {
   }
   return absoluto;
 }
+
+// A mesma pasta, venha o caminho do git (barra normal) ou do Windows (nome curto, outra caixa).
+export function mesmaPasta(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const n = (p) => {
+    const r = caminhoReal(p).replace(/\\/g, '/').replace(/\/+$/, '');
+    return process.platform === 'win32' ? r.toLowerCase() : r;
+  };
+  return n(a) === n(b);
+}
 const mesmoCaminho = (a, b) => {
   const n = (p) => canonico(p).replace(/[\\/]+$/, '');
   return process.platform === 'win32' ? n(a).toLowerCase() === n(b).toLowerCase() : n(a) === n(b);
@@ -382,7 +393,34 @@ export function registrarTrava(trava, decisao, ms, entrada) {
 // Interruptor de emergência das travas de economia e de retrabalho: EQUIPE_DESLIGAR com
 // os nomes separados por vírgula (ou "tudo"), no bloco env do settings.json. As travas
 // de segurança (banco, segredos, SQL) não desligam por aqui.
-export const TRAVAS_DESLIGAVEIS = ['leitura', 'mapa', 'orcamento', 'briefing', 'convergencia', 'analisar', 'verificar', 'escopo', 'revisao', 'prova', 'paralelo', 'modelo', 'conversa'];
+export const TRAVAS_DESLIGAVEIS = ['leitura', 'mapa', 'orcamento', 'briefing', 'convergencia', 'analisar', 'verificar', 'escopo', 'revisao', 'prova', 'paralelo', 'modelo', 'conversa', 'sobras', 'objetivo'];
+// As que a retrospectiva pode testar desligadas por uns dias, para ver se fazem falta: as de
+// economia e de ordem do trabalho. Nunca as que seguram a qualidade (revisão, prova,
+// verificação, escopo), nem o objetivo, que só vale quando o usuário pede.
+// Fora do teste também a convergência e o paralelo: guardam casos raros (a mesma falha em laço,
+// dois implementadores no mesmo arquivo), então agir pouco não quer dizer que sobram, e a
+// escada de falhas é o freio da trava do objetivo. E as que o medidor não tem como avaliar
+// (as sobras de depuração): sem indicador, "nada piorou" não quer dizer nada.
+export const TRAVAS_TESTAVEIS = ['leitura', 'mapa', 'orcamento', 'briefing', 'analisar', 'modelo', 'conversa'];
+// Teste em andamento (equipe-medir.mjs --testar-trava): {"trava", "desde", "ate"} em
+// equipe-diario/teste-trava.json. A trava volta sozinha na data "ate", que fica a no máximo
+// 8 dias do começo e de agora: um arquivo com uma data longe não desliga nada.
+export const DIAS_TESTE = 7;
+const TETO_TESTE = (DIAS_TESTE + 1) * 86400000;
+export function testeValido(t, agora = Date.now()) {
+  const ate = t ? Date.parse(t.ate || '') : NaN;
+  const desde = t ? Date.parse(t.desde || '') : NaN;
+  return Boolean(t && TRAVAS_TESTAVEIS.includes(t.trava) && agora < ate && ate - desde <= TETO_TESTE && ate - agora <= TETO_TESTE);
+}
+let testeLido = null;
+export function testeDeTrava() {
+  const arquivo = path.join(pastaDiario(), 'teste-trava.json');
+  if (testeLido && testeLido.arquivo === arquivo) return testeLido.valor;
+  const t = lerJson(arquivo);
+  const valor = testeValido(t) ? t : null;
+  testeLido = { arquivo, valor };
+  return valor;
+}
 // Também por projeto: {"desligar": ["orcamento", "mapa"]} em .claude/equipe.json da pasta
 // do projeto da sessão (um projeto com agentes próprios, por exemplo), sem mexer nos outros.
 let desligadasDoProjeto = null;
@@ -397,7 +435,9 @@ function doProjeto() {
 export function desligada(nome) {
   const lista = normalizar(`${process.env.EQUIPE_DESLIGAR || ''},${doProjeto()}`).split(/[\s,;]+/).filter(Boolean);
   if (!TRAVAS_DESLIGAVEIS.includes(nome)) return false;
-  return lista.includes(nome) || lista.includes('tudo');
+  if (lista.includes(nome) || lista.includes('tudo')) return true;
+  const t = testeDeTrava();
+  return Boolean(t && t.trava === nome);
 }
 
 // Agente de revisão: o nosso revisor ou o revisor próprio de um projeto ou plugin
@@ -595,6 +635,63 @@ export const EXTENSOES_CODIGO = EXT_CODIGO;
 // Texto sem acento e em minúsculas, para comparar rótulos e pedidos com tolerância.
 export function normalizar(texto) {
   return String(texto || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+}
+
+// O que .revisao/objetivo.md diz (a trava do objetivo e o boletim leem do mesmo jeito):
+// { status, motivo, pronto: [itens] }. status: 'ativo', 'aguardando', 'concluido' ou
+// 'encerrado'; o último "Status" vale. Aceita o rótulo com ou sem negrito, em item de lista,
+// em citação, em título ("## Pronto quando", "## Status" com o valor na linha seguinte) e em
+// tabela ("| Status | ativo |").
+const ROTULO_OBJETIVO = /^(status|pronto\s+quando)\b\s*(?:[:—–]\s*|$)(.*)$/i;
+function classificarStatus(valor) {
+  const v = normalizar(valor).trim();
+  if (/^(aguardando|esperando|pausado|em espera|parado)/.test(v)) return 'aguardando';
+  if (/^(concluido|pronto|atingido|feito|terminado)/.test(v)) return 'concluido';
+  if (/^(encerrado|cancelado|desistiu|abandonado)/.test(v)) return 'encerrado';
+  return 'ativo';
+}
+export function lerObjetivo(texto) {
+  let status = 'ativo';
+  let motivo = '';
+  const pronto = [];
+  let naLista = false;
+  let valorNaProxima = false;
+  const definirStatus = (valor) => {
+    status = classificarStatus(valor);
+    motivo = status === 'aguardando' ? valor.trim().slice(0, 200) : '';
+  };
+  for (const bruta of String(texto || '').split(/\r?\n/)) {
+    const linha = bruta.trim().replace(/\*\*|__/g, '');
+    if (!linha) continue;
+    const titulo = /^#{1,6}\s/.test(linha);
+    const semPrefixo = linha.replace(/^(?:(?:#{1,6}|>)\s*)+/, '');
+    const item = semPrefixo.match(/^(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?(.*)$/);
+    const corpo = (item ? item[1] : semPrefixo).replace(/^\*+|\*+$/g, '').trim();
+    const celula = corpo.match(/^\|\s*([^|]+?)\s*\|\s*([^|]*?)\s*\|/);
+    const rotulo = celula ? `${celula[1]}: ${celula[2]}`.match(ROTULO_OBJETIVO) : corpo.match(ROTULO_OBJETIVO);
+    if (rotulo) {
+      const valor = rotulo[2].replace(/\*+/g, '').trim();
+      if (/^status$/i.test(rotulo[1])) {
+        naLista = false;
+        valorNaProxima = !valor;
+        if (valor) definirStatus(valor);
+      } else {
+        naLista = true;
+        valorNaProxima = false;
+        if (valor) pronto.push(valor);
+      }
+      continue;
+    }
+    // "## Status" com o valor na linha seguinte.
+    if (valorNaProxima) {
+      valorNaProxima = false;
+      if (!titulo) { definirStatus(corpo.replace(/\*+/g, '')); continue; }
+    }
+    // Outro título ou outro campo ("Pare só para:", "Decisões:") fecha a lista.
+    if (titulo || (!item && /^[\p{L}][\p{L} ]{1,30}:/u.test(corpo))) { naLista = false; continue; }
+    if (naLista && item && corpo) pronto.push(corpo);
+  }
+  return { status, motivo, pronto };
 }
 
 // Status do relatório de um subagente, pela palavra de status (o medidor e a trava de

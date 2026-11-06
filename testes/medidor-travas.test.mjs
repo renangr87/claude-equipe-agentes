@@ -412,3 +412,90 @@ test('medidor: o revisor lendo arquivo do diff que recebeu não conta como leitu
   assert.equal(r.porTipo.revisor.comLeituraDeCodigo, 1);
   assert.equal(r.porTipo.revisor.mapaAntesDaLeitura, 0);
 });
+
+test('medidor: registro de progresso nas sessões que mudaram código', () => {
+  const claude = tmp('claude-progresso');
+  const pasta = path.join(claude, 'projects', '-app-exemplo');
+  // Sessão 1: o mestre edita código e atualiza o progresso.
+  escrever(path.join(pasta, 'p1.jsonl'), [
+    pedido(0, 'corrija o total'),
+    ferramentas(1, [['Edit', { file_path: '/tmp/app-exemplo/src/a.ts' }], ['Write', { file_path: '/tmp/app-exemplo/.revisao/progresso.md' }]], { cwd: '/tmp/app-exemplo' }),
+  ].join('\n') + '\n');
+  // Sessão 2: um implementador muda código; ninguém atualiza o progresso.
+  escrever(path.join(pasta, 'p2.jsonl'), [
+    pedido(0, 'implemente o frete'),
+    ferramentas(1, [['Agent', { subagent_type: 'implementador', prompt: 'x' }]], { cwd: '/tmp/app-exemplo' }),
+  ].join('\n') + '\n');
+  escrever(path.join(pasta, 'p2', 'subagents', 'agent-i1.meta.json'), JSON.stringify({ agentType: 'implementador' }));
+  escrever(path.join(pasta, 'p2', 'subagents', 'agent-i1.jsonl'), `${ferramentas(2, [['Edit', { file_path: '/tmp/app-exemplo/src/b.ts' }]], { isSidechain: true })}\n`);
+  // Sessão 3: só conversa (não conta).
+  escrever(path.join(pasta, 'p3.jsonl'), [pedido(0, 'o que é isto?'), ferramentas(1, [['Read', { file_path: '/tmp/app-exemplo/README.md' }]], { cwd: '/tmp/app-exemplo' })].join('\n') + '\n');
+  // Sessão 4: um implementador que só mexeu no README (não mudou código: não conta).
+  escrever(path.join(pasta, 'p4.jsonl'), [
+    pedido(0, 'atualize o README'),
+    ferramentas(1, [['Agent', { subagent_type: 'implementador', prompt: 'x' }]], { cwd: '/tmp/app-exemplo' }),
+  ].join('\n') + '\n');
+  escrever(path.join(pasta, 'p4', 'subagents', 'agent-i2.meta.json'), JSON.stringify({ agentType: 'implementador' }));
+  escrever(path.join(pasta, 'p4', 'subagents', 'agent-i2.jsonl'), `${ferramentas(2, [['Edit', { file_path: '/tmp/app-exemplo/README.md' }]], { isSidechain: true })}\n`);
+  // Sessão 5: o mestre muda código e grava o progresso pelo terminal (conta).
+  escrever(path.join(pasta, 'p5.jsonl'), [
+    pedido(0, 'corrija o frete'),
+    ferramentas(1, [['Edit', { file_path: '/tmp/app-exemplo/src/c.ts' }], ['Bash', { command: "cat > .revisao/progresso.md <<'X'\nRetomar por: y\nX" }]], { cwd: '/tmp/app-exemplo' }),
+  ].join('\n') + '\n');
+  const r = JSON.parse(medir(claude, '--json'));
+  assert.deepEqual(r.progresso, { sessoesComCodigo: 3, atualizaram: 2 });
+  assert.equal(Math.round(r.indicadores.progresso_atualizado_pct), 67);
+  assert.match(medir(claude), /Registro de progresso \(\.revisao\/progresso\.md\): atualizado em 2 de 3 sessões que mudaram código \(67%\)/);
+});
+
+test('medidor: intervenções por trava, candidata ao teste e os comandos do teste', () => {
+  const claude = tmp('claude-teste-trava');
+  const diario = path.join(claude, 'equipe-diario');
+  const reg = (min, trava, decisao, tipo = 'mestre', chave = 'st-mestre') => [iso(min), trava, decisao, '3', tipo, chave].join('\t');
+  escrever(path.join(diario, `travas-${new Date(agora).toISOString().slice(0, 7)}.log`), [
+    reg(1, 'orcamento', 'barrou'), reg(2, 'orcamento', 'barrou'),
+    reg(3, 'mapa', 'barrou', 'Explore', 'st-e1'), reg(4, 'mapa', 'consultou', 'Explore', 'st-e1'),
+    reg(5, 'modelo', 'sonnet'), reg(6, 'conversa', 'avisou'), reg(7, 'analisar', 'avisou', 'implementador', 'st-i1'),
+    reg(8, 'briefing', 'valvula'), reg(9, 'revisao', 'barrou'),
+  ].join('\n') + '\n');
+  escrever(path.join(claude, 'projects', '-app', 's.jsonl'), `${pedido(0, 'oi')}\n`);
+  let r = JSON.parse(medir(claude, '--json'));
+  assert.equal(r.travas.intervencoes.orcamento, 2);
+  assert.equal(r.travas.intervencoes.mapa, 1);
+  assert.equal(r.travas.intervencoes.briefing, undefined, 'válvula não é intervenção');
+  // A candidata: a testável com menos intervenções (empate pelo nome); revisão nunca entra.
+  assert.equal(r.teste.candidata, 'briefing');
+  assert.equal(r.teste.intervencoes.revisao, undefined);
+  assert.equal(r.teste.atual, null);
+  // Começar o teste: só trava testável.
+  assert.throws(() => medir(claude, '--testar-trava', 'revisao'), /não é uma trava testável/);
+  // As que guardam casos raros também não: agir pouco não quer dizer que sobram. Nem a que a
+  // medição não avalia (sobras). Sem o nome, erro (não a medição normal).
+  assert.throws(() => medir(claude, '--testar-trava', 'convergencia'), /não é uma trava testável/);
+  assert.throws(() => medir(claude, '--testar-trava', 'paralelo'), /não é uma trava testável/);
+  assert.throws(() => medir(claude, '--testar-trava', 'sobras'), /não é uma trava testável/);
+  assert.throws(() => medir(claude, '--testar-trava'), /Diga qual trava/);
+  assert.throws(() => medir(claude, '--testar-trava', '--json'), /Diga qual trava/);
+  assert.match(medir(claude, '--testar-trava', 'briefing'), /A trava "briefing" fica desligada até .*volta sozinha/);
+  const t = JSON.parse(fs.readFileSync(path.join(diario, 'teste-trava.json'), 'utf8'));
+  assert.equal(t.trava, 'briefing');
+  assert.ok(Date.parse(t.ate) - Date.parse(t.desde) >= 7 * 86400000 - 1000);
+  r = JSON.parse(medir(claude, '--json'));
+  assert.equal(r.teste.atual.trava, 'briefing');
+  assert.equal(r.teste.atual.terminado, false);
+  assert.equal(r.teste.candidata, null, 'um teste por vez');
+  assert.match(medir(claude), /Em andamento: a trava "briefing" está desligada/);
+  // Terminado (a data passou): a trava já voltou, a retro compara e propõe.
+  escrever(path.join(diario, 'teste-trava.json'), JSON.stringify({ trava: 'briefing', desde: '2026-01-01T00:00:00Z', ate: '2026-01-08T00:00:00Z' }));
+  r = JSON.parse(medir(claude, '--json'));
+  assert.equal(r.teste.atual.terminado, true);
+  assert.match(medir(claude), /Terminado: a trava "briefing" ficou desligada .* rode com --fim-teste/s);
+  assert.match(medir(claude, '--fim-teste'), /Teste encerrado/);
+  assert.ok(!fs.existsSync(path.join(diario, 'teste-trava.json')));
+  // Começo e fim do teste vão para o registro das travas (sem contar como intervenção).
+  const regs = fs.readdirSync(diario).filter((n) => /^travas-/.test(n)).flatMap((n) => fs.readFileSync(path.join(diario, n), 'utf8').split('\n').filter(Boolean)).map((l) => l.split('\t'));
+  assert.ok(regs.some((l) => l[1] === 'briefing' && l[2] === 'teste-ligou'));
+  assert.ok(regs.some((l) => l[1] === 'briefing' && l[2] === 'teste-fim'));
+  r = JSON.parse(medir(claude, '--json'));
+  assert.equal(r.travas.intervencoes.briefing, undefined);
+});
