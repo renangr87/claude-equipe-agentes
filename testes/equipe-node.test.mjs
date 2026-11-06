@@ -583,19 +583,29 @@ test('sql: barra leitura pela conexão que escreve e diz o caminho certo', () =>
   const env = { CLAUDE_PROJECT_DIR: raiz, HOME: casa, USERPROFILE: casa, CLAUDE_CONFIG_DIR: '' };
   const chamada = (tool_name, query) => ({ hook_event_name: 'PreToolUse', cwd: raiz, tool_name, tool_input: { project_id: 'abc', query } });
 
-  // Sem a conexão de leitura configurada: barra e manda configurar.
-  let d = decisao(SQL, chamada('mcp__Supabase__execute_sql', 'select * from tabela_secreta'), env);
+  // Sem a conexão de leitura no projeto: não barra (a leitura não fica sem caminho); segue
+  // para a aprovação normal.
+  assert.equal(decisao(SQL, chamada('mcp__Supabase__execute_sql', 'select * from tabela_secreta'), env), null);
+
+  // Com a conexão declarada no .mcp.json do projeto: barra e manda usar ou autenticar.
+  escrever(path.join(raiz, '.mcp.json'), JSON.stringify({ mcpServers: { 'supabase-leitura': { type: 'http', url: 'https://exemplo' } } }));
+  let d = decisao(SQL, chamada('mcp__claude_ai_Supabase__execute_sql', 'with a as (select * from tabela_secreta) select * from a'), env);
   assert.equal(d.hookSpecificOutput.permissionDecision, 'deny');
   assert.match(d.hookSpecificOutput.permissionDecisionReason, /mcp__supabase-leitura__execute_sql/);
-  assert.match(d.hookSpecificOutput.permissionDecisionReason, /ainda não tem a conexão/);
+  assert.match(d.hookSpecificOutput.permissionDecisionReason, /falta autenticar/);
+  assert.match(d.hookSpecificOutput.permissionDecisionReason, /pode rodar a consulta/);
   // O SQL nunca vai para a mensagem.
   assert.doesNotMatch(d.hookSpecificOutput.permissionDecisionReason, /tabela_secreta/);
 
-  // Com a conexão declarada no .mcp.json do projeto: manda autenticar.
-  escrever(path.join(raiz, '.mcp.json'), JSON.stringify({ mcpServers: { 'supabase-leitura': { type: 'http', url: 'https://exemplo' } } }));
-  d = decisao(SQL, chamada('mcp__claude_ai_Supabase__execute_sql', 'with a as (select 1) select * from a'), env);
-  assert.equal(d.hookSpecificOutput.permissionDecision, 'deny');
-  assert.match(d.hookSpecificOutput.permissionDecisionReason, /falta autenticar/);
+  // Com o OK do usuário no pedido ("pode rodar a consulta"), segue para a aprovação normal,
+  // também quando quem consulta é um subagente.
+  const claude = tmp('sql-claude');
+  const envOk = { ...env, EQUIPE_PASTA_CLAUDE: claude };
+  escrever(path.join(claude, 'equipe-diario', 'estado', 'sq-mestre.pedido'), JSON.stringify({ em: Date.now(), consultar: true }));
+  assert.equal(decisao(SQL, { ...chamada('mcp__Supabase__execute_sql', 'select 1'), session_id: 'sq' }, envOk), null);
+  assert.equal(decisao(SQL, { ...chamada('mcp__Supabase__execute_sql', 'select 1'), session_id: 'sq', agent_type: 'Explore', agent_id: 'x' }, envOk), null);
+  escrever(path.join(claude, 'equipe-diario', 'estado', 'sq-mestre.pedido'), JSON.stringify({ em: Date.now(), consultar: false }));
+  assert.equal(decisao(SQL, { ...chamada('mcp__Supabase__execute_sql', 'select 1'), session_id: 'sq' }, envOk).hookSpecificOutput.permissionDecision, 'deny');
 
   // Declarada no .claude.json do usuário, para este projeto.
   fs.rmSync(path.join(raiz, '.mcp.json'));
@@ -1046,4 +1056,10 @@ test('segredos: .env, chave de demonstração e textos parecidos com chave passa
   for (const arq of [path.join(pasta, '.env'), path.join(pasta, 'supabase', 'functions', '.env.local')]) {
     assert.equal(decisao(SEGREDOS, { tool_name: 'Write', cwd: pasta, tool_input: { file_path: arq, content: `KEY=${FALSAS.sbSecreta}` } }), null, arq);
   }
+});
+
+test('pedido: o OK para consultar o banco', async () => {
+  const { flagsDoPedido } = await import(new URL('../hooks/equipe-eventos.mjs', import.meta.url).href);
+  for (const t of ['pode rodar a consulta', 'Sim', 'ok', 'rode o select de tamanhos', 'autorizo a query']) assert.equal(flagsDoPedido(t).consultar, true, t);
+  for (const t of ['corrija o bug do total', 'pode corrigir o teste', 'sim, mas antes explique']) assert.equal(flagsDoPedido(t).consultar, false, t);
 });

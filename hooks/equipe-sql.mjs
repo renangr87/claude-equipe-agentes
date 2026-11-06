@@ -4,12 +4,14 @@
 // O execute_sql da conexão normal do Supabase é o mesmo para ler e para escrever, então
 // pede aprovação até para um select: numa semana, isso parou as sessões centenas de vezes.
 // Este hook barra (deny, sem perguntar nada ao usuário) a consulta que só lê e manda o
-// agente para a conexão só de leitura (supabase-leitura). Escrita continua pela conexão
-// normal, com aprovação. Erro ou dúvida vira silêncio: segue o fluxo normal (pedir aprovação).
+// agente para a conexão só de leitura (supabase-leitura), quando o projeto a tem. Sem ela, ou
+// com o OK do usuário para consultar no pedido, a consulta segue para a aprovação normal: a
+// trava não deixa a leitura sem caminho. Escrita continua pela conexão normal, com aprovação.
+// Erro ou dúvida vira silêncio: segue o fluxo normal (pedir aprovação).
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { git, lerEntrada, servidorDeclarado } from './equipe-comum.mjs';
+import { git, lerEntrada, lerEstado, servidorDeclarado } from './equipe-comum.mjs';
 
 export const CONEXAO_LEITURA = 'supabase-leitura';
 
@@ -57,11 +59,18 @@ export function decidir(entrada) {
   const sql = typeof ti.query === 'string' ? ti.query : ti.sql;
   if (!somenteLeitura(sql)) return null;
 
+  // O usuário autorizou consultar neste pedido ("pode rodar a consulta"): segue para a
+  // aprovação normal. O pedido é sempre o do mestre, também quando quem roda é um subagente.
+  const s = String(entrada.session_id || '').replace(/[^A-Za-z0-9_-]/g, '');
+  const pedido = s ? lerEstado(`${s}-mestre`, 'pedido') : null;
+  if (pedido && pedido.consultar) return null;
+
   const cwd = entrada.cwd || process.cwd();
   const raiz = process.env.CLAUDE_PROJECT_DIR || git(['rev-parse', '--show-toplevel'], cwd) || cwd;
-  const falta = leituraDeclarada(raiz)
-    ? `A conexão ${CONEXAO_LEITURA} está configurada; se a ferramenta mcp__${CONEXAO_LEITURA}__execute_sql não aparece nesta sessão, falta autenticar. No fim da tarefa, peça ao usuário uma vez: "/mcp, ${CONEXAO_LEITURA}, Authenticate".`
-    : `Este projeto ainda não tem a conexão ${CONEXAO_LEITURA}. No fim da tarefa, peça ao usuário uma vez para configurá-la (README da equipe, "Consultas ao banco sem pedir aprovação"): leva 2 minutos e acaba com os pedidos de aprovação.`;
+  // Sem a conexão de leitura no projeto, barrar deixaria a leitura sem caminho: segue para a
+  // aprovação normal (o boletim lembra de configurá-la).
+  if (!leituraDeclarada(raiz)) return null;
+  const falta = `A conexão ${CONEXAO_LEITURA} está configurada; se a ferramenta mcp__${CONEXAO_LEITURA}__execute_sql não aparece nesta sessão, falta autenticar. Peça ao usuário uma vez: "/mcp, ${CONEXAO_LEITURA}, Authenticate". Se ele preferir não autenticar agora, ele pode autorizar a consulta pela conexão normal dizendo "pode rodar a consulta".`;
   return {
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',

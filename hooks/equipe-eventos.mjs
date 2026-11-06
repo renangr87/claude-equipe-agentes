@@ -32,6 +32,9 @@ const tentar = (f) => { try { return f(); } catch { return null; } };
 
 const LIVRE = /\b(leia (voce|vc|tu) mesmo|le (voce|vc) mesmo|sem delegar|nao delegue|nao precisa delegar)\b/;
 const SEM_REVISAO = /\b(sem revisao|nao precisa (de )?revis(ao|ar)|dispensa (a )?revisao)\b/;
+// O usuário autoriza consultar o banco pela conexão normal, com aprovação ("pode rodar a
+// consulta", "rode o select", "autorizo a query"), ou responde só "sim"/"ok"/"pode".
+const CONSULTAR = /\b(pode|podes|rode|roda|rodar|execute|executa|executar|autorizo|liberad[oa]|libero|faca|fazer)\b.{0,30}\b(consultas?|query|querys|queries|sql|selects?)\b|\b(consultas?|query|sql|selects?)\b.{0,20}\b(liberad[oa]|autorizad[oa]|pode rodar)\b|^\s*(sim|ok|pode|pode sim|manda|rode|roda|claro|beleza|blz)\s*[.!]*\s*$/;
 const SEM_VERIFICAR = /\b(sem (rodar )?(os )?testes?|sem verifica(r|cao)|nao (precisa )?(rodar|de) (os )?testes?|nao precisa (testar|verificar)|pul[ea] (os )?testes?|dispensa (os )?testes?)\b/;
 
 // Conversa longa: a partir do 5º resumo automático, uma vez por resumo, o mestre sugere ao
@@ -53,7 +56,7 @@ export function avisoDeConversaLonga(entrada) {
 
 export function flagsDoPedido(texto) {
   const t = normalizar(texto);
-  return { livre: LIVRE.test(t), semRevisao: SEM_REVISAO.test(t), semVerificar: SEM_VERIFICAR.test(t) };
+  return { livre: LIVRE.test(t), semRevisao: SEM_REVISAO.test(t), semVerificar: SEM_VERIFICAR.test(t), consultar: CONSULTAR.test(t) };
 }
 
 // Devolve a saída do hook (objeto) ou null.
