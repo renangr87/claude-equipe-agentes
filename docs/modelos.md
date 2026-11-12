@@ -53,7 +53,7 @@ Sobre o esforço, a Anthropic afirma que o Opus 5.5 em esforço médio supera o 
 ## O que estes números não dizem
 
 - **São médias de testes públicos**, com os ajustes que a Anthropic escolheu. Não mostram como cada modelo se sai no seu código. Meça numa tarefa real antes de mudar um papel de modelo.
-- **Não servem para o mestre decidir a cada chamada.** Quem decide é a regra de escalonamento em `rules/equipe-agentes.md`. Esta tabela não fica nas regras para não pesar em toda chamada.
+- **Não servem para o mestre decidir a cada chamada.** Quem decide é a regra de escalonamento em `manual/equipe-mestre.md`. Esta tabela não fica nas regras para não pesar em toda chamada.
 - **Há divergências pequenas entre páginas oficiais**: a leitura de cache do Sonnet 5.5 aparece como US$ 0,20 na página do modelo e US$ 0,10 na tabela de preços; o Elo GDPval do Sonnet aparece como 1844 e 1840.
 - **Os números são da própria Anthropic.**
 

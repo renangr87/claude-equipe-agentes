@@ -1063,3 +1063,93 @@ test('pedido: o OK para consultar o banco', async () => {
   for (const t of ['pode rodar a consulta', 'Sim', 'ok', 'rode o select de tamanhos', 'autorizo a query']) assert.equal(flagsDoPedido(t).consultar, true, t);
   for (const t of ['corrija o bug do total', 'pode corrigir o teste', 'sim, mas antes explique']) assert.equal(flagsDoPedido(t).consultar, false, t);
 });
+
+test('manual do mestre: chega só à sessão principal, inteiro, e a regra global ficou curta', async () => {
+  const { manual, TETO, ARQUIVO } = await import(pathToFileURL(path.join(HOOKS, 'equipe-manual.mjs')).href);
+  const RAIZ = path.join(HOOKS, '..');
+  const texto = fs.readFileSync(path.join(RAIZ, 'manual', 'equipe-mestre.md'), 'utf8');
+  // Como instalado: o manual ao lado do hook, com o nome que a regra global cita.
+  const pasta = tmp('manual');
+  escrever(path.join(pasta, ARQUIVO), texto);
+  const s = manual({ source: 'startup' }, pasta);
+  assert.match(s, /^Manual do mestre \(hook de início de sessão/);
+  for (const trecho of ['## Equipe', 'Quando delegar', 'Portão pelo custo de desfazer', 'Commit.', 'Critério de aceite:']) assert.ok(s.includes(trecho), trecho);
+  // Cabe no teto do que um hook põe no contexto: não vai pela metade.
+  assert.ok(s.length <= TETO, `manual com ${s.length} caracteres (teto ${TETO})`);
+  assert.match(manual({ source: 'compact' }, pasta), /acabou de ser resumida/);
+  // Sessão retomada: só o lembrete, sem outra cópia do manual.
+  const retomada = manual({ source: 'resume' }, pasta);
+  assert.ok(retomada.length < 400 && /já veio no começo desta conversa/.test(retomada));
+  // Subagente não recebe; sem o arquivo, silêncio.
+  assert.equal(manual({ source: 'startup', agent_type: 'Explore', agent_id: 'a1' }, pasta), '');
+  assert.equal(manual({ source: 'startup' }, tmp('sem-manual')), '');
+  // Grande demais: manda ler o arquivo em vez de entregar cortado.
+  escrever(path.join(pasta, ARQUIVO), 'x'.repeat(TETO + 1));
+  assert.match(manual({}, pasta), /leia .*equipe-manual-mestre\.md antes de delegar/);
+  // Pelo processo, como o Claude Code chama.
+  escrever(path.join(pasta, 'equipe-manual.mjs'), fs.readFileSync(path.join(HOOKS, 'equipe-manual.mjs'), 'utf8'));
+  escrever(path.join(pasta, 'equipe-comum.mjs'), fs.readFileSync(path.join(HOOKS, 'equipe-comum.mjs'), 'utf8'));
+  escrever(path.join(pasta, ARQUIVO), texto);
+  const r = spawnSync(process.execPath, [path.join(pasta, 'equipe-manual.mjs')], { input: JSON.stringify({ hook_event_name: 'SessionStart', source: 'startup' }), encoding: 'utf8' });
+  const saida = JSON.parse(r.stdout);
+  assert.equal(saida.hookSpecificOutput.hookEventName, 'SessionStart');
+  assert.ok(saida.hookSpecificOutput.additionalContext.includes('Quando delegar'));
+  // Pasta do Claude por link simbólico: o manual chega do mesmo jeito.
+  const link = path.join(tmp('manual-link'), 'claude');
+  let temLink = true;
+  try { fs.symlinkSync(pasta, link, 'junction'); } catch { temLink = false; }
+  if (temLink) {
+    const rl = spawnSync(process.execPath, [path.join(link, 'equipe-manual.mjs')], { input: JSON.stringify({ hook_event_name: 'SessionStart', source: 'startup' }), encoding: 'utf8' });
+    assert.ok(JSON.parse(rl.stdout).hookSpecificOutput.additionalContext.includes('Quando delegar'));
+  }
+
+  // A regra global (carregada em todo subagente) não leva mais a orquestração, e diz onde ela está.
+  const regra = fs.readFileSync(path.join(RAIZ, 'rules', 'equipe-agentes.md'), 'utf8');
+  assert.ok(!regra.includes('Quando delegar') && !regra.includes('## Orquestração'));
+  assert.ok(regra.includes('__PASTA_CLAUDE__/hooks/equipe-manual-mestre.md'));
+  assert.match(regra, /Commit e push\*\* são do mestre: subagente não faz/);
+  assert.ok(regra.split(/\s+/).length <= 1000, 'regra global com mais de 1000 palavras');
+  for (const fica of ['## Segurança', '## Relatório', '## Princípios']) assert.ok(regra.includes(fica), fica);
+});
+
+test('travas: toda trava declara a saída, e a que barra 3 vezes no mesmo pedido manda levar ao usuário', async () => {
+  const { TRAVAS, TIPOS_DE_SAIDA, INSISTENCIA } = await import(pathToFileURL(path.join(HOOKS, 'equipe-pre.mjs')).href);
+  for (const t of TRAVAS) {
+    assert.ok(t.saida && TIPOS_DE_SAIDA.includes(t.saida.tipo), `trava "${t.nome}" sem saída declarada`);
+    assert.ok(String(t.saida.como || '').length > 15, `trava "${t.nome}" sem dizer como sair`);
+  }
+  // As de segurança nunca saem por insistência.
+  for (const nome of ['segredos', 'banco', 'push', 'teste-trava']) assert.notEqual(TRAVAS.find((t) => t.nome === nome).saida.tipo, 'valvula', nome);
+  assert.equal(INSISTENCIA, 3);
+
+  // SQL de leitura num projeto com a conexão de leitura: barra sempre; na 3ª vez do mesmo
+  // pedido, a mensagem manda parar de tentar e dizer ao usuário como liberar.
+  const PRE = path.join(HOOKS, 'equipe-pre.mjs');
+  const raiz = tmp('insiste');
+  git(raiz, 'init', '-q');
+  escrever(path.join(raiz, '.mcp.json'), JSON.stringify({ mcpServers: { 'supabase-leitura': { type: 'http', url: 'https://exemplo' } } }));
+  const claude = tmp('insiste-claude');
+  const env = { EQUIPE_PASTA_CLAUDE: claude, CLAUDE_PROJECT_DIR: raiz };
+  const tentar = (extra = {}) => decisao(PRE, { hook_event_name: 'PreToolUse', session_id: 'in', cwd: raiz, tool_name: 'mcp__Supabase__execute_sql', tool_input: { query: 'select 1' }, ...extra }, env);
+  const motivo = (d) => d.hookSpecificOutput.permissionDecisionReason;
+  const pedido = (em) => escrever(path.join(claude, 'equipe-diario', 'estado', 'in-mestre.pedido'), JSON.stringify({ em }));
+  // Sem o registro do pedido, não conta: o recado não aparece, por mais que barre.
+  for (let i = 0; i < 4; i++) assert.ok(!/já barrou/.test(motivo(tentar())));
+  pedido(1000);
+  const m1 = motivo(tentar());
+  const m2 = motivo(tentar());
+  const d3 = tentar();
+  assert.ok(!/já barrou/.test(m1) && !/já barrou/.test(m2));
+  assert.equal(d3.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(motivo(d3), /Esta trava já barrou 3 vezes neste pedido: não tente de novo por outro jeito\. Siga com o resto da tarefa e, no fim, diga ao usuário o que ficou barrado e como liberar \(o OK do usuário no pedido/);
+  // Subagente não recebe esse recado (quem fala com o usuário é o mestre).
+  const sub = motivo(tentar({ agent_type: 'Explore', agent_id: 'x1' }));
+  assert.ok(!/já barrou/.test(sub));
+  // Pedido novo: a conta recomeça.
+  pedido(2000);
+  assert.ok(!/já barrou/.test(motivo(tentar())));
+  // O orçamento de leitura fica de fora (o caminho dele é delegar na hora).
+  assert.equal(TRAVAS.find((t) => t.nome === 'orcamento').saida.insiste, false);
+  const reg = fs.readdirSync(path.join(claude, 'equipe-diario')).filter((n) => /^travas-/.test(n)).flatMap((n) => fs.readFileSync(path.join(claude, 'equipe-diario', n), 'utf8').split('\n')).map((l) => l.split('\t'));
+  assert.ok(reg.some((l) => l[1] === 'sql' && l[2] === 'insistiu'));
+});

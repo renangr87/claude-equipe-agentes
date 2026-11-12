@@ -8,6 +8,7 @@ Só o que é deste projeto. As regras de trabalho da equipe são globais e já e
 - Stack: PowerShell (Windows PowerShell 5.1 e PowerShell 7), Node.js 20 ou mais novo (scripts `.mjs`, só biblioteca padrão), Markdown.
 - Pastas principais:
   - `agents/`, `rules/`, `skills/`: o que o instalador copia para `~/.claude/`.
+  - `manual/`: o manual do mestre (orquestração), que o hook `equipe-manual.mjs` entrega só à sessão principal. A regra global em `rules/` carrega também no implementador: lá só entra o que vale para todos.
   - `hooks/`: guarda de terminal (PowerShell) e hooks e medidor da equipe (Node).
   - `settings/`: bloqueios, regras retiradas e registro dos hooks.
   - `ferramentas/`: scripts que o instalador usa.

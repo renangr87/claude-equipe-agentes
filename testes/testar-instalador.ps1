@@ -72,6 +72,10 @@ if ($env:OS -eq 'Windows_NT') {
 }
 Conferir 'limpa: guarda copiada' (Test-Path (Join-Path $d1 'hooks\guarda-comandos.ps1'))
 Conferir 'limpa: regra copiada' (Test-Path (Join-Path $d1 'rules\equipe-agentes.md'))
+Conferir 'limpa: manual do mestre copiado para hooks (fora de rules)' ((Test-Path (Join-Path $d1 'hooks\equipe-manual-mestre.md')) -and -not (Test-Path (Join-Path $d1 'rules\equipe-manual-mestre.md')))
+$regraInstalada = [System.IO.File]::ReadAllText((Join-Path $d1 'rules\equipe-agentes.md'), $utf8)
+Conferir 'limpa: regra global sem a orquestracao do mestre' ((-not $regraInstalada.Contains('Quando delegar')) -and $regraInstalada.Contains('equipe-manual-mestre.md'))
+Conferir 'limpa: regra aponta para o manual na pasta instalada' ((-not $regraInstalada.Contains('__PASTA_CLAUDE__')) -and $regraInstalada.Contains((((Resolve-Path -LiteralPath $d1).ProviderPath -replace '\\', '/') + '/hooks/equipe-manual-mestre.md')))
 $s = Ler-Json (Join-Path $d1 'settings.json')
 Conferir 'limpa: todas as regras deny' (@($s.permissions.deny).Count -eq $nDeny)
 Conferir 'limpa: todas as regras ask' (@($s.permissions.ask).Count -eq $nAsk)
@@ -172,6 +176,7 @@ if ($temNode) {
     Conferir 'hooks: evento retirado so com hook da equipe saiu' ($null -eq $s.hooks.PSObject.Properties['PostCompact'])
     $argsDe = { param($evento) (@($s.hooks.$evento) | ForEach-Object { @($_.hooks) } | ForEach-Object { @($_.args) }) -join ' ' }
     Conferir 'hooks: aviso no celular registrado' ((& $argsDe 'Notification') -match '/hooks/equipe-aviso\.mjs')
+    Conferir 'hooks: manual do mestre registrado no inicio' ((& $argsDe 'SessionStart') -match '/hooks/equipe-manual\.mjs')
     Conferir 'hooks: memoria registrada no inicio e no fim' (((& $argsDe 'SessionStart') -match '/hooks/equipe-memoria\.mjs') -and ((& $argsDe 'Stop') -match '/hooks/equipe-memoria\.mjs') -and ((& $argsDe 'SessionEnd') -match '/hooks/equipe-memoria\.mjs'))
     $pre = @($s.hooks.PreToolUse)
     $casa = { param($m, $ferramenta) [regex]::IsMatch($ferramenta, '^(' + $m + ')$') }
@@ -229,7 +234,7 @@ if ($temNode) {
     Conferir 'antiga: antes das ferramentas, o hook do usuario e o equipe-pre' ($pre.Count -eq 2 -and @($pre[0].hooks)[0].command -eq 'meu-pre' -and [string](@(@($pre[1].hooks)[0].args)[0]) -like '*/hooks/equipe-pre.mjs')
     $nPorEvento = @{}
     foreach ($ev in $s.hooks.PSObject.Properties) { $nPorEvento[$ev.Name] = @(@($ev.Value) | ForEach-Object { @($_.hooks) } | Where-Object { [string](@($_.args)[0]) -like '*/hooks/equipe-*.mjs' }).Count }
-    Conferir 'antiga: cada hook da equipe uma vez' ($nPorEvento['SessionStart'] -eq 2 -and $nPorEvento['SubagentStart'] -eq 2 -and $nPorEvento['PreToolUse'] -eq 1 -and $nPorEvento['Stop'] -eq 2 -and $nPorEvento['SessionEnd'] -eq 1 -and $nPorEvento['Notification'] -eq 1)
+    Conferir 'antiga: cada hook da equipe uma vez' ($nPorEvento['SessionStart'] -eq 3 -and $nPorEvento['SubagentStart'] -eq 2 -and $nPorEvento['PreToolUse'] -eq 1 -and $nPorEvento['Stop'] -eq 2 -and $nPorEvento['SessionEnd'] -eq 1 -and $nPorEvento['Notification'] -eq 1)
     $exploreNovo = [System.IO.File]::ReadAllText((Join-Path $d3d 'agents\Explore.md'), $utf8)
     Conferir 'antiga: Explore trocado, sem a trava de leitura no agente' (-not $exploreNovo.Contains('equipe-leitura') -and $exploreNovo.Contains('guarda-comandos.ps1'))
     Conferir 'antiga: Explore antigo guardado em backup' (@(Get-ChildItem -LiteralPath (Join-Path $d3d 'agents') -Filter 'Explore.md.bak-*').Count -eq 1)
@@ -281,6 +286,7 @@ Conferir 'sem hooks: saiu com 0' ($r.codigo -eq 0)
 Conferir 'sem hooks: sem aviso no celular' (-not (Test-Path (Join-Path $d5b 'equipe-aviso.json')))
 Conferir 'sem hooks: bloqueios gravados' (@($s.permissions.deny).Count -eq $nDeny)
 Conferir 'sem hooks: nenhum hook no settings.json' (-not $s.PSObject.Properties['hooks'])
+Conferir 'sem hooks: manual do mestre copiado (a regra manda ler)' (Test-Path (Join-Path $d5b 'hooks\equipe-manual-mestre.md'))
 
 # 6. Caminho com espaco e aspa simples: o hook continua valido
 $d6 = Join-Path $base "pasta d'agua"

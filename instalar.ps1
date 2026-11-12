@@ -375,7 +375,11 @@ foreach ($arquivo in (Get-ChildItem -LiteralPath (Join-Path $origem 'hooks') -Fi
 
 Write-Host "Regra global:"
 $origemRegra = Join-Path (Join-Path $origem 'rules') 'equipe-agentes.md'
-Copy-ComBackup $origemRegra (Join-Path $pastaRegras 'equipe-agentes.md')
+# A regra cita o caminho do manual do mestre: vai com a pasta de verdade.
+Write-ComBackup ((Read-Texto $origemRegra).Replace('__PASTA_CLAUDE__', $pastaClaudeBruta)) (Join-Path $pastaRegras 'equipe-agentes.md')
+# O manual do mestre fica fora de rules/ (o que esta la carrega em todo subagente): o hook
+# equipe-manual.mjs o entrega so a sessao principal.
+Copy-ComBackup (Join-Path (Join-Path $origem 'manual') 'equipe-mestre.md') (Join-Path $pastaHooks 'equipe-manual-mestre.md')
 
 $nodeEquipe = Find-Node
 if (-not $nodeEquipe -and -not $SemBloqueios -and -not $SemHooks) {
@@ -457,7 +461,7 @@ function Ler-Servidor([string]$nome) {
 function Test-HookDaEquipe($h) {
     if ($null -eq $h) { return $false }
     foreach ($p in (@($h.command) + @($h.args))) {
-        if ($p -is [string] -and $p -match '[\\/]hooks[\\/]equipe-(boletim|contexto|pre|pos|eventos|sql|banco|segredos|leitura|aviso|memoria)\.mjs$') { return $true }
+        if ($p -is [string] -and $p -match '[\\/]hooks[\\/]equipe-(boletim|manual|contexto|pre|pos|eventos|sql|banco|segredos|leitura|aviso|memoria)\.mjs$') { return $true }
     }
     return $false
 }
@@ -539,7 +543,7 @@ function Merge-Hooks([string]$arquivoModelo, [string]$arquivoDestino, [string]$n
         Write-Host "  copia de seguranca: $bak"
     }
     [System.IO.File]::WriteAllText($arquivoDestino, ($atual | ConvertTo-Json -Depth 32) + "`n", $utf8)
-    Write-Host "  hooks da equipe gravados (boletim, contexto dos subagentes, travas antes e registro depois das ferramentas, eventos da sessao, aviso no celular e memoria): $arquivoDestino"
+    Write-Host "  hooks da equipe gravados (boletim, manual do mestre, contexto dos subagentes, travas antes e registro depois das ferramentas, eventos da sessao, aviso no celular e memoria): $arquivoDestino"
 }
 
 

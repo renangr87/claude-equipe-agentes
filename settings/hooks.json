@@ -18,6 +18,14 @@
               "__PASTA_CLAUDE__/hooks/equipe-memoria.mjs"
             ],
             "timeout": 20
+          },
+          {
+            "type": "command",
+            "command": "__NODE__",
+            "args": [
+              "__PASTA_CLAUDE__/hooks/equipe-manual.mjs"
+            ],
+            "timeout": 10
           }
         ]
       }

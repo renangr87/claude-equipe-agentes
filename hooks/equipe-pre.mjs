@@ -18,7 +18,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { carregarModulo, desligada, lerEntrada, registrarTrava, tipoDoAgente } from './equipe-comum.mjs';
+import { anotacoes, anotar, carregarModulo, desligada, lerEntrada, lerEstado, registrarTrava, tipoDoAgente } from './equipe-comum.mjs';
 
 // Cada trava num módulo carregado à parte: se um faltar ou quebrar (instalação pela metade),
 // as outras continuam valendo, as de segurança inclusive, e a falha vai para o registro.
@@ -65,23 +65,53 @@ export function pedirTesteDeTrava(entrada) {
 // Saída no formato dos hooks antigos (hookSpecificOutput) para { decisao, motivo }.
 const deHook = (d) => (d && d.hookSpecificOutput ? { decisao: d.hookSpecificOutput.permissionDecision, motivo: d.hookSpecificOutput.permissionDecisionReason } : null);
 
+// Nenhuma trava sem saída: cada uma declara em "saida" como o trabalho segue depois de barrado
+// (um teste confere que toda trava tem a sua). Tipos: valvula (insistir passa, registrado),
+// pedido (uma frase do usuário libera), aprovacao (o usuário aprova na hora), usuario (a
+// próxima mensagem dele libera), caminho (há outro jeito certo de fazer) e nao-barra.
+export const TIPOS_DE_SAIDA = ['valvula', 'pedido', 'aprovacao', 'usuario', 'caminho', 'nao-barra'];
 export const TRAVAS = [
-  { nome: 'sql', quando: /^mcp__.+__execute_sql$/, rodar: sql ? (e) => deHook(sql.decidir(e)) : nada },
-  { nome: 'segredos', quando: /^(Write|Edit|MultiEdit|NotebookEdit|Bash|PowerShell)$/, rodar: segredos ? (e) => deHook(segredos.decidir(e)) : nada },
-  { nome: 'banco', quando: /^(Bash|PowerShell)$/, rodar: banco ? (e) => deHook(banco.decidir(e)) : nada },
-  { nome: 'push', quando: /^(Bash|PowerShell)$/, rodar: push ? push.decidirPush : nada },
-  { nome: 'teste-trava', quando: /^(Bash|PowerShell|Write|Edit|MultiEdit)$/, rodar: pedirTesteDeTrava },
-  { nome: 'briefing', quando: /^(Agent|Task)$/, rodar: briefing ? briefing.decidirBriefing : nada },
-  { nome: 'modelo', quando: /^(Agent|Task)$/, rodar: briefing ? briefing.modeloDoGenerico : nada },
-  { nome: 'revisor', quando: /^(Agent|Task)$/, rodar: revisao ? revisao.decidirRevisor : nada },
-  { nome: 'convergencia', quando: /^(Agent|Task)$/, rodar: convergencia ? convergencia.decidirConvergencia : nada },
-  { nome: 'paralelo', quando: /^(Agent|Task)$/, rodar: paralelo ? paralelo.decidirParalelo : nada },
-  { nome: 'mapa', quando: /^(Read|Grep|Glob)$/, rodar: mapa ? mapa.decidirMapa : nada },
-  { nome: 'orcamento', quando: /^(Read|Grep|Bash|PowerShell)$/, rodar: mapa ? mapa.decidirOrcamento : nada },
-  { nome: 'leitura', quando: /^Read$/, rodar: (e) => (leitura && tipoDoAgente(e) === 'Explore' && !desligada('leitura') ? deHook(leitura.decidir(e)) : null) },
+  { nome: 'sql', quando: /^mcp__.+__execute_sql$/, rodar: sql ? (e) => deHook(sql.decidir(e)) : nada, saida: { tipo: 'pedido', como: 'o OK do usuário no pedido ("pode rodar a consulta") ou a conexão só de leitura; sem ela no projeto, não barra' } },
+  { nome: 'segredos', quando: /^(Write|Edit|MultiEdit|NotebookEdit|Bash|PowerShell)$/, rodar: segredos ? (e) => deHook(segredos.decidir(e)) : nada, saida: { tipo: 'caminho', como: 'variável de ambiente no lugar da chave; chave de exemplo passa' } },
+  { nome: 'banco', quando: /^(Bash|PowerShell)$/, rodar: banco ? (e) => deHook(banco.decidir(e)) : nada, saida: { tipo: 'aprovacao', como: 'no mestre, pede a aprovação do usuário; o implementador devolve ao mestre' } },
+  { nome: 'push', quando: /^(Bash|PowerShell)$/, rodar: push ? push.decidirPush : nada, saida: { tipo: 'aprovacao', como: 'pede a aprovação do usuário; com o pedido de push, passa' } },
+  { nome: 'teste-trava', quando: /^(Bash|PowerShell|Write|Edit|MultiEdit)$/, rodar: pedirTesteDeTrava, saida: { tipo: 'aprovacao', como: 'pede a aprovação do usuário' } },
+  { nome: 'briefing', quando: /^(Agent|Task)$/, rodar: briefing ? briefing.decidirBriefing : nada, saida: { tipo: 'valvula', como: 'o mesmo briefing mandado de novo passa' } },
+  { nome: 'modelo', quando: /^(Agent|Task)$/, rodar: briefing ? briefing.modeloDoGenerico : nada, saida: { tipo: 'nao-barra', como: 'só troca o modelo; model: opus no pedido mantém' } },
+  { nome: 'revisor', quando: /^(Agent|Task)$/, rodar: revisao ? revisao.decidirRevisor : nada, saida: { tipo: 'valvula', como: 'o mesmo briefing mandado de novo passa' } },
+  { nome: 'convergencia', quando: /^(Agent|Task)$/, rodar: convergencia ? convergencia.decidirConvergencia : nada, saida: { tipo: 'usuario', como: 'a tentativa replanejada passa; depois de três falhas, a próxima mensagem do usuário libera' } },
+  { nome: 'paralelo', quando: /^(Agent|Task)$/, rodar: paralelo ? paralelo.decidirParalelo : nada, saida: { tipo: 'valvula', como: 'o mesmo briefing mandado de novo passa' } },
+  { nome: 'mapa', quando: /^(Read|Grep|Glob)$/, rodar: mapa ? mapa.decidirMapa : nada, saida: { tipo: 'valvula', como: 'consultar o mapa; se ele falhar, a tentativa seguinte passa' } },
+  { nome: 'orcamento', quando: /^(Read|Grep|Bash|PowerShell)$/, rodar: mapa ? mapa.decidirOrcamento : nada, saida: { tipo: 'pedido', como: 'delegar ao Explore, ou "leia você mesmo" no pedido', insiste: false } },
+  { nome: 'leitura', quando: /^Read$/, rodar: (e) => (leitura && tipoDoAgente(e) === 'Explore' && !desligada('leitura') ? deHook(leitura.decidir(e)) : null), saida: { tipo: 'caminho', como: 'ler por trecho; o teto é por chamada do Explore' } },
 ];
 
 const PESO = { deny: 3, ask: 2, allow: 1 };
+
+// A mesma trava barrando pela 3ª vez no mesmo pedido: em vez de o agente continuar tentando
+// (e a sessão girar), a mensagem manda seguir com o resto e levar o caso ao usuário no fim,
+// com o que libera. Só para as travas em que insistir não passa (saída por pedido ou por
+// caminho); a trava continua barrando igual. O orçamento de leitura fica de fora: ele barra
+// cada leitura depois do limite, e o caminho dele é delegar na hora, não esperar o usuário.
+export const INSISTENCIA = 3;
+function insistencia(t, entrada) {
+  try {
+    // Só o mestre fala com o usuário; o subagente tem o próprio teto de voltas.
+    if (!t.saida || t.saida.insiste === false || !['pedido', 'caminho'].includes(t.saida.tipo) || tipoDoAgente(entrada) !== 'mestre') return '';
+    const s = String(entrada.session_id || '').replace(/[^A-Za-z0-9_-]/g, '');
+    if (!s) return '';
+    // Sem o registro do pedido (instalação pela metade), não há como saber onde um pedido
+    // acaba: não conta, para o recado não aparecer em todo bloqueio da sessão.
+    const pedido = lerEstado(`${s}-mestre`, 'pedido');
+    if (!pedido || typeof pedido.em !== 'number') return '';
+    const marca = `${pedido.em}|${t.nome}`;
+    anotar(`${s}-sessao`, 'barradas', marca);
+    const n = anotacoes(`${s}-sessao`, 'barradas').filter((x) => x === marca).length;
+    if (n < INSISTENCIA) return '';
+    registrarTrava(t.nome, 'insistiu', 0, entrada);
+    return `\n\nEsta trava já barrou ${n} vezes neste pedido: não tente de novo por outro jeito. Siga com o resto da tarefa e, no fim, diga ao usuário o que ficou barrado e como liberar (${t.saida.como}).`;
+  } catch { return ''; }
+}
 
 export function decidir(entrada) {
   if (!entrada || typeof entrada !== 'object') return null;
@@ -106,7 +136,7 @@ export function decidir(entrada) {
     if (r && r.atualizar && typeof r.atualizar === 'object') atualizar = { ...(atualizar || {}), ...r.atualizar };
     if (!decisao || !PESO[decisao] || decisao === 'allow') continue;
     if (!final || PESO[decisao] > PESO[final]) final = decisao;
-    if (r.motivo) motivos.push({ decisao, motivo: r.motivo });
+    if (r.motivo) motivos.push({ decisao, motivo: r.motivo + (decisao === 'deny' ? insistencia(t, entrada) : '') });
     // Barrou: as travas seguintes não rodam (nada de anotar leitura que não aconteceu).
     if (decisao === 'deny') break;
   }
